@@ -1,0 +1,93 @@
+# ローカル開発用の依存基盤（RDBMS / 分散KVS / メッセージング / 観測基盤）。
+#
+# 汎用OSSのみで構成し、特定ベンダー製品名には依存しない。
+# 本ファイルはローカル開発の利便性のためのものであり、本番のデータストア技術選定を
+# 確定するものではない（技術選定そのものは docs/adr/ADR-0001-datastore-selection.md
+# の通り、具体的な製品はデプロイ環境の決定に委ねられている）。
+#
+# 起動: docker compose -f tools/docker-compose.yaml up -d
+name: apap-engine-local
+
+services:
+  # RDBMS（ベクトル拡張つき）。Provider/Model/Alias/Policy/Conversation/Turn/Usage/
+  # Audit/EventStore に加え、MemoryRepository（ベクトル検索, FR-CTX-004）もこの拡張で担う。
+  rdbms:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: apap
+      POSTGRES_PASSWORD: apap
+      POSTGRES_DB: apap
+    ports:
+      - "5432:5432"
+    volumes:
+      - apap-rdbms-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U apap -d apap"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # 分散KVS。Circuit Breaker状態 / Rate Limiterトークンバケット / Response Cacheの
+  # マルチノード運用向け実装が使う（ADR-0001。単一プロセス埋込利用はIn-Memory実装で十分）。
+  distributed-kvs:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - apap-kvs-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # メッセージング（Domain Eventのat-least-once配送。3.11 Observerの外部Event Bus転送先）。
+  messaging:
+    image: nats:2-alpine
+    restart: unless-stopped
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222" # クライアント接続
+      - "8222:8222" # 監視HTTP
+
+  # 観測基盤: メトリクス（NFR-OBS-002 OpenMetrics互換）
+  metrics:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  # 観測基盤: 分散Tracing（NFR-OBS-003 W3C Trace Context, OTLP受信）
+  tracing:
+    image: jaegertracing/all-in-one:latest
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # UI
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+
+  # 観測基盤: ダッシュボード
+  dashboard:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    depends_on:
+      - metrics
+      - tracing
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./observability/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+    ports:
+      - "3000:3000"
+
+volumes:
+  apap-rdbms-data:
+  apap-kvs-data:

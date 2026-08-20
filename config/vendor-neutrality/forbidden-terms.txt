@@ -1,0 +1,37 @@
+# Vendor Neutrality 禁止語リスト
+#
+# 01_CLAUDE.md 不変条件1「コード・設定・テスト・コメントに特定AI Provider名/製品名/
+# モデル名を一切書かない」を機械検証するための禁止語リスト。
+# modules/ と gateway/ 配下の全ファイル（ソース・設定・コメント含む）を対象に、
+# 大文字小文字を無視した部分一致でスキャンする（VendorNeutralityTest.kt）。
+#
+# 追加方法: 1行1語（前後空白は無視、`#`始まりの行はコメント、空行は無視）。
+# このファイル自体は modules/ / gateway/ の外（config/）に置くことで自己検知を避けている。
+#
+# 注意: 一部の語（例: "grok"）は一般英単語としても使われ得るため、
+# 誤検知が発生した場合は本リストを調整すること（機械的な完全性より実用性を優先する）。
+
+openai
+chatgpt
+gpt-3
+gpt-4
+gpt4
+anthropic
+claude
+gemini
+palm
+bard
+llama
+mistral
+cohere
+bedrock
+azure openai
+huggingface
+hugging face
+stable diffusion
+midjourney
+perplexity.ai
+deepseek
+qwen
+ernie bot
+watsonx

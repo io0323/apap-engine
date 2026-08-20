@@ -1,0 +1,104 @@
+# トレーサビリティマトリクス
+
+docs/design/01_要件定義.md の機能要件（FR-*）・非機能要件（NFR-*）と、実装クラス・テストクラスの対応表。
+01_CLAUDE.md「トレーサビリティ」規約に従い、機能実装時に該当行の「実装クラス」「テストクラス」「状態」を更新すること。
+
+状態は 未実装 / 実装中 / 実装済 のいずれか。
+
+| 要件ID | 要件概要 | 実装クラス | テストクラス | 状態 |
+|---|---|---|---|---|
+| FR-PRV-001 | Providerを動的に登録・更新・削除できること。削除は論理削除とし、監査履歴を保持すること | - | - | 未実装 |
+| FR-PRV-002 | Providerを有効化・無効化（DRAINING経由）できること。無効化中の実行中リクエストは完遂させること | - | - | 未実装 |
+| FR-PRV-003 | Provider毎にCapability・対応Model・リージョン・優先度・レート制限を保持すること | - | - | 未実装 |
+| FR-PRV-004 | ProviderはPlugin（Adapter実装）として追加可能とし、APAP本体の再ビルドを不要とすること | - | - | 未実装 |
+| FR-PRV-005 | Provider毎にCredential（複数世代）を安全に管理し、無停止ローテーションできること | - | - | 未実装 |
+| FR-PRV-006 | Providerの健全性（UP / DEGRADED / DOWN）を定期監視し、ルーティングへ反映すること | - | - | 未実装 |
+| FR-MDL-001 | Modelを登録・一覧・更新でき、Provider・Version・Capability・コスト単価・コンテキスト長・制約を保持すること | - | - | 未実装 |
+| FR-MDL-002 | Model Statusを管理すること（REGISTERED / TESTING / ACTIVE / DEPRECATED / RETIRED） | - | - | 未実装 |
+| FR-MDL-003 | Model Alias（論理名）を管理し、Aliasから物理Modelへの解決を行うこと。利用側はAliasのみで指定可能なこと | - | - | 未実装 |
+| FR-MDL-004 | Alias切替時にトラフィック比率（Canary）を指定できること | - | - | 未実装 |
+| FR-MDL-005 | Provider AdapterのModel Discoveryにより、Provider側の新Modelを検出し登録候補として提示すること | - | - | 未実装 |
+| FR-CAP-001 | Chat（Multi Turn / System Prompt / User Prompt）を提供すること | - | - | 未実装 |
+| FR-CAP-002 | Completionを提供すること | - | - | 未実装 |
+| FR-CAP-003 | Structured Output（JSON Schema指定、出力検証、違反時の是正リトライ）を提供すること | - | - | 未実装 |
+| FR-CAP-004 | Streaming（Chat / Completion / TTSの逐次応答、SSEおよびgRPC stream）を提供すること | - | - | 未実装 |
+| FR-CAP-005 | Function Calling / Tool Calling（定義の共通形式化、呼出指示の正規化、結果返信、並列呼出）を提供すること | - | - | 未実装 |
+| FR-CAP-006 | Embedding（単発・Batch、次元数指定）を提供すること | - | - | 未実装 |
+| FR-CAP-007 | Vision（画像入力理解）/ Image Analysis を提供すること | - | - | 未実装 |
+| FR-CAP-008 | Image Generation / Image Editing を提供すること | - | - | 未実装 |
+| FR-CAP-009 | Speech To Text / Text To Speech / Audio Translation を提供すること | - | - | 未実装 |
+| FR-CAP-010 | Video Analysis を提供すること | - | - | 未実装 |
+| FR-CAP-011 | Video Generation を提供可能な拡張構造とすること | - | - | 未実装 |
+| FR-CAP-012 | Reasoning（推論強度指定、推論過程の取得可否の正規化）を提供すること | - | - | 未実装 |
+| FR-CAP-013 | Memory（会話横断の長期記憶の保存・検索・注入）を提供すること | - | - | 未実装 |
+| FR-CAP-014 | RAG（外部知識の検索・コンテキスト注入のパイプライン接続点）を提供すること | - | - | 未実装 |
+| FR-CAP-015 | Fine Tuning のジョブ管理APIを抽象化可能な拡張構造とすること | - | - | 未実装 |
+| FR-CAP-016 | Batch Processing（非同期一括実行、ジョブ状態管理、結果取得）を提供すること | - | - | 未実装 |
+| FR-CAP-017 | 新Capabilityをスキーマ登録のみで追加可能とすること（Capability Registry） | - | - | 未実装 |
+| FR-RTE-001 | Capability・Model制約を満たす候補（Provider×Model）を解決すること | - | - | 未実装 |
+| FR-RTE-002 | Cost / Latency / Availability / Region / Priority を重み付きスコアで評価し最適候補を選択すること | - | - | 未実装 |
+| FR-RTE-003 | Policy（Platform / Tenant / Workflow / User Preferenceの4階層、優先順は後者ほど強いが上位の禁止事項は覆せない）を適用すること | - | - | 未実装 |
+| FR-RTE-004 | Fallback Chain（最大N段、既定3段）を構成し、失敗分類に応じて次候補へ自動移行すること | - | - | 未実装 |
+| FR-RTE-005 | Load Balancer（同スコア帯候補への重み付きラウンドロビン）を提供すること | - | - | 未実装 |
+| FR-RTE-006 | ルーティング決定の根拠（候補・スコア・適用Policy）を記録すること | - | - | 未実装 |
+| FR-RTE-007 | Sticky Routing（同一Conversation内は同一Model優先）を提供すること | - | - | 未実装 |
+| FR-PMT-001 | Prompt Pipeline（Validation → Optimization → Rendering）を提供すること | - | - | 未実装 |
+| FR-PMT-002 | Prompt Validation（サイズ上限、禁止パターン、インジェクション検査、Schema整合）を行うこと | - | - | 未実装 |
+| FR-PMT-003 | Prompt Optimization（トークン圧縮、履歴要約、テンプレート変数解決）を行うこと | - | - | 未実装 |
+| FR-PMT-004 | Prompt Template（変数、条件分岐、バージョン管理）を管理すること | - | - | 未実装 |
+| FR-EXE-001 | Retry（指数バックオフ+ジッター、リトライ可否のエラー分類、最大試行回数、全体タイムアウト予算）を提供すること | - | - | 未実装 |
+| FR-EXE-002 | Circuit Breaker（Provider×Model単位、CLOSED/OPEN/HALF_OPEN）を提供すること | - | - | 未実装 |
+| FR-EXE-003 | Rate Limiter（Provider制限の遵守 + テナント別流量制御、Token Bucket方式）を提供すること | - | - | 未実装 |
+| FR-EXE-004 | Quota（テナント/用途/期間単位のリクエスト数・トークン数・コスト上限）を提供すること | - | - | 未実装 |
+| FR-EXE-005 | Request Cache（同一リクエストの重複抑止）/ Response Cache（決定的要求の応答再利用、TTL・無効化）を提供すること | - | - | 未実装 |
+| FR-EXE-006 | Scheduler（Batch実行計画、Health Check周期実行、Rotation周期実行）を提供すること | - | - | 未実装 |
+| FR-EXE-007 | リクエストのタイムアウト（接続・応答・ストリームアイドル・全体）を制御できること | - | - | 未実装 |
+| FR-CTX-001 | Session（利用側との論理接続、有効期限、属性）を管理すること | - | - | 未実装 |
+| FR-CTX-002 | Conversation（Multi Turn履歴、Turn単位の永続化）を管理すること | - | - | 未実装 |
+| FR-CTX-003 | Context Window管理（Model上限に応じた履歴の切詰め・要約圧縮戦略）を行うこと | - | - | 未実装 |
+| FR-CTX-004 | Memory（長期記憶の保存・ベクトル検索・関連注入）を提供すること | - | - | 未実装 |
+| FR-RSP-001 | Response Normalization（Provider固有応答 → 共通応答モデル変換、FinishReason正規化、Usage正規化）を行うこと | - | - | 未実装 |
+| FR-RSP-002 | エラー正規化（Provider固有エラー → 共通エラーコード体系）を行うこと | - | - | 未実装 |
+| FR-RSP-003 | Streamingチャンクの正規化（デルタ形式統一、ToolCallの逐次組立）を行うこと | - | - | 未実装 |
+| FR-OBS-001 | Audit Log（Request / Response / ルーティング決定 / Cost / Duration / 実行Provider・Model）を改竄不能な形で記録すること | - | - | 未実装 |
+| FR-OBS-002 | Metrics（Latency分位点、Error Rate、Token Usage、Cost、Availability、Cache Hit率、Fallback率）を出力すること | - | - | 未実装 |
+| FR-OBS-003 | 分散Tracing（W3C Trace Context伝播、Adapter呼出までのSpan）を提供すること | - | - | 未実装 |
+| FR-OBS-004 | Usage Analytics（テナント/Capability/Model別の集計API）を提供すること | - | - | 未実装 |
+| FR-OBS-005 | Cost Management（単価表管理、リクエスト毎コスト算出、Budget、閾値アラート）を提供すること | - | - | 未実装 |
+| FR-OBS-006 | Health Check API（Liveness / Readiness / Provider Health）を提供すること | - | - | 未実装 |
+| FR-SEC-001 | Provider Credential（API Key等）をSecret Storeで暗号化管理し、平文をログ・応答に出力しないこと | - | - | 未実装 |
+| FR-SEC-002 | Credential Rotation（多世代保持、検証付き切替、自動/手動）を提供すること | - | - | 未実装 |
+| FR-SEC-003 | Access Control（CIAP発行トークン検証、テナント分離、Capability/Model単位の利用権限）を行うこと | - | - | 未実装 |
+| FR-SEC-004 | 転送時暗号化（TLS 1.3）、保存時暗号化（AES-256相当）を行うこと | - | - | 未実装 |
+| FR-SEC-005 | Provider Isolation（Adapter毎の実行分離、あるProvider障害・脆弱性の他Provider波及防止）を行うこと | - | - | 未実装 |
+| FR-SEC-006 | 監査要件（誰が・いつ・何を・どのProviderで、保持期間設定）を満たすこと | - | - | 未実装 |
+| FR-SEC-007 | Prompt/Responseの機微情報マスキング（Audit保存時のPIIマスクポリシー）を提供すること | - | - | 未実装 |
+| NFR-AVL-001 | サービス稼働率（APAP自体）: 99.95% / 月（24時間365日稼働） | - | - | 未実装 |
+| NFR-AVL-002 | 単一Provider全断時のサービス継続: Fallbackにより機能継続（対象Capabilityに代替Providerが存在する場合） | - | - | 未実装 |
+| NFR-AVL-003 | APAPノード障害時: ステートレス設計により他ノードへ即時フェイルオーバー、リクエスト損失なし（冪等キーで再実行可能） | - | - | 未実装 |
+| NFR-AVL-004 | 計画メンテナンス: ローリングアップデートにより無停止 | - | - | 未実装 |
+| NFR-PRF-001 | APAP付加レイテンシ（Gateway受信〜Adapter送信、Provider処理時間除く）: p50 ≤ 15ms、p99 ≤ 50ms | - | - | 未実装 |
+| NFR-PRF-002 | Streaming初回チャンク付加遅延: ≤ 30ms | - | - | 未実装 |
+| NFR-PRF-003 | スループット: 1,000 req/s / ノード、水平スケールで線形拡張 | - | - | 未実装 |
+| NFR-PRF-004 | Cache Hit時応答: p99 ≤ 20ms | - | - | 未実装 |
+| NFR-PRF-005 | 同時Streaming接続: 10,000接続 / ノード | - | - | 未実装 |
+| NFR-EXT-001 | 新Provider追加はAdapter Pluginの追加とAdmin API登録のみで完結し、APAPコアの変更・再デプロイを不要とする | - | - | 未実装 |
+| NFR-EXT-002 | 新Model追加はメタデータ登録のみで完結する | - | - | 未実装 |
+| NFR-EXT-003 | 新Capability追加はCapabilityスキーマ登録 + 対応Adapter拡張のみで、既存Capability利用者へ無影響 | - | - | 未実装 |
+| NFR-EXT-004 | Routing Policy / Retry戦略 / Cache実装 / 認証方式はSPIにより差替・追加可能 | - | - | 未実装 |
+| NFR-EXT-005 | 水平スケール（Kubernetes HPA、CPU/接続数/キュー長ベース） | - | - | 未実装 |
+| NFR-MNT-001 | Provider AdapterはProvider毎に独立モジュール（独立リポジトリ/独立バージョニング可）とする | - | - | 未実装 |
+| NFR-MNT-002 | レイヤ間依存はClean Architectureの依存規則（外→内の一方向）に従う | - | - | 未実装 |
+| NFR-MNT-003 | 全公開APIはバージョニング（URLパス /v1）し、後方互換を1メジャーバージョン維持する | - | - | 未実装 |
+| NFR-MNT-004 | 設定は宣言的（GitOps可能なYAML/API）に管理し、変更履歴を保持する | - | - | 未実装 |
+| NFR-OBS-001 | 全リクエストにRequest ID / Trace IDを付与し、ログ・メトリクス・トレースを相関可能とする | - | - | 未実装 |
+| NFR-OBS-002 | メトリクスはOpenMetrics互換形式で公開する | - | - | 未実装 |
+| NFR-OBS-003 | 構造化ログ（JSON）とし、機微情報を含めない | - | - | 未実装 |
+| NFR-OBS-004 | SLO（可用性・レイテンシ）をメトリクスから算出可能とする | - | - | 未実装 |
+| NFR-SEC-001 | Credentialは専用Secret Storeに保存し、メモリ上でも必要最小期間のみ保持する | - | - | 未実装 |
+| NFR-SEC-002 | 全通信TLS 1.3、内部通信はmTLS | - | - | 未実装 |
+| NFR-SEC-003 | 監査ログは追記専用ストレージへ保存し、既定保持期間は400日（設定可能） | - | - | 未実装 |
+| NFR-SEC-004 | 最小権限原則（Adapterは自Provider Credentialのみアクセス可能） | - | - | 未実装 |
+| NFR-DAT-001 | Conversation履歴の保持期間・削除API（テナントポリシーで設定、既定90日） | - | - | 未実装 |
+| NFR-DAT-002 | Prompt/Response本文の保存は既定OFF（監査ポリシーで選択的に有効化、マスキング適用） | - | - | 未実装 |
+| NFR-DAT-003 | イベントストアは追記専用、スナップショットにより再構築時間を制御 | - | - | 未実装 |

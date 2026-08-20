@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # apap-gateway がOpenMetrics互換のメトリクスを公開したら、targetsに追加する
+  # (NFR-OBS-002)。現時点(P1)ではエンドポイント未実装のためコメントアウト。
+  # - job_name: apap-gateway
+  #   static_configs:
+  #     - targets: ["host.docker.internal:8080"]
