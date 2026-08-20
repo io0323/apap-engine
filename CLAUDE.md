@@ -42,6 +42,18 @@ APAPは、AIを利用する全システム（AI Agent / Workflow Engine / Backen
 | Adapter/Model/Capability追加手順 | `docs/design/15_Provider追加手順.md` |
 | 拡張SPI一覧 | `docs/design/16_拡張ポイント.md` |
 
+## 設計書との用語対応表
+
+`docs/design/` は一次情報だが、実際のリポジトリ構成・命名と一致しない箇所がある（`docs/design-review.md` C3〜C5で検出）。**実装は右列（実装/実リポジトリ）を正とする**。設計書を読んで旧名称・旧配置をコードへ再導入しないこと。
+
+| 設計書上の記載 | 該当箇所 | 実装（正） | 補足 |
+|---|---|---|---|
+| `class ApapFacade` | 03_基本設計.md 3.10 | `ApapEngine` / `ApapEngineBuilder`（`apap.runtime`パッケージ、`modules/apap-runtime`） | 同一物（SDK単一入口）を指す。設計書とCLAUDE.mdで名称が異なることが明記されていなかった（design-review C5）ため、ここで正式に対応付ける |
+| `class AdminFacade` | 03_基本設計.md 3.10 | `ApapAdmin`（`ApapEngine.admin`経由で取得する管理API入口） | `ApapFacade`→`ApapEngine`のリネームに合わせ、対になる管理系ファサードも`Admin`接尾辞ではなく`ApapAdmin`とし、`ApapEngine`の子オブジェクトとして公開する |
+| パッケージ構成ツリー中の `apap-engine`（ルート直下の1モジュールであるかのような記載例） | 03_基本設計.md 3.1 | モジュールとしては作らない。埋込用ファサードは `modules/apap-runtime` | `apap-engine`はリポジトリ全体（Gradle `rootProject.name`）の名前であり、同名モジュールを作るとルートプロジェクトと衝突し混乱するため意図的に避けている |
+| `apap-gateway` が `apap/` 配下の1モジュールとして記載 | 03_基本設計.md 3.1 | `gateway/apap-gateway`（`modules/`の外、トップレベル別ディレクトリ） | 実リポジトリ構成が設計書の記載と異なる（design-review C3）。Presentation層を埋込ライブラリ本体（`modules/`）から明確に切り離すための意図的な配置 |
+| `modules/apap-runtime`, `modules/apap-testkit` の記載なし | 03_基本設計.md 3.1（パッケージ構成一覧） | 実装に存在する追加モジュール。`apap-runtime`はDIコンポジションルート兼`ApapEngine`実装（配線コードのみ）、`apap-testkit`は全PortのIn-Memory実装とAdapter Contract Testの置き場 | design-review C4。設計書のパッケージ一覧はDomain〜Infrastructureの責務分割を示すものであり、埋込方式のための配線層・テスト基盤層は対象外だったための欠落と解釈する |
+
 ## 絶対に守る不変条件（違反はレビュー差し戻し対象）
 
 1. **Vendor Neutral**: コード・設定・テスト・コメントに**特定AI Provider名/製品名/モデル名を一切書かない**。実Provider固有の知識は `adapters/` 配下にのみ存在してよい。コアのテストは `adapter-mock` のみを使う。
@@ -74,6 +86,25 @@ APAPは、AIを利用する全システム（AI Agent / Workflow Engine / Backen
 ./tools/scripts/verify.sh        # 一括検証（コミット前に必ず実行）
 docker compose -f tools/docker-compose.yaml up -d   # ローカル依存
 ```
+
+## トラブルシューティング（Gradleビルドキャッシュ）
+
+`build-logic`（Convention Plugin群のincludeBuild）を編集した直後や、依存関係のバージョンを変更した直後に、以下のようなエラーで `./gradlew build` が失敗することがある。
+
+- `:build-logic:compilePluginsBlocks` が `Unable to parse script-resolver-environment argument implicit-imports=...` で失敗する
+- `:build-logic:compilePluginsBlocks` が `Source file or directory not found: .../kotlin-dsl-external-plugin-spec-builders/.../PluginSpecBuilders.kt` で失敗する
+- `:build-logic:compileKotlin` が、存在しないはずの `Unresolved reference` を大量に出す
+
+これらは実装のバグではなく、Gradleのローカルビルドキャッシュ（`~/.gradle/caches/*/kotlin-dsl` 配下）が `build-logic` のprecompiled script plugin生成物について古い/矛盾した状態を返す既知の問題（Gradle 9.4.1で確認済み）。**同じ変更を2回試すより先に**、以下を試すこと。
+
+```bash
+./gradlew --stop
+rm -rf ~/.gradle/caches/*/kotlin-dsl
+./gradlew build --no-build-cache   # まずキャッシュ無効化で成功することを確認
+./gradlew build                    # 通常設定（キャッシュ有効）で再度成功すればOK
+```
+
+`gradle.properties` の `org.gradle.caching=true` はこの問題への対処として無効化しない（通常時は問題なく動作するため）。上記の手順で解消しない場合のみ、原因調査を優先し、キャッシュ無効化を恒久対応にしない。
 
 ## 作業の進め方
 

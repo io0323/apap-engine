@@ -1,8 +1,10 @@
 .gradle/
 build/
 out/
+bin/
 *.class
 .idea/
 *.iml
 .DS_Store
 .kotlin/
+.vscode/
