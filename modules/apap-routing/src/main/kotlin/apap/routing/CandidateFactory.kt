@@ -42,6 +42,9 @@ class CandidateFactory(
     private val cache: RoutingCandidateCache,
     private val clock: Clock,
 ) {
+    /** [RoutingEngine]がRoutingDecisionへ伝播させる、S_cost算出がスタブかどうかの自己申告。 */
+    val costEstimationStubbed: Boolean get() = costEstimator.isStub
+
     fun build(
         capabilityId: CapabilityId,
         modelAlias: String?,

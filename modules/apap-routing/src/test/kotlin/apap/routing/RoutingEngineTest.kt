@@ -34,6 +34,7 @@ import apap.testkit.inmemory.InMemoryQuotaSnapshotRepository
 import apap.testkit.inmemory.InMemoryTenantEntitlementRepository
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class RoutingEngineTest {
@@ -109,6 +110,19 @@ class RoutingEngineTest {
         assertThrows(NoCandidateAvailableException::class.java) {
             routingEngine.route(RoutingRequest(capabilityId, tenantId), requestId)
         }
+    }
+
+    @Test
+    fun `RoutingDecision reports costEstimationStubbed when wired with ZeroCostEstimator`() {
+        val providerId = ProviderId("01ARZ3NDEKTSV4RRFFQ69G5FAX")
+        val modelId = ModelId("01ARZ3NDEKTSV4RRFFQ69G5FAY")
+        enableProvider(providerId)
+        modelRepository.save(model(modelId, providerId, ModelStatus.ACTIVE))
+
+        val decision = routingEngine.route(RoutingRequest(capabilityId, tenantId), requestId)
+
+        assertTrue(decision.costEstimationStubbed)
+        assertTrue(decision.toAuditSummary().contains("cost-estimation-stubbed"))
     }
 
     @Test
