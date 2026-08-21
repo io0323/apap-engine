@@ -30,6 +30,7 @@ import apap.adapter.spi.ValidationResult
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * 15_Provider追加手順.md / 16_拡張ポイント.md 16.1: 決定的応答を返すテスト用Adapter。
@@ -49,6 +50,7 @@ class MockProviderAdapter(
 ) : ProviderAdapter {
     private var secrets: SecretAccessor? = null
     private var initialized = false
+    private val scriptedIndex = AtomicInteger(0)
 
     override fun initialize(
         config: AdapterConfig,
@@ -143,9 +145,31 @@ class MockProviderAdapter(
     private suspend fun simulateLatencyAndFailure() {
         val totalDelayMillis = config.latency.toMillis() + config.extraDelayMillis
         if (totalDelayMillis > 0) delay(totalDelayMillis)
+        val scripted = nextScriptedOutcome()
+        if (scripted != null) {
+            scripted.errorCategory?.let { category ->
+                throw AdapterException(
+                    category,
+                    "mock execute scripted error: $category",
+                    retryAfter = scripted.retryAfter,
+                )
+            }
+            return
+        }
         config.forcedErrorCategory?.let { category ->
             throw AdapterException(category, "mock execute forced error: $category")
         }
+    }
+
+    /**
+     * [MockAdapterConfig.scriptedOutcomes]を`execute()`呼出のたびに先頭から1件ずつ消費する。
+     * 台本を使い切った後（インデックスが範囲外）はnullを返し、呼出元が[MockAdapterConfig.forcedErrorCategory]
+     * /既定成功応答へフォールバックする。
+     */
+    private fun nextScriptedOutcome(): ScriptedOutcome? {
+        if (config.scriptedOutcomes.isEmpty()) return null
+        val i = scriptedIndex.getAndIncrement()
+        return config.scriptedOutcomes.getOrNull(i)
     }
 
     private fun resolveCredentialSafely() {
