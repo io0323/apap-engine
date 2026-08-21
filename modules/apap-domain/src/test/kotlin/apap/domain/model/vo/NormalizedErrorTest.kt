@@ -13,6 +13,7 @@ class NormalizedErrorTest {
                 message = "  ",
                 retryable = true,
                 fallbackable = true,
+                cbRecordable = true,
             )
         }
     }
@@ -25,6 +26,7 @@ class NormalizedErrorTest {
             message = "rate limited",
             retryable = true,
             fallbackable = true,
+            cbRecordable = true,
             providerDetail = "raw provider error",
         )
     }
