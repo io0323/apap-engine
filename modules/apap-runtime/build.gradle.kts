@@ -16,4 +16,6 @@ dependencies {
     implementation(project(":modules:apap-observability"))
     implementation(project(":modules:apap-infrastructure"))
     implementation(project(":modules:apap-adapter-spi"))
+    testImplementation(project(":modules:apap-testkit"))
+    testImplementation(project(":adapters:adapter-mock"))
 }

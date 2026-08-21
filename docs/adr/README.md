@@ -20,6 +20,7 @@ Architecture Decision Record。`docs/design/*.md` は一次情報として編集
 | [ADR-0014](ADR-0014-event-store-snapshot-persistence.md) | EventStoreRepositoryはスナップショット永続化とバージョン照会の両方を提供する | Accepted | 補足（NFR-DAT-003） |
 | [ADR-0015](ADR-0015-adapter-test-source-may-depend-on-apap-testkit.md) | adapters/*のtestソースセットはapap-testkitへの依存を許可する（mainのみ厳格に制限） | Accepted | 補足（15章 Step3、16.1） |
 | [ADR-0016](ADR-0016-adapter-spi-typealias-boundary-and-spi-surface.md) | Adapter SPIのtypealias境界はソースレベル分離のみを提供する（SPI公開面の明示管理とバージョニング規約） | Accepted | 補足（15.1、16.1、NFR-MNT-001） |
+| [ADR-0017](ADR-0017-jackson-version-alignment-and-single-json-stack.md) | apap-runtime埋込時のJacksonバージョン整合と、プロジェクト全体でのJSONスタック一本化 | Accepted | 補足（NFR-MNT-001、埋込ライブラリとしてのapap-runtime） |
 
 ## 命名規則
 

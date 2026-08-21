@@ -13,6 +13,7 @@ object ErrorClassificationService {
         val code: ErrorCode,
         val retryable: Boolean,
         val fallbackable: Boolean,
+        val cbRecordable: Boolean,
     )
 
     fun classify(
@@ -28,6 +29,7 @@ object ErrorClassificationService {
             message = message,
             retryable = rule.retryable,
             fallbackable = rule.fallbackable,
+            cbRecordable = rule.cbRecordable,
             providerDetail = providerDetail,
         )
     }
@@ -38,24 +40,57 @@ object ErrorClassificationService {
     ): ClassificationRule =
         when (category) {
             AdapterErrorCategory.TRANSIENT ->
-                ClassificationRule(ErrorCode.PROVIDER_ERROR, retryable = true, fallbackable = true)
+                ClassificationRule(ErrorCode.PROVIDER_ERROR, retryable = true, fallbackable = true, cbRecordable = true)
             AdapterErrorCategory.RATE_LIMITED ->
-                ClassificationRule(ErrorCode.RATE_LIMIT_EXCEEDED, retryable = true, fallbackable = true)
+                ClassificationRule(
+                    ErrorCode.RATE_LIMIT_EXCEEDED,
+                    retryable = true,
+                    fallbackable = true,
+                    // 2.11「△（連続時のみ）」: 基本可否はtrue。連続発生時のみに絞る判断はCircuitBreaker
+                    // （apap-execution、状態を持つ）の責務。
+                    cbRecordable = true,
+                )
             AdapterErrorCategory.INVALID_REQUEST ->
-                ClassificationRule(ErrorCode.INVALID_REQUEST, retryable = false, fallbackable = false)
+                ClassificationRule(
+                    ErrorCode.INVALID_REQUEST,
+                    retryable = false,
+                    fallbackable = false,
+                    cbRecordable = false,
+                )
             AdapterErrorCategory.AUTH_ERROR ->
-                ClassificationRule(ErrorCode.UNAUTHENTICATED, retryable = false, fallbackable = true)
+                ClassificationRule(
+                    ErrorCode.UNAUTHENTICATED,
+                    retryable = false,
+                    fallbackable = true,
+                    cbRecordable = true,
+                )
             AdapterErrorCategory.CONTENT_FILTERED ->
                 ClassificationRule(
                     ErrorCode.CONTENT_FILTERED,
                     retryable = false,
                     fallbackable = contentFilteredFallbackAllowed,
+                    cbRecordable = false,
                 )
             AdapterErrorCategory.MODEL_ERROR ->
-                ClassificationRule(ErrorCode.OUTPUT_SCHEMA_VIOLATION, retryable = true, fallbackable = true)
+                ClassificationRule(
+                    ErrorCode.OUTPUT_SCHEMA_VIOLATION,
+                    retryable = true,
+                    fallbackable = true,
+                    cbRecordable = false,
+                )
             AdapterErrorCategory.PROVIDER_UNAVAILABLE ->
-                ClassificationRule(ErrorCode.PROVIDER_ERROR, retryable = false, fallbackable = true)
+                ClassificationRule(
+                    ErrorCode.PROVIDER_ERROR,
+                    retryable = false,
+                    fallbackable = true,
+                    cbRecordable = true,
+                )
             AdapterErrorCategory.UNSUPPORTED_CAPABILITY ->
-                ClassificationRule(ErrorCode.CAPABILITY_NOT_AVAILABLE, retryable = false, fallbackable = false)
+                ClassificationRule(
+                    ErrorCode.CAPABILITY_NOT_AVAILABLE,
+                    retryable = false,
+                    fallbackable = false,
+                    cbRecordable = false,
+                )
         }
 }
