@@ -100,7 +100,8 @@ class DefaultExecutionEngine(
         val cached = phases.time("cache-lookup") { cacheEngine.lookup(request, prompt) }
         if (cached != null) {
             quotaManager.recordCacheShortCircuit(request.tenantId, quotaPolicyProvider(request.tenantId))
-            rateLimiter.acquire(RateLimitScope.TenantScope(request.tenantId), request.traceId)
+            // NFR-PRF-004 (Cache Hit時応答 p99<=20ms): 有界待機を求めず即時可否判定のみとする。
+            rateLimiter.acquire(RateLimitScope.TenantScope(request.tenantId), request.traceId, Duration.ZERO)
             return cached.copy(cached = true)
         }
 

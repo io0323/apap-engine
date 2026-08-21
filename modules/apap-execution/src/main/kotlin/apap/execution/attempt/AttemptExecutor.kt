@@ -54,6 +54,7 @@ class AttemptExecutor(
     private val idGenerator: IdGenerator,
     private val retryConfig: RetryConfig = RetryConfig(),
     private val retryStrategy: RetryStrategy = ExponentialBackoffJitterStrategy(retryConfig),
+    private val rateLimiterMaxWait: Duration = Duration.ofSeconds(RATE_LIMITER_MAX_WAIT_SECONDS),
 ) {
     @Suppress("NestedBlockDepth", "ReturnCount")
     suspend fun execute(
@@ -123,8 +124,11 @@ class AttemptExecutor(
             }
 
         try {
-            rateLimiter.acquire(RateLimitScope.TenantScope(ctx.tenantId), ctx.traceId)
-            rateLimiter.acquire(RateLimitScope.ProviderScope(candidate.providerId), ctx.traceId)
+            // 2.8 step8b: 有界待機。予算残と設定可能な上限の小さいほうでキャップする
+            // （無制限待機でタイムアウト予算を食い潰さない）。
+            val waitBudget = minOf(remainingBudget, rateLimiterMaxWait)
+            rateLimiter.acquire(RateLimitScope.TenantScope(ctx.tenantId), ctx.traceId, waitBudget)
+            rateLimiter.acquire(RateLimitScope.ProviderScope(candidate.providerId), ctx.traceId, waitBudget)
         } catch (_: RateLimitExceededException) {
             circuitBreaker.recordFailure(permit, cbRecordable = false, traceId = ctx.traceId)
             return AttemptOutcome.Failed(rateLimitedError(), retryAfter = null)
@@ -219,4 +223,8 @@ class AttemptExecutor(
             fallbackable = true,
             cbRecordable = false,
         )
+
+    private companion object {
+        const val RATE_LIMITER_MAX_WAIT_SECONDS = 5L
+    }
 }

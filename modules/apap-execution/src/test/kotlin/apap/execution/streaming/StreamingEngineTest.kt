@@ -10,6 +10,7 @@ import apap.adapter.spi.ToolCall
 import apap.domain.model.execution.ExecutionContext
 import apap.domain.model.execution.StreamChunk
 import apap.domain.model.execution.StreamChunkType
+import apap.domain.model.vo.ContentPart
 import apap.execution.testsupport.testCanonicalRequest
 import apap.testkit.inmemory.InMemoryClock
 import apap.testkit.inmemory.InMemoryDomainEventPublisher
@@ -161,6 +162,150 @@ class StreamingEngineTest {
         }
 
     @Test
+    fun `braces inside a string literal argument do not confuse the balance heuristic`() =
+        runBlocking {
+            // P6着手前レビューの指摘例そのもの: {"text": "use } carefully"}
+            val stream =
+                FakeAdapterStream(
+                    mutableListOf(
+                        AdapterChunk(AdapterChunkType.MESSAGE_START, 0),
+                        AdapterChunk(
+                            AdapterChunkType.TOOL_CALL_DELTA,
+                            1,
+                            toolCallDelta = ToolCall("call-1", "note", "{\"text\": \"use "),
+                        ),
+                        AdapterChunk(
+                            AdapterChunkType.TOOL_CALL_DELTA,
+                            2,
+                            toolCallDelta = ToolCall("call-1", "note", "} carefully\"}"),
+                        ),
+                    ),
+                )
+            val engine = StreamingEngine(clock, events, ids, StreamingConfig())
+            val chunks = withTimeout(5_000) { engine.normalize(stream, ctx()).toList() }
+            val toolChunks = chunks.filter { it.type == StreamChunkType.TOOL_CALL_DELTA }
+            assertEquals(1, toolChunks.size)
+            assertEquals("{\"text\": \"use } carefully\"}", toolChunks.first().toolCallDelta?.arguments)
+            assertEquals(StreamChunkType.MESSAGE_END, chunks.last().type)
+        }
+
+    @Test
+    fun `escaped quotes inside the argument do not confuse the balance heuristic`() =
+        runBlocking {
+            // Argument text: {"quote": "she said \"hi } there\""}
+            val stream =
+                FakeAdapterStream(
+                    mutableListOf(
+                        AdapterChunk(AdapterChunkType.MESSAGE_START, 0),
+                        AdapterChunk(
+                            AdapterChunkType.TOOL_CALL_DELTA,
+                            1,
+                            toolCallDelta = ToolCall("call-1", "note", "{\"quote\": \"she said \\\"hi "),
+                        ),
+                        AdapterChunk(
+                            AdapterChunkType.TOOL_CALL_DELTA,
+                            2,
+                            toolCallDelta = ToolCall("call-1", "note", "} there\\\"\"}"),
+                        ),
+                    ),
+                )
+            val engine = StreamingEngine(clock, events, ids, StreamingConfig())
+            val chunks = withTimeout(5_000) { engine.normalize(stream, ctx()).toList() }
+            val toolChunks = chunks.filter { it.type == StreamChunkType.TOOL_CALL_DELTA }
+            assertEquals(1, toolChunks.size)
+            assertEquals(
+                "{\"quote\": \"she said \\\"hi } there\\\"\"}",
+                toolChunks.first().toolCallDelta?.arguments,
+            )
+        }
+
+    @Test
+    fun `multiple tool calls arriving interleaved are assembled independently`() =
+        runBlocking {
+            val stream =
+                FakeAdapterStream(
+                    mutableListOf(
+                        AdapterChunk(AdapterChunkType.MESSAGE_START, 0),
+                        AdapterChunk(
+                            AdapterChunkType.TOOL_CALL_DELTA,
+                            1,
+                            toolCallDelta = ToolCall("call-1", "a", "{\"x\":"),
+                        ),
+                        AdapterChunk(
+                            AdapterChunkType.TOOL_CALL_DELTA,
+                            2,
+                            toolCallDelta = ToolCall("call-2", "b", "{\"y\":"),
+                        ),
+                        AdapterChunk(
+                            AdapterChunkType.TOOL_CALL_DELTA,
+                            3,
+                            toolCallDelta = ToolCall("call-1", "a", "1}"),
+                        ),
+                        AdapterChunk(
+                            AdapterChunkType.TOOL_CALL_DELTA,
+                            4,
+                            toolCallDelta = ToolCall("call-2", "b", "2}"),
+                        ),
+                    ),
+                )
+            val engine = StreamingEngine(clock, events, ids, StreamingConfig())
+            val chunks = withTimeout(5_000) { engine.normalize(stream, ctx()).toList() }
+            val toolChunks = chunks.filter { it.type == StreamChunkType.TOOL_CALL_DELTA }
+            assertEquals(2, toolChunks.size)
+            val byCallId = toolChunks.associate { it.toolCallDelta!!.callId to it.toolCallDelta!!.arguments }
+            assertEquals("{\"x\":1}", byCallId["call-1"])
+            assertEquals("{\"y\":2}", byCallId["call-2"])
+        }
+
+    @Test
+    fun `stream ending with an unterminated tool call is an ERROR, not a silent partial result`() =
+        runBlocking {
+            val stream =
+                FakeAdapterStream(
+                    mutableListOf(
+                        AdapterChunk(AdapterChunkType.MESSAGE_START, 0),
+                        AdapterChunk(
+                            AdapterChunkType.TOOL_CALL_DELTA,
+                            1,
+                            toolCallDelta = ToolCall("call-1", "get_weather", "{\"city\":"),
+                        ),
+                        // Stream ends here (adapterStream.next() -> null) with an unbalanced buffer.
+                    ),
+                )
+            val engine = StreamingEngine(clock, events, ids, StreamingConfig())
+            val chunks = withTimeout(5_000) { engine.normalize(stream, ctx()).toList() }
+            assertEquals(StreamChunkType.ERROR, chunks.last().type)
+            assertTrue(chunks.none { it.type == StreamChunkType.MESSAGE_END })
+            // No half-assembled ToolCall must ever be emitted.
+            assertTrue(chunks.none { it.type == StreamChunkType.TOOL_CALL_DELTA })
+        }
+
+    @Test
+    fun `an explicit toolCallComplete signal completes the call immediately, ADR-0019`() =
+        runBlocking {
+            val stream =
+                FakeAdapterStream(
+                    mutableListOf(
+                        AdapterChunk(AdapterChunkType.MESSAGE_START, 0),
+                        // Deliberately NOT balanced JSON (missing closing brace) — only the explicit
+                        // signal, not the heuristic, should complete this.
+                        AdapterChunk(
+                            AdapterChunkType.TOOL_CALL_DELTA,
+                            1,
+                            toolCallDelta = ToolCall("call-1", "raw", "not-json-but-provider-says-done"),
+                            toolCallComplete = true,
+                        ),
+                    ),
+                )
+            val engine = StreamingEngine(clock, events, ids, StreamingConfig())
+            val chunks = withTimeout(5_000) { engine.normalize(stream, ctx()).toList() }
+            val toolChunks = chunks.filter { it.type == StreamChunkType.TOOL_CALL_DELTA }
+            assertEquals(1, toolChunks.size)
+            assertEquals("not-json-but-provider-says-done", toolChunks.first().toolCallDelta?.arguments)
+            assertEquals(StreamChunkType.MESSAGE_END, chunks.last().type)
+        }
+
+    @Test
     fun `backpressure suspends the producer once the buffer capacity is reached`() =
         runBlocking {
             // A tiny byte budget forces a small buffer capacity (~1 item).
@@ -193,5 +338,55 @@ class StreamingEngineTest {
                 callsWhileConsumerBlocked <= 3,
                 "producer ran ahead of a blocked consumer: calls=$callsWhileConsumerBlocked",
             )
+        }
+
+    @Test
+    fun `byte budget holds across a mix of small and large chunk sizes, not just item count`() =
+        runBlocking {
+            // A fixed-item-count buffer (the pre-fix bug: bytes/256, coerced to >=1) would admit
+            // this many items regardless of their actual size. A byte-accumulating gate must not.
+            val config = StreamingConfig(backpressureBufferBytes = 200)
+            val sizes = listOf(1, 500, 2, 300, 1, 1000, 5, 1)
+            val contentChunks =
+                sizes.mapIndexed { i, len ->
+                    AdapterChunk(AdapterChunkType.CONTENT_DELTA, i + 1, delta = TextContentPart("x".repeat(len)))
+                }
+            val allChunks = (listOf(AdapterChunk(AdapterChunkType.MESSAGE_START, 0)) + contentChunks).toMutableList()
+            // FakeAdapterStream drains this list destructively (removeAt(0) per next() call), so
+            // capture the original count now -- by assertion time it would otherwise read as 0.
+            val totalChunkCount = allChunks.size
+            val stream = FakeAdapterStream(allChunks)
+            val engine = StreamingEngine(clock, events, ids, config)
+
+            val gate = CompletableDeferred<Unit>()
+            val collected = mutableListOf<StreamChunk>()
+            val job =
+                launch {
+                    engine.normalize(stream, ctx()).collect { chunk ->
+                        collected += chunk
+                        // Block right after the very first item, as above.
+                        if (collected.size == 1) gate.await()
+                    }
+                }
+            delay(300)
+            val callsWhileBlocked = stream.calls
+            gate.complete(Unit)
+            withTimeout(5_000) { job.join() }
+
+            // Regardless of how the individual chunk sizes vary, the producer must not have been able
+            // to pull every remaining chunk (9 total) while the very first one sat unconsumed: several
+            // of the large ones (500/1000/300 bytes) each alone approach or exceed the 200-byte budget.
+            assertTrue(
+                callsWhileBlocked < totalChunkCount,
+                "producer pulled all $callsWhileBlocked/$totalChunkCount chunks despite the byte budget",
+            )
+            // Once released, every chunk must still arrive, correctly sized, in order -- the byte gate
+            // must throttle, not drop or corrupt data.
+            val deltaTexts =
+                collected
+                    .filter {
+                        it.type == StreamChunkType.CONTENT_DELTA
+                    }.map { (it.delta as ContentPart.Text).text.length }
+            assertEquals(sizes, deltaTexts)
         }
 }
