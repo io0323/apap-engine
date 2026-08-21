@@ -7,6 +7,12 @@ package apap.adapter.spi
  * 直接importさせるとAdapterDependencyRuleTest（Konsistでimport prefixを機械検証）に抵触するため、
  * Adapter実装からは常に`apap.adapter.spi`名前空間のtypealias経由で参照させる
  * （実行時コストゼロ、実体は同一クラス）。
+ *
+ * **ADR-0016**: 上記が提供するのはソースレベルの分離のみであり、typealiasの実体は常に元の
+ * `apap.domain.*`クラスそのものであるため、バイナリ／依存関係レベルの分離は提供しない。
+ * ここで再エクスポートするドメイン型に対する破壊的変更は、SPI自体の破壊的変更として扱う
+ * （メジャーバージョン更新を要する）。このファイルにtypealiasを追加・削除・変更する際は、
+ * 必ず[SpiSurface.exposedDomainTypes]も同時に更新すること（`SpiSurfaceTest`が一致を機械検証する）。
  */
 typealias CapabilityId = apap.domain.model.vo.CapabilityId
 
