@@ -50,20 +50,20 @@ Service/Port/Event）のみが揃った状態を指す。Application/Infrastruct
 | FR-PMT-002 | Prompt Validation（サイズ上限、禁止パターン、インジェクション検査、Schema整合）を行うこと | - | - | 未実装 |
 | FR-PMT-003 | Prompt Optimization（トークン圧縮、履歴要約、テンプレート変数解決）を行うこと | - | - | 未実装 |
 | FR-PMT-004 | Prompt Template（変数、条件分岐、バージョン管理）を管理すること | apap.domain.model.prompt.PromptTemplate, TemplateVariable | PromptTemplateTest | 実装中 |
-| FR-EXE-001 | Retry（指数バックオフ+ジッター、リトライ可否のエラー分類、最大試行回数、全体タイムアウト予算）を提供すること | apap.domain.service.execution.ErrorClassificationService（エラー分類部分のみ。Retry実行制御はapap-execution側） | ErrorClassificationServiceTest | 実装中 |
-| FR-EXE-002 | Circuit Breaker（Provider×Model単位、CLOSED/OPEN/HALF_OPEN）を提供すること | apap.domain.model.execution.CircuitBreakerState, CbState, WindowStats | CircuitBreakerStateTest | 実装中 |
-| FR-EXE-003 | Rate Limiter（Provider制限の遵守 + テナント別流量制御、Token Bucket方式）を提供すること | - | - | 未実装 |
-| FR-EXE-004 | Quota（テナント/用途/期間単位のリクエスト数・トークン数・コスト上限）を提供すること | apap.domain.model.cost.QuotaPolicy, QuotaLimits | BudgetAndQuotaPolicyTest | 実装中 |
-| FR-EXE-005 | Request Cache（同一リクエストの重複抑止）/ Response Cache（決定的要求の応答再利用、TTL・無効化）を提供すること | - | - | 未実装 |
+| FR-EXE-001 | Retry（指数バックオフ+ジッター、リトライ可否のエラー分類、最大試行回数、全体タイムアウト予算）を提供すること | apap.domain.service.execution.ErrorClassificationService（エラー分類）, apap.execution.retry.ExponentialBackoffJitterStrategy/RetryConfig, apap.execution.attempt.AttemptExecutor（試行ループ・予算管理・ADR-0011是正リトライ） | ErrorClassificationServiceTest, ExponentialBackoffJitterStrategyTest, AttemptExecutorTest | 実装中 |
+| FR-EXE-002 | Circuit Breaker（Provider×Model単位、CLOSED/OPEN/HALF_OPEN）を提供すること | apap.domain.model.execution.CircuitBreakerState/CbState/WindowStats（状態機械）, apap.domain.port.CircuitBreakerStateStore, apap.execution.circuitbreaker.CircuitBreaker（tryAcquire/recordSuccess/recordFailure、ADR-0001準拠のin-memory本番実装 apap.execution.adapter.out.InMemoryCircuitBreakerStateStore） | CircuitBreakerStateTest, CircuitBreakerTest | 実装中 |
+| FR-EXE-003 | Rate Limiter（Provider制限の遵守 + テナント別流量制御、Token Bucket方式）を提供すること | apap.cache.ratelimit.RateLimiter/TokenBucketRateLimiter/RateLimiterConfig（ADR-0001準拠、テナント/Provider2段） | TokenBucketRateLimiterTest | 部分実装（Token Bucketアルゴリズム自体は実装・テスト済。Provider.rateLimitsからバケット容量を自動構成する配線はapap-runtime側の追加配線待ち、既定値での動作は可能） |
+| FR-EXE-004 | Quota（テナント/用途/期間単位のリクエスト数・トークン数・コスト上限）を提供すること | apap.domain.model.cost.QuotaPolicy, QuotaLimits, apap.cost.quota.QuotaManager/DefaultQuotaManager/Reservation（予約→commit/release/TTL失効、P0保留のC2/U16解消） | BudgetAndQuotaPolicyTest, DefaultQuotaManagerTest | 部分実装（予約決済の正合性は完全実装・決済漏れ0をテストで担保。真の期間境界集計・リセットはCostEngine本実装（P7）待ち、現状はプロセス起動からの累計に対する上限判定） |
+| FR-EXE-005 | Request Cache（同一リクエストの重複抑止）/ Response Cache（決定的要求の応答再利用、TTL・無効化）を提供すること | apap.cache.CacheEngine（Port）, apap.cache.PassthroughCacheEngine（P7スタブ、明示的オプトイン必須）, apap.execution.IdempotencyGuard（処理中の並行二重実行防止のみ） | IdempotencyGuardTest | 部分実装（並行二重実行防止は実装済。Request/Response Cache本体はP7未着手のためPassthroughスタブ、解消フェーズP7） |
 | FR-EXE-006 | Scheduler（Batch実行計画、Health Check周期実行、Rotation周期実行）を提供すること | - | - | 未実装 |
-| FR-EXE-007 | リクエストのタイムアウト（接続・応答・ストリームアイドル・全体）を制御できること | - | - | 未実装 |
+| FR-EXE-007 | リクエストのタイムアウト（接続・応答・ストリームアイドル・全体）を制御できること | apap.domain.model.execution.ExecutionContext（締切ベースの残余予算計算）, apap.execution.attempt.AttemptExecutor（試行毎の予算チェック）, apap.execution.streaming.StreamingEngine/StreamingConfig（アイドル60s/全体300s既定） | AttemptExecutorTest, StreamingEngineTest | 実装中 |
 | FR-CTX-001 | Session（利用側との論理接続、有効期限、属性）を管理すること | apap.domain.model.conversation.Session | SessionAndMemoryTest | 実装中 |
 | FR-CTX-002 | Conversation（Multi Turn履歴、Turn単位の永続化）を管理すること | apap.domain.model.conversation.Conversation, Turn | ConversationTest | 実装中 |
 | FR-CTX-003 | Context Window管理（Model上限に応じた履歴の切詰め・要約圧縮戦略）を行うこと | apap.domain.service.conversation.ContextAssemblyService | ContextAssemblyServiceTest | 実装中 |
 | FR-CTX-004 | Memory（長期記憶の保存・ベクトル検索・関連注入）を提供すること | apap.domain.model.conversation.Memory, apap.domain.port.MemoryRepository | SessionAndMemoryTest | 実装中 |
-| FR-RSP-001 | Response Normalization（Provider固有応答 → 共通応答モデル変換、FinishReason正規化、Usage正規化）を行うこと | apap.domain.model.vo.FinishReason, Usage | TokenCountAndUsageTest | 実装中 |
-| FR-RSP-002 | エラー正規化（Provider固有エラー → 共通エラーコード体系）を行うこと | apap.domain.model.vo.NormalizedError, ErrorCode, apap.domain.service.execution.ErrorClassificationService | NormalizedErrorTest, ErrorClassificationServiceTest | 実装中 |
-| FR-RSP-003 | Streamingチャンクの正規化（デルタ形式統一、ToolCallの逐次組立）を行うこと | - | - | 未実装 |
+| FR-RSP-001 | Response Normalization（Provider固有応答 → 共通応答モデル変換、FinishReason正規化、Usage正規化）を行うこと | apap.domain.model.vo.FinishReason, Usage, apap.domain.model.execution.CanonicalResponse, apap.execution.mapping.RequestMapper/ResponseMapper（AdapterRequest/AdapterResponse⇄Canonical変換） | TokenCountAndUsageTest, AttemptExecutorTest（RequestMapper/ResponseMapper経由の実行系結合） | 実装中 |
+| FR-RSP-002 | エラー正規化（Provider固有エラー → 共通エラーコード体系）を行うこと | apap.domain.model.vo.NormalizedError（cbRecordable追加）, ErrorCode, apap.domain.service.execution.ErrorClassificationService, apap.execution.mapping.ResponseMapper.normalizeError | NormalizedErrorTest, ErrorClassificationServiceTest, AttemptExecutorTest | 実装中 |
+| FR-RSP-003 | Streamingチャンクの正規化（デルタ形式統一、ToolCallの逐次組立）を行うこと | apap.domain.model.execution.StreamChunk/StreamChunkType, apap.execution.streaming.StreamingEngine, ToolCallAssembler, apap.execution.mapping.ResponseMapper.normalizeChunk | StreamingEngineTest | 実装中 |
 | FR-OBS-001 | Audit Log（Request / Response / ルーティング決定 / Cost / Duration / 実行Provider・Model）を改竄不能な形で記録すること | apap.domain.model.audit.AuditRecord, apap.domain.port.AuditRepository | AuditRecordTest | 実装中 |
 | FR-OBS-002 | Metrics（Latency分位点、Error Rate、Token Usage、Cost、Availability、Cache Hit率、Fallback率）を出力すること | - | - | 未実装 |
 | FR-OBS-003 | 分散Tracing（W3C Trace Context伝播、Adapter呼出までのSpan）を提供すること | - | - | 未実装 |
@@ -77,10 +77,10 @@ Service/Port/Event）のみが揃った状態を指す。Application/Infrastruct
 | FR-SEC-005 | Provider Isolation（Adapter毎の実行分離、あるProvider障害・脆弱性の他Provider波及防止）を行うこと | - | - | 未実装 |
 | FR-SEC-006 | 監査要件（誰が・いつ・何を・どのProviderで、保持期間設定）を満たすこと | - | - | 未実装 |
 | FR-SEC-007 | Prompt/Responseの機微情報マスキング（Audit保存時のPIIマスクポリシー）を提供すること | - | - | 未実装 |
-| NFR-AVL-001 | サービス稼働率（APAP自体）: 99.95% / 月（24時間365日稼働） | - | - | 未実装 |
-| NFR-AVL-002 | 単一Provider全断時のサービス継続: Fallbackにより機能継続（対象Capabilityに代替Providerが存在する場合） | - | - | 未実装 |
-| NFR-AVL-003 | APAPノード障害時: ステートレス設計により他ノードへ即時フェイルオーバー、リクエスト損失なし（冪等キーで再実行可能） | - | - | 未実装 |
-| NFR-AVL-004 | 計画メンテナンス: ローリングアップデートにより無停止 | - | - | 未実装 |
+| NFR-AVL-001 | サービス稼働率（APAP自体）: 99.95% / 月（24時間365日稼働） | - | - | 未実装（デプロイ・運用体制の整備が前提のため本フェーズ対象外） |
+| NFR-AVL-002 | 単一Provider全断時のサービス継続: Fallbackにより機能継続（対象Capabilityに代替Providerが存在する場合） | apap.execution.fallback.FallbackEngine, apap.execution.circuitbreaker.CircuitBreaker（CB Open候補のスキップ） | FallbackEngineTest | 実装中 |
+| NFR-AVL-003 | APAPノード障害時: ステートレス設計により他ノードへ即時フェイルオーバー、リクエスト損失なし（冪等キーで再実行可能） | apap.execution.IdempotencyGuard（同一(tenantId, idempotencyKey)の並行二重実行防止） | IdempotencyGuardTest | 部分実装（処理中の二重実行防止は実装済。ノード障害後の完了済リクエストの冪等リプレイはRequest Cache（P7、FR-EXE-005参照）待ち） |
+| NFR-AVL-004 | 計画メンテナンス: ローリングアップデートにより無停止 | - | - | 未実装（デプロイ・運用体制の整備が前提のため本フェーズ対象外） |
 | NFR-PRF-001 | APAP付加レイテンシ（Gateway受信〜Adapter送信、Provider処理時間除く）: p50 ≤ 15ms、p99 ≤ 50ms | - | - | 未実装 |
 | NFR-PRF-002 | Streaming初回チャンク付加遅延: ≤ 30ms | - | - | 未実装 |
 | NFR-PRF-003 | スループット: 1,000 req/s / ノード、水平スケールで線形拡張 | - | - | 未実装 |
