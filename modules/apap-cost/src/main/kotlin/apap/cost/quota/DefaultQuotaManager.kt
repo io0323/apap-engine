@@ -12,14 +12,19 @@ import apap.domain.model.vo.Usage
 import apap.domain.port.Clock
 import apap.domain.port.DomainEventPublisher
 import apap.domain.port.IdGenerator
+import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 /**
  * テナント単位の予約済(pending)/確定済(committed)累計。期間境界でのリセット
  * （`BudgetPeriodReset`、Scheduler駆動）は本フェーズの対象外とし、プロセス起動からの累計に対して
- * 上限判定を行う（真の期間集計はCostEngine本実装(P7)の範囲。要件充足に影響しない実装判断の
- * ためADR化せずQuotaManager.ktのKDocに根拠を記載済み）。
+ * 上限判定を行う（真の期間集計はCostEngine本実装(P7)の範囲）。
+ *
+ * **既知の制約**: リセットがないため、長時間稼働するプロセスでは`committedRequests`等が
+ * 単調増加し続け、いずれ上限に達したまま二度と回復せず全リクエストを拒否する状態になる
+ * （「未実装」より悪い、常時QuotaExceededを返す状態）。他のP6/P7スタブ（PassthroughPromptEngine等）
+ * と同様に構築時WARNで検知可能にする（[DefaultQuotaManager]のinitブロック参照）。
  */
 private class TenantLedger {
     var committedRequests: Long = 0
@@ -42,6 +47,15 @@ class DefaultQuotaManager(
     private val eventPublisher: DomainEventPublisher,
     private val config: QuotaManagerConfig = QuotaManagerConfig(),
 ) : QuotaManager {
+    init {
+        logger.warn(
+            "DefaultQuotaManager has no period-boundary reset (BudgetPeriodReset, Scheduler-driven, " +
+                "is out of scope for this phase). Limits are enforced against process-lifetime " +
+                "cumulative usage: a long-running process will permanently deny all requests for a " +
+                "tenant once its limit is first reached. See requirements-matrix.md FR-EXE-004.",
+        )
+    }
+
     private val ledgers = ConcurrentHashMap<TenantId, TenantLedger>()
     private val reservations = ConcurrentHashMap<String, Reservation>()
 
@@ -216,4 +230,8 @@ class DefaultQuotaManager(
         current: Money?,
         delta: Money,
     ): Money? = current?.let { it - delta }
+
+    private companion object {
+        val logger = LoggerFactory.getLogger(DefaultQuotaManager::class.java)
+    }
 }
