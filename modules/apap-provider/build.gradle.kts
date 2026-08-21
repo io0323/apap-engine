@@ -12,4 +12,17 @@ dependencies {
     implementation(libs.findLibrary("json-schema-validator").get())
     testImplementation(project(":modules:apap-testkit"))
     testImplementation(libs.findLibrary("konsist").get())
+
+    // ADR-0017: json-schema-validatorが推移的に要求するjackson-databind（既定2.18.3）を、
+    // 埋込先prompt-engineが実際に使用するバージョンへ明示的に揃える。apap-provider自体は
+    // Jackson APIを直接呼ばないため、依存を追加するのではなくバージョン解決のみを制約する。
+    constraints {
+        implementation(libs.findLibrary("jackson-databind").get()) {
+            val jacksonVersion = libs.findVersion("jackson").get()
+            because(
+                "prompt-engine（埋込先）がjackson-databind:${jacksonVersion}に依存しているため、" +
+                    "json-schema-validatorの推移的要求より優先してこのバージョンへ揃える（ADR-0017）。",
+            )
+        }
+    }
 }

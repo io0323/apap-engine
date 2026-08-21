@@ -20,6 +20,12 @@ kotlinx-coroutines = "1.9.0"
 # 全面書き換えで本稿執筆時点（2026-08-21）でリリース後1日未満のため、セキュリティ境界の
 # 検証には実績不足として避ける（GitHub Releases公開日で確認済み）。
 json-schema-validator = "1.5.9"
+# ADR-0017: apap-engine全体で使用するJSONライブラリはJacksonに一本化する（プロジェクト全体の決定。
+# kotlinx-serialization/Gson/org.json等の別スタックを追加しないこと。追加が必要な場合はADR-0017を
+# Supersedeする新規ADRを起票すること）。バージョンは埋込先prompt-engine（別リポジトリ、
+# gradle/libs.versions.tomlのjacksonエントリ）の実宣言値と手動で揃える。ズレを見つけたら
+# このバージョンをprompt-engine側に追従させ、ADR-0017の「見直す条件」に該当しないか確認すること。
+jackson = "2.22.1"
 
 [libraries]
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
@@ -28,6 +34,7 @@ konsist = { module = "com.lemonappdev:konsist", version.ref = "konsist-lib" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 json-schema-validator = { module = "com.networknt:json-schema-validator", version.ref = "json-schema-validator" }
+jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
 
 # build-logic（Convention Plugin）が implementation として使う、プラグイン本体の座標
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
