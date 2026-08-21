@@ -3,5 +3,8 @@ plugins {
 }
 
 dependencies {
-    implementation(project(":modules:apap-domain"))
+    // AdapterStream.asFlow()の戻り値(Flow<AdapterChunk>)としてこのSPIの公開APIに現れるため、
+    // implementationではなくapiとして依存先(adapters/*等)のコンパイルクラスパスへ伝播させる。
+    api(libs.findLibrary("kotlinx-coroutines-core").get())
+    api(project(":modules:apap-domain"))
 }

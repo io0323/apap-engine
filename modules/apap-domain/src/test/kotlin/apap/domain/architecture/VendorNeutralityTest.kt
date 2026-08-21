@@ -1,5 +1,6 @@
 package apap.domain.architecture
 
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.Test
 import java.io.File
@@ -15,7 +16,7 @@ import java.io.File
 class VendorNeutralityTest {
     // "bin" はKonsistがスキャン時に生成する作業ディレクトリ（.gitignore対象、ソースではない）
     private val excludedDirNames = setOf("build", ".gradle", ".git", "bin")
-    private val scannedRoots = listOf("modules", "gateway")
+    private val scannedRoots = listOf("modules", "gateway", "adapters")
 
     // "claude"はAI製品名として禁止語だが、本リポジトリの実装規約ファイル名（末尾".md"）への
     // 自己参照はAIベンダー名の言及ではないため誤検知として除外する。
@@ -30,11 +31,19 @@ class VendorNeutralityTest {
         val repoRoot = findRepoRoot(File(".").canonicalFile)
         val forbiddenTerms = loadForbiddenTerms(File(repoRoot, "config/vendor-neutrality/forbidden-terms.txt"))
 
-        val violations =
-            scannedRoots
-                .map { File(repoRoot, it) }
-                .filter { it.exists() }
-                .flatMap { findViolations(it, repoRoot, forbiddenTerms) }
+        val existingRoots = scannedRoots.map { File(repoRoot, it) }.filter { it.exists() }
+        val scannedFileCount = existingRoots.sumOf { root -> countScannedFiles(root) }
+
+        // スキャン対象が0件だとテストは違反なしで沈黙成功する。スコープ取得の失敗を
+        // 規約違反と同様に「テストが落ちる」状態にする（Konsistベースの
+        // アーキテクチャテストと同じ理由。ArchitectureScopeGuard.kt参照）。
+        assertTrue(
+            scannedFileCount > 0,
+            "Vendor Neutralityスキャン対象が0件です（対象: $scannedRoots）。" +
+                "この状態では違反を検出できません。",
+        )
+
+        val violations = existingRoots.flatMap { findViolations(it, repoRoot, forbiddenTerms) }
 
         if (violations.isNotEmpty()) {
             fail<Unit>(
@@ -72,6 +81,12 @@ class VendorNeutralityTest {
             .filter { term -> lowerText.contains(term) }
             .map { term -> "${file.relativeTo(repoRoot)}: contains forbidden term \"$term\"" }
     }
+
+    private fun countScannedFiles(root: File): Int =
+        root
+            .walkTopDown()
+            .onEnter { dir -> dir.name !in excludedDirNames }
+            .count { it.isFile }
 
     private fun findRepoRoot(start: File): File {
         var dir: File? = start
