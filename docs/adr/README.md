@@ -17,6 +17,8 @@ Architecture Decision Record。`docs/design/*.md` は一次情報として編集
 | [ADR-0011](ADR-0011-structured-output-correction-retry-budget.md) | Structured Output是正リトライと通常Retry予算の統合 | Accepted | #10, A10 |
 | [ADR-0012](ADR-0012-cache-hit-quota-ratelimit-handling.md) | キャッシュ短絡時のQuota/RateLimit扱い | Accepted | 補足, A11 |
 | [ADR-0013](ADR-0013-audit-digest-tenant-salt.md) | Audit request_digestへのテナント固有ソルト付与 | Accepted | 補足 |
+| [ADR-0014](ADR-0014-event-store-snapshot-persistence.md) | EventStoreRepositoryはスナップショット永続化とバージョン照会の両方を提供する | Accepted | 補足（NFR-DAT-003） |
+| [ADR-0015](ADR-0015-adapter-test-source-may-depend-on-apap-testkit.md) | adapters/*のtestソースセットはapap-testkitへの依存を許可する（mainのみ厳格に制限） | Accepted | 補足（15章 Step3、16.1） |
 
 ## 命名規則
 

@@ -11,8 +11,10 @@ import org.junit.jupiter.api.Test
 class DomainPortInterfaceRuleTest {
     @Test
     fun `apap-domain-port package contains only interfaces`() {
-        Konsist
-            .scopeFromDirectory("modules/apap-domain")
+        val scope = Konsist.scopeFromDirectory("modules/apap-domain")
+        assertScopeNotEmpty(scope, "modules/apap-domain")
+
+        scope
             .classesAndObjects()
             .assertFalse { it.resideInPackage("apap.domain.port..") }
     }

@@ -31,8 +31,10 @@ class DomainDependencyRuleTest {
 
     @Test
     fun `apap-domain does not import outer layers, Ktor or DI frameworks`() {
-        Konsist
-            .scopeFromDirectory("modules/apap-domain")
+        val scope = Konsist.scopeFromDirectory("modules/apap-domain")
+        assertScopeNotEmpty(scope, "modules/apap-domain")
+
+        scope
             .imports
             .assertFalse { import ->
                 forbiddenImportPrefixes.any { forbidden ->

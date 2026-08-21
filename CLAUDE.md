@@ -65,6 +65,10 @@ APAPは、AIを利用する全システム（AI Agent / Workflow Engine / Backen
 7. **数値は設計書から取る**: バックオフ200ms、CB失敗率50%/30秒窓、Sticky補正+0.05、スコア差0.02、Fallback既定3段、heartbeat 15秒など、閾値はすべて `docs/design/02_システム仕様.md` に定義済み。ハードコードする際は必ず設定可能にし、既定値を設計書と一致させる。
 8. **設計書を書き換えない**: 設計と実装が矛盾した場合、`docs/design/` を編集せず `docs/adr/ADR-XXXX-*.md` を新規作成して判断と理由を記録し、その旨を報告する。
 
+   **ADR化するか否かの判断基準**: 設計書の記述が不明確・曖昧で実装判断が必要になった場合、その解釈（決定）によって**満たせなくなる要件ID（FR/NFR）が存在するかどうか**で切り分ける。
+   - 存在する場合（例: EventStoreRepositoryのsnapshotを誤って読み替え、NFR-DAT-003の「再構築時間の制御」が満たせなくなっていたADR-0014のケース）: 上記の通りADRを起票する。
+   - 存在しない場合（命名・シグネチャの詳細など、どう決めても要件充足に影響しない純粋な実装判断）: ADRは起票せず、該当コードのKDocに根拠（参照した設計書の章節、なぜその形にしたか）を記す程度で足りる。
+
 ## 実装規約
 
 - **エラー**: Adapterは必ず `AdapterException`（分類: TRANSIENT / RATE_LIMITED / INVALID_REQUEST / AUTH_ERROR / CONTENT_FILTERED / MODEL_ERROR / PROVIDER_UNAVAILABLE / UNSUPPORTED_CAPABILITY）を投げる。分類がRetry/Fallback挙動を決める（2.11の表が仕様）。コア側は `NormalizedError` に正規化してから利用側へ返す（13.4のコード体系）。
@@ -105,6 +109,13 @@ rm -rf ~/.gradle/caches/*/kotlin-dsl
 ```
 
 `gradle.properties` の `org.gradle.caching=true` はこの問題への対処として無効化しない（通常時は問題なく動作するため）。上記の手順で解消しない場合のみ、原因調査を優先し、キャッシュ無効化を恒久対応にしない。
+
+## トラブルシューティング（Konsistの空スコープ）
+
+`Konsist.scopeFromModule(...)` は、ネストしたモジュールパス（本リポジトリの `modules/apap-domain` のような `<parent>/<module>` 形式）に対して**空スコープを返す**ことがある（P1で発見）。空スコープに対する `assertFalse` / `assertTrue` 系の検証は対象0件のため常に成功し、規約違反があっても検出できないまま「テスト成功」と表示される最悪の失敗モードになる。
+
+- **対策1**: `scopeFromModule` ではなく `Konsist.scopeFromDirectory("modules/apap-domain")` のようにリポジトリルートからの相対パスを指定する `scopeFromDirectory` を使うこと。
+- **対策2**: それでも将来別の原因で空スコープに戻る可能性があるため、全アーキテクチャテストの冒頭で対象ファイル数が0でないことを機械的にアサートする（`modules/apap-domain/src/test/kotlin/apap/domain/architecture/ArchitectureScopeGuard.kt` の `assertScopeNotEmpty` を参照・再利用すること）。新規のKonsistベースのアーキテクチャテストを追加する際も必ずこのガードを先頭で呼ぶ。
 
 ## 作業の進め方
 
