@@ -31,10 +31,19 @@ data class RoutingDecision(
     val scoredCandidates: List<ScoredCandidate>,
     val appliedPolicyId: String?,
     val reason: String,
+    /**
+     * S_cost算出に[ZeroCostEstimator]（スタブ、常にゼロを返す）が使われたかどうか。
+     * `true`の間はコストに基づくスコア差別化が実質無効であることを示す——CostEstimatorが
+     * apap-cost実装に差し替わるまで、この決定を「コスト最適化済み」と読んではならない。
+     * 監査記録・テストの双方から構造的に検知できるよう、reason文字列への埋め込みだけに頼らず
+     * 独立フィールドとして持つ。
+     */
+    val costEstimationStubbed: Boolean,
 ) {
     fun toAuditSummary(): String {
         val candidateSummary = chain.candidates.joinToString(" -> ") { it.key }
-        return "policy=$appliedPolicyId; chain=$candidateSummary; reason=$reason"
+        val stubNote = if (costEstimationStubbed) " [cost-estimation-stubbed]" else ""
+        return "policy=$appliedPolicyId; chain=$candidateSummary; reason=$reason$stubNote"
     }
 }
 
@@ -92,6 +101,7 @@ class RoutingEngine(
             scoredCandidates = stickyApplied,
             appliedPolicyId = policies.firstOrNull()?.policyId,
             reason = "selected=${chosen.key}; candidateCount=${filtered.size}",
+            costEstimationStubbed = candidateFactory.costEstimationStubbed,
         )
     }
 
