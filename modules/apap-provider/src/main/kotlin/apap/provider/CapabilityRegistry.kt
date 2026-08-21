@@ -3,8 +3,9 @@ package apap.provider
 import apap.domain.model.capability.CapabilityDefinition
 import apap.domain.model.vo.CapabilityId
 import apap.domain.port.CapabilityRepository
-import apap.provider.json.JsonParser
-import apap.provider.json.JsonSchemaValidator
+import com.networknt.schema.InputFormat
+import com.networknt.schema.JsonSchemaFactory
+import com.networknt.schema.SpecVersion
 
 data class RegisterCapabilityCommand(
     val capabilityId: CapabilityId,
@@ -22,7 +23,15 @@ data class SchemaValidationResult(
 /**
  * 02_システム仕様.md 2.3 Capability Resolver / 16_拡張ポイント.md 16.9: CapabilityDefinitionの登録と、
  * JSON Schemaによる入出力検証。判断ロジック（公開後の後方互換制約）は[CapabilityDefinition]自身に、
- * スキーマ構造の照合は[JsonSchemaValidator]に委譲する。
+ * スキーマ構造の照合は`com.networknt:json-schema-validator`（公式JSON Schema Test Suiteで
+ * 検証済み）に委譲する。
+ *
+ * ここで検証する入出力はテナントのリクエスト/レスポンスペイロード、すなわち攻撃者が到達可能な
+ * 入力境界である。`plugin.yaml`（運用者が書く信頼された小さな設定、PluginManifestParser参照）とは
+ * 性質が異なり、自前の簡易パーサ・簡易バリデータで済ませてはならない（深いネストによるスタック
+ * オーバーフロー、重複キー、Unicodeエスケープ、数値精度等の典型的な脆弱性に加え、JSON Schemaは
+ * 仕様が大きく、$ref/allOf/anyOf/oneOf/patternProperties/formatを黙って無視する「小さなバリデータ」は
+ * 「検証していない」より危険——検証済みだと誤信させるため）。
  */
 class CapabilityRegistry(
     private val capabilityRepository: CapabilityRepository,
@@ -59,10 +68,9 @@ class CapabilityRegistry(
             checkNotNull(capabilityRepository.findById(capabilityId)) {
                 "CapabilityDefinition not found: $capabilityId"
             }
-        val schema = JsonParser.parse(schemaOf(definition))
-        val instance = JsonParser.parse(json)
-        val errors = JsonSchemaValidator.validate(schema, instance)
-        return SchemaValidationResult(valid = errors.isEmpty(), errors = errors)
+        val schema = SCHEMA_FACTORY.getSchema(schemaOf(definition))
+        val messages = schema.validate(json, InputFormat.JSON)
+        return SchemaValidationResult(valid = messages.isEmpty(), errors = messages.map { it.message })
     }
 
     /**
@@ -87,6 +95,10 @@ class CapabilityRegistry(
 
     companion object {
         private const val PLACEHOLDER_SCHEMA = """{"type":"object"}"""
+
+        // Draft 2020-12（最新かつ最上位互換）を既定とする。個々のCapabilityスキーマが独自の
+        // `$schema`を宣言している場合は、networknt/json-schema-validatorがそちらを優先する。
+        private val SCHEMA_FACTORY = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V202012)
 
         private val INITIAL_CAPABILITIES: List<Triple<String, String, Boolean>> =
             listOf(
