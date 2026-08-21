@@ -21,6 +21,8 @@ Architecture Decision Record。`docs/design/*.md` は一次情報として編集
 | [ADR-0015](ADR-0015-adapter-test-source-may-depend-on-apap-testkit.md) | adapters/*のtestソースセットはapap-testkitへの依存を許可する（mainのみ厳格に制限） | Accepted | 補足（15章 Step3、16.1） |
 | [ADR-0016](ADR-0016-adapter-spi-typealias-boundary-and-spi-surface.md) | Adapter SPIのtypealias境界はソースレベル分離のみを提供する（SPI公開面の明示管理とバージョニング規約） | Accepted | 補足（15.1、16.1、NFR-MNT-001） |
 | [ADR-0017](ADR-0017-jackson-version-alignment-and-single-json-stack.md) | apap-runtime埋込時のJacksonバージョン整合と、プロジェクト全体でのJSONスタック一本化 | Accepted | 補足（NFR-MNT-001、埋込ライブラリとしてのapap-runtime） |
+| [ADR-0018](ADR-0018-fallback-budget-threshold-uses-p90-latency.md) | Fallback移行の予算充足判定にp90レイテンシを使う（設計書2.12からの意図的逸脱） | Accepted | 補足（P6着手前レビュー、NFR-AVL-002） |
+| [ADR-0019](ADR-0019-adapter-chunk-explicit-tool-call-completion-signal.md) | AdapterChunkにToolCallデルタの明示的完了シグナルを追加する | Accepted | 補足（P6着手前レビュー、02_システム仕様.md 2.10） |
 
 ## 命名規則
 

@@ -27,10 +27,10 @@ import java.time.Duration
  * 03_基本設計.md 3.3.5 `FallbackEngine.executeWithChain` / 02_システム仕様.md 2.12 /
  * 10_アクティビティ図.md 10.2。
  *
- * 移行条件: 直前の失敗が`fallbackable`、かつ予算残 > 次候補の最低所要見込み。設計書は
- * 「次候補のp50レイテンシ」と規定するが、[Candidate]はp90レイテンシ（`p90LatencyMs`）しか
- * 保持しないため、より保守的な値であるp90を代用する（要件充足に影響しない実装判断のため
- * ADR化せずここに根拠を残す）。
+ * 移行条件: 直前の失敗が`fallbackable`、かつ予算残 > 次候補の最低所要見込み。設計書2.12は
+ * 「次候補のp50レイテンシ」と規定するが、ADR-0018により`Candidate.p90LatencyMs`を意図的に
+ * 使う（p50データがドメインのどこにも存在しないため。ADR-0018の根拠・Consequences参照。
+ * NFR-AVL-002へ影響しうる判断のためADR化済み——実装上の些末な選択として扱わないこと）。
  *
  * Structured Output是正枠（[StructuredOutputCorrectionBudget]）はrequestId単位で1個だけ生成し、
  * Chain中の全候補（全[AttemptExecutor.execute]呼出）へ同一インスタンスを渡す
