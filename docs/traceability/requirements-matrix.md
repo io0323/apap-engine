@@ -11,17 +11,17 @@ Service/Port/Event）のみが揃った状態を指す。Application/Infrastruct
 
 | 要件ID | 要件概要 | 実装クラス | テストクラス | 状態 |
 |---|---|---|---|---|
-| FR-PRV-001 | Providerを動的に登録・更新・削除できること。削除は論理削除とし、監査履歴を保持すること | apap.domain.model.provider.Provider | ProviderTest | 実装中 |
-| FR-PRV-002 | Providerを有効化・無効化（DRAINING経由）できること。無効化中の実行中リクエストは完遂させること | apap.domain.model.provider.Provider | ProviderTest | 実装中 |
-| FR-PRV-003 | Provider毎にCapability・対応Model・リージョン・優先度・レート制限を保持すること | apap.domain.model.provider.Provider, RateLimits, Endpoint | ProviderTest | 実装中 |
-| FR-PRV-004 | ProviderはPlugin（Adapter実装）として追加可能とし、APAP本体の再ビルドを不要とすること | apap.domain.model.plugin.PluginRegistration, apap.adapter.spi.ProviderAdapter, apap.adapter.spi.plugin.PluginManifest/PluginManifestParser/SemVerRange | PluginRegistrationTest, PluginManifestParserTest, SemVerRangeTest, MockProviderAdapterContractTest | 実装中 |
+| FR-PRV-001 | Providerを動的に登録・更新・削除できること。削除は論理削除とし、監査履歴を保持すること | apap.domain.model.provider.Provider, apap.provider.ProviderManager | ProviderTest, ProviderManagerTest | 実装中 |
+| FR-PRV-002 | Providerを有効化・無効化（DRAINING経由）できること。無効化中の実行中リクエストは完遂させること | apap.domain.model.provider.Provider, apap.provider.ProviderManager（drain/enforceDrainTimeout/completeDraining） | ProviderTest, ProviderManagerTest, RoutingEngineTest（DRAINING除外・既存決定の不変性） | 実装中 |
+| FR-PRV-003 | Provider毎にCapability・対応Model・リージョン・優先度・レート制限を保持すること | apap.domain.model.provider.Provider, RateLimits, Endpoint, apap.provider.ProviderManager | ProviderTest, ProviderManagerTest | 実装中 |
+| FR-PRV-004 | ProviderはPlugin（Adapter実装）として追加可能とし、APAP本体の再ビルドを不要とすること | apap.domain.model.plugin.PluginRegistration, apap.adapter.spi.ProviderAdapter, apap.adapter.spi.plugin.PluginManifest/PluginManifestParser/SemVerRange, apap.provider.AdapterRegistry, apap.provider.ProviderManager（completeValidationでのCapability申告突合） | PluginRegistrationTest, PluginManifestParserTest, SemVerRangeTest, MockProviderAdapterContractTest, ProviderManagerTest | 実装中 |
 | FR-PRV-005 | Provider毎にCredential（複数世代）を安全に管理し、無停止ローテーションできること | apap.domain.model.vo.CredentialRef, apap.domain.service.provider.CredentialRotationService | CredentialRefTest, CredentialRotationServiceTest | 実装中 |
-| FR-PRV-006 | Providerの健全性（UP / DEGRADED / DOWN）を定期監視し、ルーティングへ反映すること | apap.domain.model.provider.ProviderHealthStatus, apap.domain.event.ProviderHealthChanged, RoutingHardFilters.passesHealthFilter | RoutingDomainServiceTest, DomainEventInstantiationTest | 実装中 |
-| FR-MDL-001 | Modelを登録・一覧・更新でき、Provider・Version・Capability・コスト単価・コンテキスト長・制約を保持すること | apap.domain.model.modelcatalog.Model, ModelCapability, apap.domain.model.cost.PriceBook | ModelTest, PriceBookTest | 実装中 |
-| FR-MDL-002 | Model Statusを管理すること（REGISTERED / TESTING / ACTIVE / DEPRECATED / RETIRED） | apap.domain.model.modelcatalog.Model | ModelTest | 実装中 |
-| FR-MDL-003 | Model Alias（論理名）を管理し、Aliasから物理Modelへの解決を行うこと。利用側はAliasのみで指定可能なこと | apap.domain.model.modelcatalog.ModelAlias, AliasTarget | ModelAliasTest | 実装中 |
-| FR-MDL-004 | Alias切替時にトラフィック比率（Canary）を指定できること | apap.domain.model.modelcatalog.AliasTarget, apap.domain.service.provider.CanaryResolutionService | CanaryResolutionServiceTest | 実装中 |
-| FR-MDL-005 | Provider AdapterのModel Discoveryにより、Provider側の新Modelを検出し登録候補として提示すること | apap.adapter.spi.ProviderAdapter.discoverModels, apap.adapter.spi.DiscoveredModel | MockProviderAdapterContractTest | 実装中 |
+| FR-PRV-006 | Providerの健全性（UP / DEGRADED / DOWN）を定期監視し、ルーティングへ反映すること | apap.domain.model.provider.ProviderHealthStatus, apap.domain.event.ProviderHealthChanged, RoutingHardFilters.passesHealthFilter, apap.routing.RoutingCandidateCache, apap.domain.port.HealthLatencyStatsRepository | RoutingDomainServiceTest, DomainEventInstantiationTest, RoutingCandidateCacheTest, CandidateFactoryTest | 実装中 |
+| FR-MDL-001 | Modelを登録・一覧・更新でき、Provider・Version・Capability・コスト単価・コンテキスト長・制約を保持すること | apap.domain.model.modelcatalog.Model, ModelCapability, apap.domain.model.cost.PriceBook, apap.provider.ModelManager | ModelTest, PriceBookTest, ModelManagerTest | 実装中 |
+| FR-MDL-002 | Model Statusを管理すること（REGISTERED / TESTING / ACTIVE / DEPRECATED / RETIRED） | apap.domain.model.modelcatalog.Model, apap.provider.ModelManager.changeStatus | ModelTest, ModelManagerTest | 実装中 |
+| FR-MDL-003 | Model Alias（論理名）を管理し、Aliasから物理Modelへの解決を行うこと。利用側はAliasのみで指定可能なこと | apap.domain.model.modelcatalog.ModelAlias, AliasTarget, apap.provider.ModelManager.assignAlias, apap.routing.CandidateFactory | ModelAliasTest, ModelManagerTest, RoutingEngineTest | 実装中 |
+| FR-MDL-004 | Alias切替時にトラフィック比率（Canary）を指定できること | apap.domain.model.modelcatalog.AliasTarget, apap.domain.service.provider.CanaryResolutionService, apap.provider.ModelManager.setCanaryWeight, apap.routing.RoutingEngine | CanaryResolutionServiceTest, ModelManagerTest, RoutingEngineTest（5.8シナリオ） | 実装中 |
+| FR-MDL-005 | Provider AdapterのModel Discoveryにより、Provider側の新Modelを検出し登録候補として提示すること | apap.adapter.spi.ProviderAdapter.discoverModels, apap.adapter.spi.DiscoveredModel, apap.provider.ModelManager.discoverModels（自動登録はしない） | MockProviderAdapterContractTest, ModelManagerTest | 実装中 |
 | FR-CAP-001 | Chat（Multi Turn / System Prompt / User Prompt）を提供すること | - | - | 未実装 |
 | FR-CAP-002 | Completionを提供すること | - | - | 未実装 |
 | FR-CAP-003 | Structured Output（JSON Schema指定、出力検証、違反時の是正リトライ）を提供すること | - | - | 未実装 |
@@ -38,14 +38,14 @@ Service/Port/Event）のみが揃った状態を指す。Application/Infrastruct
 | FR-CAP-014 | RAG（外部知識の検索・コンテキスト注入のパイプライン接続点）を提供すること | - | - | 未実装 |
 | FR-CAP-015 | Fine Tuning のジョブ管理APIを抽象化可能な拡張構造とすること | - | - | 未実装 |
 | FR-CAP-016 | Batch Processing（非同期一括実行、ジョブ状態管理、結果取得）を提供すること | apap.domain.model.execution.BatchJob, BatchItem | BatchJobTest | 実装中 |
-| FR-CAP-017 | 新Capabilityをスキーマ登録のみで追加可能とすること（Capability Registry） | apap.domain.model.capability.CapabilityDefinition, apap.domain.port.CapabilityRepository | CapabilityDefinitionTest | 実装中 |
-| FR-RTE-001 | Capability・Model制約を満たす候補（Provider×Model）を解決すること | apap.domain.service.routing.RoutingHardFilters | RoutingDomainServiceTest | 実装中 |
-| FR-RTE-002 | Cost / Latency / Availability / Region / Priority を重み付きスコアで評価し最適候補を選択すること | apap.domain.service.routing.RoutingDomainService.computeScores | RoutingDomainServiceTest | 実装中 |
-| FR-RTE-003 | Policy（Platform / Tenant / Workflow / User Preferenceの4階層、優先順は後者ほど強いが上位の禁止事項は覆せない）を適用すること | apap.domain.model.routing.RoutingPolicy, PolicyRule, apap.domain.service.routing.PolicyResolutionService | RoutingPolicyTest, PolicyResolutionServiceTest | 実装中 |
-| FR-RTE-004 | Fallback Chain（最大N段、既定3段）を構成し、失敗分類に応じて次候補へ自動移行すること | apap.domain.service.routing.RoutingDomainService.buildFallbackChain, apap.domain.service.execution.ErrorClassificationService | RoutingDomainServiceTest, ErrorClassificationServiceTest | 実装中 |
-| FR-RTE-005 | Load Balancer（同スコア帯候補への重み付きラウンドロビン）を提供すること | apap.domain.service.routing.RoutingDomainService.selectViaLoadBalancing | RoutingDomainServiceTest | 実装中 |
-| FR-RTE-006 | ルーティング決定の根拠（候補・スコア・適用Policy）を記録すること | apap.domain.service.routing.ScoredCandidate, FallbackChain, apap.domain.model.audit.AuditRecord.routingDecision | RoutingDomainServiceTest, AuditRecordTest | 実装中 |
-| FR-RTE-007 | Sticky Routing（同一Conversation内は同一Model優先）を提供すること | apap.domain.service.routing.RoutingDomainService.applyStickyBonus | RoutingDomainServiceTest | 実装中 |
+| FR-CAP-017 | 新Capabilityをスキーマ登録のみで追加可能とすること（Capability Registry） | apap.domain.model.capability.CapabilityDefinition, apap.domain.port.CapabilityRepository, apap.provider.CapabilityRegistry, apap.provider.json.JsonSchemaValidator, apap.provider.CapabilityDiscoveryQuery | CapabilityDefinitionTest, CapabilityRegistryTest, CapabilityDiscoveryQueryTest | 実装中 |
+| FR-RTE-001 | Capability・Model制約を満たす候補（Provider×Model）を解決すること | apap.domain.service.routing.RoutingHardFilters, apap.routing.CandidateFactory | RoutingDomainServiceTest, CandidateFactoryTest（a〜g各条件の単独除外） | 実装中 |
+| FR-RTE-002 | Cost / Latency / Availability / Region / Priority を重み付きスコアで評価し最適候補を選択すること | apap.domain.service.routing.RoutingDomainService.computeScores, apap.routing.spi.WeightedScoreRoutingStrategy | RoutingDomainServiceTest, RoutingEngineTest | 実装中 |
+| FR-RTE-003 | Policy（Platform / Tenant / Workflow / User Preferenceの4階層、優先順は後者ほど強いが上位の禁止事項は覆せない）を適用すること | apap.domain.model.routing.RoutingPolicy, PolicyRule, apap.domain.service.routing.PolicyResolutionService, apap.routing.RoutingEngine | RoutingPolicyTest, PolicyResolutionServiceTest, RoutingEngineTest, CapabilityDiscoveryQueryTest | 実装中 |
+| FR-RTE-004 | Fallback Chain（最大N段、既定3段）を構成し、失敗分類に応じて次候補へ自動移行すること | apap.domain.service.routing.RoutingDomainService.buildFallbackChain, apap.domain.service.execution.ErrorClassificationService, apap.routing.RoutingEngine | RoutingDomainServiceTest, ErrorClassificationServiceTest, RoutingEngineTest | 実装中 |
+| FR-RTE-005 | Load Balancer（同スコア帯候補への重み付きラウンドロビン）を提供すること | apap.domain.service.routing.RoutingDomainService.selectViaLoadBalancing, apap.routing.spi.WeightedRoundRobinLoadBalancer | RoutingDomainServiceTest, RoutingEngineTest | 実装中 |
+| FR-RTE-006 | ルーティング決定の根拠（候補・スコア・適用Policy）を記録すること | apap.domain.service.routing.ScoredCandidate, FallbackChain, apap.domain.model.audit.AuditRecord.routingDecision, apap.routing.RoutingDecision | RoutingDomainServiceTest, AuditRecordTest, RoutingEngineTest | 実装中 |
+| FR-RTE-007 | Sticky Routing（同一Conversation内は同一Model優先）を提供すること | apap.domain.service.routing.RoutingDomainService.applyStickyBonus, apap.routing.RoutingEngine | RoutingDomainServiceTest, RoutingEngineTest | 実装中 |
 | FR-PMT-001 | Prompt Pipeline（Validation → Optimization → Rendering）を提供すること | - | - | 未実装 |
 | FR-PMT-002 | Prompt Validation（サイズ上限、禁止パターン、インジェクション検査、Schema整合）を行うこと | - | - | 未実装 |
 | FR-PMT-003 | Prompt Optimization（トークン圧縮、履歴要約、テンプレート変数解決）を行うこと | - | - | 未実装 |
@@ -91,7 +91,7 @@ Service/Port/Event）のみが揃った状態を指す。Application/Infrastruct
 | NFR-EXT-003 | 新Capability追加はCapabilityスキーマ登録 + 対応Adapter拡張のみで、既存Capability利用者へ無影響 | - | - | 未実装 |
 | NFR-EXT-004 | Routing Policy / Retry戦略 / Cache実装 / 認証方式はSPIにより差替・追加可能 | - | - | 未実装 |
 | NFR-EXT-005 | 水平スケール（Kubernetes HPA、CPU/接続数/キュー長ベース） | - | - | 未実装 |
-| NFR-MNT-001 | Provider AdapterはProvider毎に独立モジュール（独立リポジトリ/独立バージョニング可）とする | adapters/adapter-mock（apap.adapter.mock.MockProviderAdapter）, apap.adapter.spi.plugin.SemVerRange | MockProviderAdapterContractTest, AdapterDependencyRuleTest | 実装中 |
+| NFR-MNT-001 | Provider AdapterはProvider毎に独立モジュール（独立リポジトリ/独立バージョニング可）とする | adapters/adapter-mock（apap.adapter.mock.MockProviderAdapter）, apap.adapter.spi.plugin.SemVerRange, apap.adapter.spi.SpiSurface（ADR-0016: SPI公開面とバージョニング規約） | MockProviderAdapterContractTest, AdapterDependencyRuleTest, SpiSurfaceTest | 実装中 |
 | NFR-MNT-002 | レイヤ間依存はClean Architectureの依存規則（外→内の一方向）に従う | - | - | 未実装 |
 | NFR-MNT-003 | 全公開APIはバージョニング（URLパス /v1）し、後方互換を1メジャーバージョン維持する | - | - | 未実装 |
 | NFR-MNT-004 | 設定は宣言的（GitOps可能なYAML/API）に管理し、変更履歴を保持する | - | - | 未実装 |
