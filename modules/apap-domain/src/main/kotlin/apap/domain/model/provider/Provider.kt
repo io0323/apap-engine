@@ -6,6 +6,7 @@ import apap.domain.model.vo.CredentialState
 import apap.domain.model.vo.ProviderId
 import apap.domain.model.vo.Region
 import apap.domain.model.vo.SemVer
+import java.time.Instant
 
 /** 09_状態遷移図.md 9.1。 */
 enum class ProviderStatus { REGISTERED, VALIDATING, ACTIVE, SUSPENDED, DRAINING, DISABLED, DELETED }
@@ -62,6 +63,7 @@ data class Provider(
     val regions: Set<Region>,
     val status: ProviderStatus = ProviderStatus.REGISTERED,
     val tags: Set<String> = emptySet(),
+    val drainStartedAt: Instant? = null,
 ) {
     init {
         require(name.isNotBlank()) { "name must not be blank" }
@@ -83,10 +85,25 @@ data class Provider(
         if (target !in allowed) {
             throw IllegalProviderStateTransitionException(status, target)
         }
-        return copy(status = target)
+        // DRAINING以外へ遷移したら排出タイマーは意味を持たないためクリアする。
+        val newDrainStartedAt = if (target == ProviderStatus.DRAINING) drainStartedAt else null
+        return copy(status = target, drainStartedAt = newDrainStartedAt)
     }
 
     fun withCredentialRefs(newCredentialRefs: List<CredentialRef>): Provider = copy(credentialRefs = newCredentialRefs)
+
+    /**
+     * 09_状態遷移図.md 9.1のDRAINING排出タイムアウト(既定300s、02_システム仕様.md 2.6.1)判定に使う
+     * 開始時刻を記録する。[CircuitBreakerState.openedAt]と同じパターン（状態遷移そのものと
+     * タイムスタンプ付与を分離し、`transitionTo`はClockに依存しない純粋な状態機械のままにする）。
+     * `status == DRAINING`のときのみ意味を持つ。
+     */
+    fun withDrainStartedAt(at: Instant): Provider {
+        check(status == ProviderStatus.DRAINING) {
+            "withDrainStartedAt is only meaningful while status == DRAINING (current status: $status)"
+        }
+        return copy(drainStartedAt = at)
+    }
 
     companion object {
         // 9.1: REGISTERED->VALIDATING->ACTIVE⇄SUSPENDED、ACTIVE->DRAINING->DISABLED->(論理)DELETED
