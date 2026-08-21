@@ -27,8 +27,26 @@ class MockProviderAdapterContractTest : AdapterContractTest() {
     private val chatCapability = CapabilityId("chat")
     private val unsupportedCapability = CapabilityId("embedding")
 
+    /**
+     * [errorRequestFor] / [timeoutExceedingRequest] は[AdapterContractTest]から常に[createAdapter]より
+     * 先に呼ばれる（呼出順序をソースで確認済み）ため、フック内でこれらのフィールドへ「次に作る
+     * Adapterインスタンスへ適用したい挙動」を書き込み、[createAdapter]がそれを読んで
+     * [MockAdapterConfig]へ反映する。`@TestFactory`が生成する複数の`DynamicTest`も同一インスタンス内で
+     * 「フック呼出→createAdapter呼出」が対になって順次実行されるため、テスト間の干渉は起きない。
+     */
+    private var pendingForcedErrorCategory: AdapterErrorCategory? = null
+    private var pendingExtraDelayMillis: Long = 0
+
     override fun createAdapter(): ProviderAdapter {
-        val adapter = MockProviderAdapter(MockAdapterConfig(supportedCapabilities = setOf(chatCapability)))
+        val config =
+            MockAdapterConfig(
+                supportedCapabilities = setOf(chatCapability),
+                forcedErrorCategory = pendingForcedErrorCategory,
+                extraDelayMillis = pendingExtraDelayMillis,
+            )
+        pendingForcedErrorCategory = null
+        pendingExtraDelayMillis = 0
+        val adapter = MockProviderAdapter(config)
         adapter.initialize(sampleAdapterConfig(), FixedSecretAccessor)
         return adapter
     }
@@ -45,33 +63,27 @@ class MockProviderAdapterContractTest : AdapterContractTest() {
         if (category == AdapterErrorCategory.UNSUPPORTED_CAPABILITY) {
             baseRequest(unsupportedCapability)
         } else {
-            baseRequest(
-                chatCapability,
-                headers = mapOf(MockAdapterHeaders.FORCED_ERROR_CATEGORY to category.name),
-            )
+            pendingForcedErrorCategory = category
+            baseRequest(chatCapability)
         }
 
     override fun secretProbeValue(): String = SECRET_VALUE
 
-    override fun timeoutExceedingRequest(): AdapterRequest =
-        baseRequest(
-            chatCapability,
-            timeout = Duration.ofMillis(50),
-            headers = mapOf(MockAdapterHeaders.EXTRA_DELAY_MILLIS to "2000"),
-        )
+    override fun timeoutExceedingRequest(): AdapterRequest {
+        pendingExtraDelayMillis = EXTRA_DELAY_MILLIS_FOR_TIMEOUT
+        return baseRequest(chatCapability, timeout = Duration.ofMillis(TIMEOUT_MILLIS))
+    }
 
     override fun streamRequest(): AdapterRequest = baseRequest(chatCapability)
 
     private fun baseRequest(
         capabilityId: CapabilityId,
         timeout: Duration = Duration.ofSeconds(5),
-        headers: Map<String, String> = emptyMap(),
     ) = AdapterRequest(
         capabilityId = capabilityId,
         modelName = "mock-model",
         input = listOf(ContentPart.Text("hello")),
         timeout = timeout,
-        traceHeaders = headers,
         authContext = AuthContext(),
     )
 
@@ -92,5 +104,7 @@ class MockProviderAdapterContractTest : AdapterContractTest() {
     companion object {
         private const val SECRET_VALUE = "super-secret-test-value"
         private const val SAMPLE_PROVIDER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        private const val TIMEOUT_MILLIS = 50L
+        private const val EXTRA_DELAY_MILLIS_FOR_TIMEOUT = 2000L
     }
 }

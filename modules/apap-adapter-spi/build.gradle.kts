@@ -7,4 +7,5 @@ dependencies {
     // implementationではなくapiとして依存先(adapters/*等)のコンパイルクラスパスへ伝播させる。
     api(libs.findLibrary("kotlinx-coroutines-core").get())
     api(project(":modules:apap-domain"))
+    testImplementation(libs.findLibrary("konsist").get())
 }

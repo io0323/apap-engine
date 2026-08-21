@@ -78,6 +78,7 @@ APAPは、AIを利用する全システム（AI Agent / Workflow Engine / Backen
 - **時刻・ID**: `Clock` と `IdGenerator` はPort化して注入（テストの決定性のため `System.currentTimeMillis()` / `UUID.randomUUID()` の直接呼び出し禁止）。
 - **テスト**: 新規publicクラスにはテストを付ける。Port群はIn-Memory実装（`apap-testkit`）でUseCase単体テストをインフラなしで回す。Adapterは `apap-testkit` のContract Testに合格させる。
 - **トレーサビリティ**: 機能実装時は `docs/traceability/requirements-matrix.md` に「FR/NFR-ID ↔ 実装クラス ↔ テスト」の行を追記する。
+- **SPIバージョニング**（ADR-0016）: `apap-adapter-spi` はsemverで管理する。`apap.adapter.spi.SpiSurface` に列挙されたSPI公開面（typealias経由で再エクスポートされるドメインVO）への破壊的変更（フィールド削除・型変更・制約強化）は `apap-adapter-spi` のメジャーバージョン更新を要する。`plugin.yaml` の `spi_version` レンジ判定（`SemVerRange`）はこの規約に基づく。typealiasはソースレベルの分離のみを提供し、バイナリ／依存関係レベルの分離は提供しないため（実体は常に元の`apap.domain.*`クラス）、この規約を省略しないこと。
 
 ## コマンド
 

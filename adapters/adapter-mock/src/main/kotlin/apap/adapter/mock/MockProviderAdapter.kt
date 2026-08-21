@@ -87,7 +87,7 @@ class MockProviderAdapter(
         resolveCredentialSafely()
         return try {
             withTimeout(request.timeout.toMillis()) {
-                simulateLatencyAndFailure(request)
+                simulateLatencyAndFailure()
                 AdapterResponse(
                     output = listOf(TextContentPart("mock response for ${request.capabilityId.value}")),
                     finishReason = FinishReason.COMPLETED,
@@ -106,7 +106,7 @@ class MockProviderAdapter(
     override suspend fun executeStream(request: AdapterRequest): ProviderAdapter.AdapterStream {
         ensureSupported(request.capabilityId)
         resolveCredentialSafely()
-        forcedErrorCategory(request)?.let { category ->
+        config.forcedErrorCategory?.let { category ->
             throw AdapterException(category, "mock executeStream forced error: $category")
         }
         val chunks = config.streamChunks.ifEmpty { defaultStreamChunks() }
@@ -140,18 +140,13 @@ class MockProviderAdapter(
         }
     }
 
-    private suspend fun simulateLatencyAndFailure(request: AdapterRequest) {
-        val extraDelayMillis =
-            request.traceHeaders[MockAdapterHeaders.EXTRA_DELAY_MILLIS]?.toLongOrNull() ?: 0L
-        val totalDelayMillis = config.latency.toMillis() + extraDelayMillis
+    private suspend fun simulateLatencyAndFailure() {
+        val totalDelayMillis = config.latency.toMillis() + config.extraDelayMillis
         if (totalDelayMillis > 0) delay(totalDelayMillis)
-        forcedErrorCategory(request)?.let { category ->
+        config.forcedErrorCategory?.let { category ->
             throw AdapterException(category, "mock execute forced error: $category")
         }
     }
-
-    private fun forcedErrorCategory(request: AdapterRequest): AdapterErrorCategory? =
-        request.traceHeaders[MockAdapterHeaders.FORCED_ERROR_CATEGORY]?.let { AdapterErrorCategory.valueOf(it) }
 
     private fun resolveCredentialSafely() {
         requireSecrets().resolve(DUMMY_CREDENTIAL_REF).use { /* 解決するだけで、値は一切外部へ出さない */ }

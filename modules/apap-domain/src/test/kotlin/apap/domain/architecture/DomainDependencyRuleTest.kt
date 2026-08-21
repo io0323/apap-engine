@@ -18,6 +18,12 @@ class DomainDependencyRuleTest {
             "apap.infrastructure",
             "apap.execution",
             "apap.routing",
+            "apap.provider",
+            "apap.adapter.spi",
+            "apap.testkit",
+            "apap.plugin",
+            "apap.api",
+            "apap.application",
             // Presentation/Transportフレームワーク
             "io.ktor",
             // DIコンテナ・アプリケーションフレームワーク（01_CLAUDE.md 不変条件6）
