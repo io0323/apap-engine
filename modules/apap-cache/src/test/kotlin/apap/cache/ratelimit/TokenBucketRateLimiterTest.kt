@@ -1,5 +1,6 @@
 package apap.cache.ratelimit
 
+import apap.domain.event.RateLimitExceeded
 import apap.domain.model.vo.ProviderId
 import apap.domain.model.vo.TenantId
 import apap.testkit.inmemory.InMemoryClock
@@ -42,7 +43,10 @@ class TokenBucketRateLimiterTest {
 
             val second = limiter.acquire(scope, "trace-2", Duration.ZERO)
             assertTrue(second is AcquireResult.Rejected)
+            // 14.3 RateLimitExceeded must still fire on the reject path (unchanged by the
+            // Permit -> AcquireResult return-type change).
             assertEquals(1, events.publishedEvents.size)
+            assertTrue(events.publishedEvents.single() is RateLimitExceeded)
         }
 
     @Test
@@ -91,6 +95,7 @@ class TokenBucketRateLimiterTest {
             assertTrue(result is AcquireResult.Rejected)
             assertEquals(10L, (result as AcquireResult.Rejected).maxWaitMillis)
             assertEquals(1, events.publishedEvents.size)
+            assertTrue(events.publishedEvents.single() is RateLimitExceeded)
         }
 
     @Test
