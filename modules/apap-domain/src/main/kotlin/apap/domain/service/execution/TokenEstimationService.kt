@@ -32,15 +32,26 @@ data class TokenEstimationConfig(
  * （本Serviceはマージン適用・切り上げのみを行う純粋関数）。
  */
 object TokenEstimationService {
+    /**
+     * 安全マージン適用前の生ヒューリスティック推定値。apap-context（`ContextTokenCounter`）が
+     * apap-execution/apap-providerへ依存せずにHEURISTICモードのトークン計上を再利用するために
+     * 公開する（apap-contextはapap-domainのみに依存でき、Adapter越しのEXACT推定へは到達できない
+     * 依存方向のため）。
+     */
+    fun rawHeuristicTokenCount(
+        text: String,
+        modelId: ModelId,
+        config: TokenEstimationConfig,
+    ): Int {
+        val ratio = config.charsPerTokenByModel[modelId] ?: config.defaultCharsPerToken
+        return ceil(text.length / ratio).toInt()
+    }
+
     fun estimateHeuristic(
         text: String,
         modelId: ModelId,
         config: TokenEstimationConfig,
-    ): TokenCount {
-        val ratio = config.charsPerTokenByModel[modelId] ?: config.defaultCharsPerToken
-        val rawTokens = ceil(text.length / ratio).toInt()
-        return applyMargin(rawTokens, config.heuristicSafetyMarginRatio)
-    }
+    ): TokenCount = applyMargin(rawHeuristicTokenCount(text, modelId, config), config.heuristicSafetyMarginRatio)
 
     fun estimateExact(
         exactRawTokenCount: Int,
