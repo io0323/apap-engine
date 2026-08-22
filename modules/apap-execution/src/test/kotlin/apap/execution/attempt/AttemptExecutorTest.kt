@@ -10,6 +10,7 @@ import apap.cache.ratelimit.RateLimitScope
 import apap.cache.ratelimit.RateLimiter
 import apap.cache.ratelimit.RateLimiterConfig
 import apap.cache.ratelimit.TokenBucketRateLimiter
+import apap.domain.event.RateLimitExceeded
 import apap.domain.model.execution.CbState
 import apap.domain.model.execution.ExecutionContext
 import apap.domain.model.execution.ProcessedPrompt
@@ -254,12 +255,12 @@ class AttemptExecutorTest {
         }
 
     /**
-     * 着手前レビュー: NormalizedError.retryAfterMsがローカルRateLimiterの拒否経路まで
-     * 正しく引き継がれること（13.4のretry_after_msの受け皿。値そのものはAcquireResult.Rejected.
-     * maxWaitMillisを流用する——「呼び出し側が待つ意思のあった上限」を再試行猶予の目安とする）。
+     * 13.4のRATE_LIMIT_EXCEEDED（429, retryable=true）と14.3のRateLimitExceededイベントは
+     * ローカルRateLimiterのacquire()がAcquireResult.Rejectedを返す経路でのみ発火する
+     * （AcquireResultへの型変更で「利用側の契約」が壊れていないことの回帰テスト）。
      */
     @Test
-    fun `local RateLimiter rejection carries maxWaitMillis into retryAfterMs`() =
+    fun `local RateLimiter rejection maps to RATE_LIMIT_EXCEEDED and publishes RateLimitExceeded`() =
         runBlocking {
             val restrictiveLimiter =
                 TokenBucketRateLimiter(
@@ -268,6 +269,8 @@ class AttemptExecutorTest {
                     ids,
                     RateLimiterConfig(defaultCapacity = 1, defaultRefillPerSecond = 0.001),
                 )
+            // Exhaust the tenant-scope bucket's single token before AttemptExecutor's own acquire() call,
+            // so the tenant-scope acquire() rejects immediately (deficit far exceeds the bounded maxWait).
             restrictiveLimiter.tryAcquire(RateLimitScope.TenantScope(testTenantId()))
 
             val adapter = scriptedAdapter(AdapterErrorCategory.TRANSIENT)
@@ -276,6 +279,7 @@ class AttemptExecutorTest {
             assertTrue(result is AttemptResult.Failure)
             val error = (result as AttemptResult.Failure).error
             assertEquals(ErrorCode.RATE_LIMIT_EXCEEDED, error.code)
-            assertEquals(Duration.ofSeconds(5).toMillis(), error.retryAfterMs)
+            assertTrue(error.retryable)
+            assertTrue(events.publishedEvents.any { it is RateLimitExceeded })
         }
 }
