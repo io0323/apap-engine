@@ -27,10 +27,10 @@ import java.time.Duration
  * 03_基本設計.md 3.3.5 `FallbackEngine.executeWithChain` / 02_システム仕様.md 2.12 /
  * 10_アクティビティ図.md 10.2。
  *
- * 移行条件: 直前の失敗が`fallbackable`、かつ予算残 > 次候補の最低所要見込み。設計書2.12は
- * 「次候補のp50レイテンシ」と規定するが、ADR-0018により`Candidate.p90LatencyMs`を意図的に
- * 使う（p50データがドメインのどこにも存在しないため。ADR-0018の根拠・Consequences参照。
- * NFR-AVL-002へ影響しうる判断のためADR化済み——実装上の些末な選択として扱わないこと）。
+ * 移行条件: 直前の失敗が`fallbackable`、かつ予算残 > 次候補の最低所要見込み。設計書2.12通り
+ * `Candidate.p50LatencyMs`（次候補のp50レイテンシ）を使う。ADR-0018はp90を使う判断をしていたが、
+ * その根拠が実装コストであり設計論拠ではなかったためADR-0020でSupersededとし、本来の設計書通り
+ * p50に復帰した（NFR-AVL-002へ影響しうる判断のためADR化済み——実装上の些末な選択として扱わないこと）。
  *
  * Structured Output是正枠（[StructuredOutputCorrectionBudget]）はrequestId単位で1個だけ生成し、
  * Chain中の全候補（全[AttemptExecutor.execute]呼出）へ同一インスタンスを渡す
@@ -74,7 +74,7 @@ class FallbackEngine(
             if (!failure.error.fallbackable) break
             val nextCandidate = chain.candidates.getOrNull(index + 1) ?: break
             val remaining = ctx.remaining(clock.now())
-            val neededForNext = Duration.ofMillis(nextCandidate.p90LatencyMs.toLong())
+            val neededForNext = Duration.ofMillis(nextCandidate.p50LatencyMs.toLong())
             if (remaining <= neededForNext) break
 
             fallbackCount += 1

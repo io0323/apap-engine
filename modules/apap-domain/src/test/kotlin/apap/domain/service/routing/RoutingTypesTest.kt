@@ -15,6 +15,7 @@ import java.math.BigDecimal
 
 class RoutingTypesTest {
     private fun candidate(
+        p50LatencyMs: Double = 50.0,
         p90LatencyMs: Double = 100.0,
         successRate: Double = 1.0,
         providerPriority: Int = 50,
@@ -28,6 +29,7 @@ class RoutingTypesTest {
         health = ProviderHealthStatus.UP,
         supportedRegions = emptySet(),
         estimatedCost = Money(BigDecimal.ONE, "USD"),
+        p50LatencyMs = p50LatencyMs,
         p90LatencyMs = p90LatencyMs,
         successRate = successRate,
         providerPriority = providerPriority,
@@ -35,6 +37,11 @@ class RoutingTypesTest {
         hasPermission = true,
         quotaRemaining = true,
     )
+
+    @Test
+    fun `rejects a negative p50LatencyMs`() {
+        assertThrows(IllegalArgumentException::class.java) { candidate(p50LatencyMs = -1.0) }
+    }
 
     @Test
     fun `rejects a negative p90LatencyMs`() {

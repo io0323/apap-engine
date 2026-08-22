@@ -105,6 +105,7 @@ class CandidateFactory(
             health = cache.providerHealth(provider.providerId) ?: ProviderHealthStatus.UP,
             supportedRegions = model.regions,
             estimatedCost = costEstimator.estimate(provider.providerId, model.modelId),
+            p50LatencyMs = healthSnapshot.p50LatencyMs.toDouble(),
             p90LatencyMs = healthSnapshot.p90LatencyMs.toDouble(),
             successRate = healthSnapshot.successRate,
             providerPriority = provider.priority,

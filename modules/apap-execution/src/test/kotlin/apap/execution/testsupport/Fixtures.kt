@@ -81,6 +81,7 @@ fun testCandidate(
     providerId: ProviderId = testProviderId(),
     modelId: ModelId = testModelId(),
     cbState: CbState = CbState.CLOSED,
+    p50LatencyMs: Double = 50.0,
     p90LatencyMs: Double = 100.0,
 ): Candidate =
     Candidate(
@@ -92,6 +93,7 @@ fun testCandidate(
         health = ProviderHealthStatus.UP,
         supportedRegions = setOf(TEST_REGION),
         estimatedCost = Money.zero("USD"),
+        p50LatencyMs = p50LatencyMs,
         p90LatencyMs = p90LatencyMs,
         successRate = 1.0,
         providerPriority = 50,
