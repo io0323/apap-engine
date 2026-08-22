@@ -1,6 +1,7 @@
 package apap.execution
 
 import apap.cache.CacheEngine
+import apap.cache.ratelimit.AcquireResult
 import apap.cache.ratelimit.RateLimitScope
 import apap.cache.ratelimit.RateLimiter
 import apap.cost.CostEngine
@@ -17,6 +18,8 @@ import apap.domain.model.execution.CanonicalRequest
 import apap.domain.model.execution.CanonicalResponse
 import apap.domain.model.execution.ExecutionContext
 import apap.domain.model.execution.ProcessedPrompt
+import apap.domain.model.vo.AdapterErrorCategory
+import apap.domain.model.vo.ErrorCode
 import apap.domain.model.vo.NormalizedError
 import apap.domain.model.vo.TenantId
 import apap.domain.port.Clock
@@ -99,10 +102,7 @@ class DefaultExecutionEngine(
 
         val cached = phases.time("cache-lookup") { cacheEngine.lookup(request, prompt) }
         if (cached != null) {
-            quotaManager.recordCacheShortCircuit(request.tenantId, quotaPolicyProvider(request.tenantId))
-            // NFR-PRF-004 (Cache Hit時応答 p99<=20ms): 有界待機を求めず即時可否判定のみとする。
-            rateLimiter.acquire(RateLimitScope.TenantScope(request.tenantId), request.traceId, Duration.ZERO)
-            return cached.copy(cached = true)
+            return handleCacheHit(request, cached)
         }
 
         val decision =
@@ -212,6 +212,30 @@ class DefaultExecutionEngine(
         )
         throw ExecutionFailedException(result.error)
     }
+
+    private suspend fun handleCacheHit(
+        request: CanonicalRequest,
+        cached: CanonicalResponse,
+    ): CanonicalResponse {
+        quotaManager.recordCacheShortCircuit(request.tenantId, quotaPolicyProvider(request.tenantId))
+        // NFR-PRF-004 (Cache Hit時応答 p99<=20ms): 有界待機を求めず即時可否判定のみとする。
+        val acquireResult =
+            rateLimiter.acquire(RateLimitScope.TenantScope(request.tenantId), request.traceId, Duration.ZERO)
+        if (acquireResult is AcquireResult.Rejected) {
+            throw ExecutionFailedException(cacheHitRateLimitedError())
+        }
+        return cached.copy(cached = true)
+    }
+
+    private fun cacheHitRateLimitedError(): NormalizedError =
+        NormalizedError(
+            code = ErrorCode.RATE_LIMIT_EXCEEDED,
+            category = AdapterErrorCategory.RATE_LIMITED,
+            message = "local rate limiter rejected this cache-hit short-circuit",
+            retryable = true,
+            fallbackable = false,
+            cbRecordable = false,
+        )
 
     private fun compositeIdempotencyKey(request: CanonicalRequest): String? =
         request.idempotencyKey?.let { "${request.tenantId.value}:$it" }

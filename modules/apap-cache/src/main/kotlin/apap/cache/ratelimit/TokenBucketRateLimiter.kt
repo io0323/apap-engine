@@ -7,7 +7,6 @@ import apap.domain.port.Clock
 import apap.domain.port.DomainEventPublisher
 import apap.domain.port.IdGenerator
 import kotlinx.coroutines.delay
-import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -87,27 +86,27 @@ class TokenBucketRateLimiter(
         return true
     }
 
+    @Suppress("ReturnCount")
     override suspend fun acquire(
         scope: RateLimitScope,
         traceId: String,
         maxWait: Duration,
         cost: Int,
-    ): Permit {
+    ): AcquireResult {
         require(!maxWait.isNegative) { "maxWait must not be negative: $maxWait" }
-        if (tryAcquire(scope, cost)) return Permit(scope)
+        if (tryAcquire(scope, cost)) return AcquireResult.Acquired(scope, Permit(scope), waitedMillis = 0L)
 
         val waitMillis = estimateWaitMillis(scope, cost)
         if (waitMillis > maxWait.toMillis()) {
-            reject(scope, traceId, waitMillis, maxWait)
+            return reject(scope, traceId, waitMillis, maxWait)
         }
 
-        logger.debug("rate limiter action=wait scope={} waitMillis={}", scope, waitMillis)
         delay(waitMillis)
 
         // The bucket may have been drained by a concurrent acquirer while we waited; re-check
         // rather than assume success (bounded wait, not a guarantee).
-        if (tryAcquire(scope, cost)) return Permit(scope)
-        reject(scope, traceId, waitMillis, maxWait)
+        if (tryAcquire(scope, cost)) return AcquireResult.Acquired(scope, Permit(scope), waitedMillis = waitMillis)
+        return reject(scope, traceId, waitMillis, maxWait)
     }
 
     private fun reject(
@@ -115,15 +114,9 @@ class TokenBucketRateLimiter(
         traceId: String,
         waitMillis: Long,
         maxWait: Duration,
-    ): Nothing {
-        logger.debug(
-            "rate limiter action=reject scope={} waitMillis={} maxWaitMs={}",
-            scope,
-            waitMillis,
-            maxWait.toMillis(),
-        )
+    ): AcquireResult.Rejected {
         eventPublisher.publish(rateLimitExceededEvent(scope, traceId))
-        throw RateLimitExceededException(scope)
+        return AcquireResult.Rejected(scope, waitedMillis = waitMillis, maxWaitMillis = maxWait.toMillis())
     }
 
     @Synchronized
@@ -181,6 +174,5 @@ class TokenBucketRateLimiter(
 
     private companion object {
         const val MILLIS_PER_SECOND = 1000.0
-        val logger = LoggerFactory.getLogger(TokenBucketRateLimiter::class.java)
     }
 }

@@ -12,7 +12,6 @@ import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
-import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.Test
 import java.time.Duration
 import java.time.Instant
@@ -23,15 +22,6 @@ class TokenBucketRateLimiterTest {
     private val events = InMemoryDomainEventPublisher()
     private val ids = InMemoryIdGenerator()
     private val scope = RateLimitScope.TenantScope(TenantId("01ARZ3NDEKTSV4RRFFQ69G5FA0"))
-
-    private suspend fun expectRejected(block: suspend () -> Unit) {
-        try {
-            block()
-            fail<Unit>("expected RateLimitExceededException")
-        } catch (_: RateLimitExceededException) {
-            // expected
-        }
-    }
 
     @Test
     fun `allows consumption up to capacity then rejects`() {
@@ -46,8 +36,12 @@ class TokenBucketRateLimiterTest {
     fun `acquire with zero maxWait behaves like an immediate accept-or-reject check`() =
         runBlocking {
             val limiter = TokenBucketRateLimiter(clock, events, ids, RateLimiterConfig(defaultCapacity = 1))
-            limiter.acquire(scope, "trace-1", Duration.ZERO)
-            expectRejected { limiter.acquire(scope, "trace-2", Duration.ZERO) }
+            val first = limiter.acquire(scope, "trace-1", Duration.ZERO)
+            assertTrue(first is AcquireResult.Acquired)
+            assertEquals(0L, (first as AcquireResult.Acquired).waitedMillis)
+
+            val second = limiter.acquire(scope, "trace-2", Duration.ZERO)
+            assertTrue(second is AcquireResult.Rejected)
             assertEquals(1, events.publishedEvents.size)
         }
 
@@ -69,12 +63,16 @@ class TokenBucketRateLimiterTest {
                     delay(10)
                     clock.advanceBy(1)
                 }
-            withTimeout(2_000) {
-                limiter.acquire(scope, "trace-2", Duration.ofMillis(500))
-            }
+            val result =
+                withTimeout(2_000) {
+                    limiter.acquire(scope, "trace-2", Duration.ofMillis(500))
+                }
             clockAdvancer.join()
-            // The wait succeeded: no RateLimitExceeded should have been published.
+            // The wait succeeded: no RateLimitExceeded should have been published, and the outcome
+            // carries the wait duration it actually took (not reconstructed from a log string).
             assertTrue(events.publishedEvents.isEmpty())
+            assertTrue(result is AcquireResult.Acquired)
+            assertTrue((result as AcquireResult.Acquired).waitedMillis > 0L)
         }
 
     @Test
@@ -86,9 +84,12 @@ class TokenBucketRateLimiterTest {
             limiter.acquire(scope, "trace-1", Duration.ZERO)
 
             // If acquire actually waited out the ~1000ms deficit before giving up, this would time out.
-            withTimeout(500) {
-                expectRejected { limiter.acquire(scope, "trace-2", Duration.ofMillis(10)) }
-            }
+            val result =
+                withTimeout(500) {
+                    limiter.acquire(scope, "trace-2", Duration.ofMillis(10))
+                }
+            assertTrue(result is AcquireResult.Rejected)
+            assertEquals(10L, (result as AcquireResult.Rejected).maxWaitMillis)
             assertEquals(1, events.publishedEvents.size)
         }
 
