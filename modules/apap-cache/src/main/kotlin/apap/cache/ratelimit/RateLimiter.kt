@@ -19,15 +19,34 @@ sealed interface RateLimitScope {
     ) : RateLimitScope
 }
 
-/** [RateLimiter.acquire]が拒否した際に送出する。 */
-class RateLimitExceededException(
-    val scope: RateLimitScope,
-) : Exception("Rate limit exceeded for scope: $scope")
-
 /** [RateLimiter.acquire]/[RateLimiter.tryAcquire]が許可した消費を表す不透明なトークン。 */
 class Permit internal constructor(
     val scope: RateLimitScope,
 )
+
+/**
+ * [RateLimiter.acquire]の結果。02_システム仕様.md 2.19が定義するメトリクスラベル
+ * `action(wait/reject)`を、ログ文字列から再構成するのではなく戻り値として型で表現する
+ * （P8のメトリクス実装がこの型を直接読み、配線をやり直さずに済むようにするため）。
+ * 「待たずに即座に確保できた」場合も[Acquired]で表し、[Acquired.waitedMillis]が0になる。
+ */
+sealed interface AcquireResult {
+    val scope: RateLimitScope
+
+    /** トークンを確保できた（[waitedMillis]は0以上、待機なしなら0）。 */
+    data class Acquired(
+        override val scope: RateLimitScope,
+        val permit: Permit,
+        val waitedMillis: Long,
+    ) : AcquireResult
+
+    /** [maxWaitMillis]まで待った（あるいは即座に）が、なお確保できず拒否した。 */
+    data class Rejected(
+        override val scope: RateLimitScope,
+        val waitedMillis: Long,
+        val maxWaitMillis: Long,
+    ) : AcquireResult
+}
 
 /**
  * 03_基本設計.md 3.3.6 `RateLimiter`。`cost`は消費するリクエスト数単位（既定1）。
@@ -43,15 +62,16 @@ class Permit internal constructor(
  */
 interface RateLimiter {
     /**
-     * [maxWait]まで待ってもトークンを確保できなければ拒否する。
-     * @throws RateLimitExceededException 待機してもなお消費可能なトークンが不足している場合。
+     * [maxWait]まで待ってもトークンを確保できなければ[AcquireResult.Rejected]を返す
+     * （例外は使わない。wait/rejectの結果自体が呼び出し側にとって通常の分岐であり、
+     * ログ文字列からの復元を要求しない構造化データとして返すため）。
      */
     suspend fun acquire(
         scope: RateLimitScope,
         traceId: String,
         maxWait: Duration,
         cost: Int = 1,
-    ): Permit
+    ): AcquireResult
 
     fun tryAcquire(
         scope: RateLimitScope,

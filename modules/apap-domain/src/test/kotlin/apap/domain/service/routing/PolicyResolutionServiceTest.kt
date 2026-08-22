@@ -42,6 +42,7 @@ class PolicyResolutionServiceTest {
         health = ProviderHealthStatus.UP,
         supportedRegions = supportedRegions,
         estimatedCost = Money(BigDecimal.ONE, "USD"),
+        p50LatencyMs = 50.0,
         p90LatencyMs = 100.0,
         successRate = 1.0,
         providerPriority = 50,

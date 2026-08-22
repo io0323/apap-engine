@@ -42,6 +42,7 @@ data class Candidate(
     val health: ProviderHealthStatus,
     val supportedRegions: Set<Region>,
     val estimatedCost: Money,
+    val p50LatencyMs: Double,
     val p90LatencyMs: Double,
     val successRate: Double,
     val providerPriority: Int,
@@ -50,6 +51,7 @@ data class Candidate(
     val quotaRemaining: Boolean,
 ) {
     init {
+        require(p50LatencyMs >= 0.0) { "p50LatencyMs must not be negative: $p50LatencyMs" }
         require(p90LatencyMs >= 0.0) { "p90LatencyMs must not be negative: $p90LatencyMs" }
         require(successRate in 0.0..1.0) { "successRate must be within 0.0..1.0: $successRate" }
         require(providerPriority in MIN_PRIORITY..MAX_PRIORITY) {

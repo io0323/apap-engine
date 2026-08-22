@@ -2,7 +2,7 @@ package apap.execution.attempt
 
 import apap.adapter.spi.AdapterException
 import apap.adapter.spi.AdapterResponse
-import apap.cache.ratelimit.RateLimitExceededException
+import apap.cache.ratelimit.AcquireResult
 import apap.cache.ratelimit.RateLimitScope
 import apap.cache.ratelimit.RateLimiter
 import apap.domain.event.EventMetadata
@@ -123,13 +123,19 @@ class AttemptExecutor(
                 return AttemptOutcome.Failed(providerUnavailableError(), retryAfter = null)
             }
 
-        try {
-            // 2.8 step8b: 有界待機。予算残と設定可能な上限の小さいほうでキャップする
-            // （無制限待機でタイムアウト予算を食い潰さない）。
-            val waitBudget = minOf(remainingBudget, rateLimiterMaxWait)
-            rateLimiter.acquire(RateLimitScope.TenantScope(ctx.tenantId), ctx.traceId, waitBudget)
+        // 2.8 step8b: 有界待機。予算残と設定可能な上限の小さいほうでキャップする
+        // （無制限待機でタイムアウト予算を食い潰さない）。wait/rejectはAcquireResultの型で
+        // 判定する（例外を使わない。2.19のメトリクスラベルaction(wait/reject)をログ文字列
+        // から復元させないための構造化データとして戻り値に持たせている）。
+        val waitBudget = minOf(remainingBudget, rateLimiterMaxWait)
+        val tenantAcquire = rateLimiter.acquire(RateLimitScope.TenantScope(ctx.tenantId), ctx.traceId, waitBudget)
+        if (tenantAcquire is AcquireResult.Rejected) {
+            circuitBreaker.recordFailure(permit, cbRecordable = false, traceId = ctx.traceId)
+            return AttemptOutcome.Failed(rateLimitedError(), retryAfter = null)
+        }
+        val providerAcquire =
             rateLimiter.acquire(RateLimitScope.ProviderScope(candidate.providerId), ctx.traceId, waitBudget)
-        } catch (_: RateLimitExceededException) {
+        if (providerAcquire is AcquireResult.Rejected) {
             circuitBreaker.recordFailure(permit, cbRecordable = false, traceId = ctx.traceId)
             return AttemptOutcome.Failed(rateLimitedError(), retryAfter = null)
         }

@@ -7,16 +7,18 @@ package apap.domain.model.vo
  */
 data class HealthLatencySnapshot(
     val successRate: Double,
+    val p50LatencyMs: Long,
     val p90LatencyMs: Long,
     val sampleCount: Int,
 ) {
     init {
         require(successRate in 0.0..1.0) { "successRate must be within 0.0..1.0: $successRate" }
+        require(p50LatencyMs >= 0) { "p50LatencyMs must not be negative: $p50LatencyMs" }
         require(p90LatencyMs >= 0) { "p90LatencyMs must not be negative: $p90LatencyMs" }
         require(sampleCount >= 0) { "sampleCount must not be negative: $sampleCount" }
     }
 
     companion object {
-        val EMPTY = HealthLatencySnapshot(successRate = 1.0, p90LatencyMs = 0, sampleCount = 0)
+        val EMPTY = HealthLatencySnapshot(successRate = 1.0, p50LatencyMs = 0, p90LatencyMs = 0, sampleCount = 0)
     }
 }

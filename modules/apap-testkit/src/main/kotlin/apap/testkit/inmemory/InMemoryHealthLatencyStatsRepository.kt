@@ -14,7 +14,7 @@ private data class Outcome(
     val at: Instant,
 )
 
-/** [recordOutcome]で積んだ生の観測値から、[snapshot]呼出時にウィンドウ内の成功率とp90レイテンシを集計する。 */
+/** [recordOutcome]で積んだ生の観測値から、[snapshot]呼出時にウィンドウ内の成功率とp50/p90レイテンシを集計する。 */
 class InMemoryHealthLatencyStatsRepository : HealthLatencyStatsRepository {
     private val outcomes = mutableMapOf<Pair<ProviderId, ModelId>, MutableList<Outcome>>()
 
@@ -41,15 +41,21 @@ class InMemoryHealthLatencyStatsRepository : HealthLatencyStatsRepository {
 
         val successRate = inWindow.count { it.success }.toDouble() / inWindow.size
         val sortedLatencies = inWindow.map { it.latencyMs }.sorted()
-        val p90Index = (ceil(P90_QUANTILE * sortedLatencies.size).toInt() - 1).coerceIn(0, sortedLatencies.size - 1)
         return HealthLatencySnapshot(
             successRate = successRate,
-            p90LatencyMs = sortedLatencies[p90Index],
+            p50LatencyMs = sortedLatencies[quantileIndex(P50_QUANTILE, sortedLatencies.size)],
+            p90LatencyMs = sortedLatencies[quantileIndex(P90_QUANTILE, sortedLatencies.size)],
             sampleCount = inWindow.size,
         )
     }
 
+    private fun quantileIndex(
+        quantile: Double,
+        size: Int,
+    ): Int = (ceil(quantile * size).toInt() - 1).coerceIn(0, size - 1)
+
     companion object {
+        private const val P50_QUANTILE = 0.5
         private const val P90_QUANTILE = 0.9
     }
 }

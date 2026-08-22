@@ -121,11 +121,11 @@ class FallbackEngineTest {
         return FallbackEngine(attemptExecutor, cb, contextManager, clock, events, ids, structuredOutputConfig)
     }
 
-    private fun chain(p90LatencyMsB: Double = 100.0) =
+    private fun chain(p50LatencyMsB: Double = 50.0) =
         FallbackChain(
             listOf(
-                testCandidate(providerA, modelA, p90LatencyMs = 100.0),
-                testCandidate(providerB, modelB, p90LatencyMs = p90LatencyMsB),
+                testCandidate(providerA, modelA, p50LatencyMs = 50.0),
+                testCandidate(providerB, modelB, p50LatencyMs = p50LatencyMsB),
             ),
         )
 
@@ -205,16 +205,16 @@ class FallbackEngineTest {
         }
 
     @Test
-    fun `stops when remaining budget cannot cover the next candidate's p90 latency`() =
+    fun `stops when remaining budget cannot cover the next candidate's p50 latency`() =
         runBlocking {
             val config = MockAdapterConfig(forcedErrorCategory = AdapterErrorCategory.PROVIDER_UNAVAILABLE)
             val adapterA = initialized(providerA, config)
             val adapterB = initialized(providerB, MockAdapterConfig())
-            // Budget is only 500ms; the next candidate's p90 latency (100_000ms) exceeds it.
+            // Budget is only 500ms; the next candidate's p50 latency (100_000ms) exceeds it.
             val result =
                 runChain(
                     engine(adapterA, adapterB),
-                    fallbackChain = chain(p90LatencyMsB = 100_000.0),
+                    fallbackChain = chain(p50LatencyMsB = 100_000.0),
                     timeoutBudget = Duration.ofMillis(500),
                 )
             assertTrue(result is AttemptResult.Failure)
