@@ -3,6 +3,7 @@ package apap.domain.service.execution
 import apap.domain.model.vo.AdapterErrorCategory
 import apap.domain.model.vo.ErrorCode
 import apap.domain.model.vo.NormalizedError
+import java.time.Duration
 
 /**
  * 04_ドメイン設計.md 4.6 / 02_システム仕様.md 2.11: AdapterException→NormalizedError分類。
@@ -21,6 +22,7 @@ object ErrorClassificationService {
         message: String,
         providerDetail: String? = null,
         contentFilteredFallbackAllowed: Boolean = false,
+        retryAfter: Duration? = null,
     ): NormalizedError {
         val rule = ruleFor(category, contentFilteredFallbackAllowed)
         return NormalizedError(
@@ -30,6 +32,7 @@ object ErrorClassificationService {
             retryable = rule.retryable,
             fallbackable = rule.fallbackable,
             cbRecordable = rule.cbRecordable,
+            retryAfterMs = retryAfter?.toMillis(),
             providerDetail = providerDetail,
         )
     }
