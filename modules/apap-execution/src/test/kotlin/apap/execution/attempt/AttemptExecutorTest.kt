@@ -6,8 +6,11 @@ import apap.adapter.mock.ScriptedOutcome
 import apap.adapter.spi.AdapterConfig
 import apap.adapter.spi.SecretAccessor
 import apap.adapter.spi.SecretValue
+import apap.cache.ratelimit.RateLimitScope
+import apap.cache.ratelimit.RateLimiter
 import apap.cache.ratelimit.RateLimiterConfig
 import apap.cache.ratelimit.TokenBucketRateLimiter
+import apap.domain.event.RateLimitExceeded
 import apap.domain.model.execution.CbState
 import apap.domain.model.execution.ExecutionContext
 import apap.domain.model.execution.ProcessedPrompt
@@ -16,6 +19,7 @@ import apap.domain.model.provider.RateLimits
 import apap.domain.model.vo.AdapterErrorCategory
 import apap.domain.model.vo.CbKey
 import apap.domain.model.vo.CredentialRef
+import apap.domain.model.vo.ErrorCode
 import apap.execution.adapter.out.InMemoryCircuitBreakerStateStore
 import apap.execution.circuitbreaker.CircuitBreaker
 import apap.execution.circuitbreaker.CircuitBreakerConfig
@@ -30,6 +34,7 @@ import apap.execution.testsupport.testModel
 import apap.execution.testsupport.testModelId
 import apap.execution.testsupport.testProvider
 import apap.execution.testsupport.testProviderId
+import apap.execution.testsupport.testTenantId
 import apap.testkit.inmemory.InMemoryClock
 import apap.testkit.inmemory.InMemoryDomainEventPublisher
 import apap.testkit.inmemory.InMemoryIdGenerator
@@ -67,6 +72,7 @@ class AttemptExecutorTest {
         adapter: MockProviderAdapter,
         retryConfig: RetryConfig = RetryConfig(),
         cb: CircuitBreaker = defaultCb(),
+        rateLimiter: RateLimiter = this.rateLimiter,
     ): AttemptExecutor =
         AttemptExecutor(
             providerRepository,
@@ -246,5 +252,34 @@ class AttemptExecutorTest {
 
             val result = run(executorFor(scriptedAdapter(), cb = cb))
             assertTrue(result is AttemptResult.Failure)
+        }
+
+    /**
+     * 13.4のRATE_LIMIT_EXCEEDED（429, retryable=true）と14.3のRateLimitExceededイベントは
+     * ローカルRateLimiterのacquire()がAcquireResult.Rejectedを返す経路でのみ発火する
+     * （AcquireResultへの型変更で「利用側の契約」が壊れていないことの回帰テスト）。
+     */
+    @Test
+    fun `local RateLimiter rejection maps to RATE_LIMIT_EXCEEDED and publishes RateLimitExceeded`() =
+        runBlocking {
+            val restrictiveLimiter =
+                TokenBucketRateLimiter(
+                    clock,
+                    events,
+                    ids,
+                    RateLimiterConfig(defaultCapacity = 1, defaultRefillPerSecond = 0.001),
+                )
+            // Exhaust the tenant-scope bucket's single token before AttemptExecutor's own acquire() call,
+            // so the tenant-scope acquire() rejects immediately (deficit far exceeds the bounded maxWait).
+            restrictiveLimiter.tryAcquire(RateLimitScope.TenantScope(testTenantId()))
+
+            val adapter = scriptedAdapter(AdapterErrorCategory.TRANSIENT)
+            val result = run(executorFor(adapter, rateLimiter = restrictiveLimiter))
+
+            assertTrue(result is AttemptResult.Failure)
+            val error = (result as AttemptResult.Failure).error
+            assertEquals(ErrorCode.RATE_LIMIT_EXCEEDED, error.code)
+            assertTrue(error.retryable)
+            assertTrue(events.publishedEvents.any { it is RateLimitExceeded })
         }
 }
