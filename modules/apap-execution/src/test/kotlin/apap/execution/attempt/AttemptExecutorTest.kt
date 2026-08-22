@@ -6,6 +6,8 @@ import apap.adapter.mock.ScriptedOutcome
 import apap.adapter.spi.AdapterConfig
 import apap.adapter.spi.SecretAccessor
 import apap.adapter.spi.SecretValue
+import apap.cache.ratelimit.RateLimitScope
+import apap.cache.ratelimit.RateLimiter
 import apap.cache.ratelimit.RateLimiterConfig
 import apap.cache.ratelimit.TokenBucketRateLimiter
 import apap.domain.model.execution.CbState
@@ -16,6 +18,7 @@ import apap.domain.model.provider.RateLimits
 import apap.domain.model.vo.AdapterErrorCategory
 import apap.domain.model.vo.CbKey
 import apap.domain.model.vo.CredentialRef
+import apap.domain.model.vo.ErrorCode
 import apap.execution.adapter.out.InMemoryCircuitBreakerStateStore
 import apap.execution.circuitbreaker.CircuitBreaker
 import apap.execution.circuitbreaker.CircuitBreakerConfig
@@ -30,6 +33,7 @@ import apap.execution.testsupport.testModel
 import apap.execution.testsupport.testModelId
 import apap.execution.testsupport.testProvider
 import apap.execution.testsupport.testProviderId
+import apap.execution.testsupport.testTenantId
 import apap.testkit.inmemory.InMemoryClock
 import apap.testkit.inmemory.InMemoryDomainEventPublisher
 import apap.testkit.inmemory.InMemoryIdGenerator
@@ -67,6 +71,7 @@ class AttemptExecutorTest {
         adapter: MockProviderAdapter,
         retryConfig: RetryConfig = RetryConfig(),
         cb: CircuitBreaker = defaultCb(),
+        rateLimiter: RateLimiter = this.rateLimiter,
     ): AttemptExecutor =
         AttemptExecutor(
             providerRepository,
@@ -246,5 +251,31 @@ class AttemptExecutorTest {
 
             val result = run(executorFor(scriptedAdapter(), cb = cb))
             assertTrue(result is AttemptResult.Failure)
+        }
+
+    /**
+     * 着手前レビュー: NormalizedError.retryAfterMsがローカルRateLimiterの拒否経路まで
+     * 正しく引き継がれること（13.4のretry_after_msの受け皿。値そのものはAcquireResult.Rejected.
+     * maxWaitMillisを流用する——「呼び出し側が待つ意思のあった上限」を再試行猶予の目安とする）。
+     */
+    @Test
+    fun `local RateLimiter rejection carries maxWaitMillis into retryAfterMs`() =
+        runBlocking {
+            val restrictiveLimiter =
+                TokenBucketRateLimiter(
+                    clock,
+                    events,
+                    ids,
+                    RateLimiterConfig(defaultCapacity = 1, defaultRefillPerSecond = 0.001),
+                )
+            restrictiveLimiter.tryAcquire(RateLimitScope.TenantScope(testTenantId()))
+
+            val adapter = scriptedAdapter(AdapterErrorCategory.TRANSIENT)
+            val result = run(executorFor(adapter, rateLimiter = restrictiveLimiter))
+
+            assertTrue(result is AttemptResult.Failure)
+            val error = (result as AttemptResult.Failure).error
+            assertEquals(ErrorCode.RATE_LIMIT_EXCEEDED, error.code)
+            assertEquals(Duration.ofSeconds(5).toMillis(), error.retryAfterMs)
         }
 }

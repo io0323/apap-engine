@@ -222,12 +222,12 @@ class DefaultExecutionEngine(
         val acquireResult =
             rateLimiter.acquire(RateLimitScope.TenantScope(request.tenantId), request.traceId, Duration.ZERO)
         if (acquireResult is AcquireResult.Rejected) {
-            throw ExecutionFailedException(cacheHitRateLimitedError())
+            throw ExecutionFailedException(cacheHitRateLimitedError(acquireResult))
         }
         return cached.copy(cached = true)
     }
 
-    private fun cacheHitRateLimitedError(): NormalizedError =
+    private fun cacheHitRateLimitedError(rejected: AcquireResult.Rejected): NormalizedError =
         NormalizedError(
             code = ErrorCode.RATE_LIMIT_EXCEEDED,
             category = AdapterErrorCategory.RATE_LIMITED,
@@ -235,6 +235,8 @@ class DefaultExecutionEngine(
             retryable = true,
             fallbackable = false,
             cbRecordable = false,
+            // maxWait=Duration.ZEROで呼んでいるため常に0（即時可否判定のみ、待つ意思なし）。
+            retryAfterMs = rejected.maxWaitMillis,
         )
 
     private fun compositeIdempotencyKey(request: CanonicalRequest): String? =

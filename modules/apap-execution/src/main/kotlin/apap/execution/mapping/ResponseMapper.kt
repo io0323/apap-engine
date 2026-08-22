@@ -70,6 +70,7 @@ object ResponseMapper {
             message = e.message ?: "adapter error",
             providerDetail = e.providerDetail,
             contentFilteredFallbackAllowed = contentFilteredFallbackAllowed,
+            retryAfter = e.retryAfter,
         )
 
     private fun mapToolCall(t: apap.adapter.spi.ToolCall): ToolCall =

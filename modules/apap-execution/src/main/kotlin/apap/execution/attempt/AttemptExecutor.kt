@@ -131,13 +131,13 @@ class AttemptExecutor(
         val tenantAcquire = rateLimiter.acquire(RateLimitScope.TenantScope(ctx.tenantId), ctx.traceId, waitBudget)
         if (tenantAcquire is AcquireResult.Rejected) {
             circuitBreaker.recordFailure(permit, cbRecordable = false, traceId = ctx.traceId)
-            return AttemptOutcome.Failed(rateLimitedError(), retryAfter = null)
+            return AttemptOutcome.Failed(rateLimitedError(tenantAcquire), retryAfter = null)
         }
         val providerAcquire =
             rateLimiter.acquire(RateLimitScope.ProviderScope(candidate.providerId), ctx.traceId, waitBudget)
         if (providerAcquire is AcquireResult.Rejected) {
             circuitBreaker.recordFailure(permit, cbRecordable = false, traceId = ctx.traceId)
-            return AttemptOutcome.Failed(rateLimitedError(), retryAfter = null)
+            return AttemptOutcome.Failed(rateLimitedError(providerAcquire), retryAfter = null)
         }
 
         val provider = providerRepository.findById(candidate.providerId)
@@ -209,7 +209,7 @@ class AttemptExecutor(
             cbRecordable = false,
         )
 
-    private fun rateLimitedError(): NormalizedError =
+    private fun rateLimitedError(rejected: AcquireResult.Rejected): NormalizedError =
         NormalizedError(
             code = ErrorCode.RATE_LIMIT_EXCEEDED,
             category = AdapterErrorCategory.RATE_LIMITED,
@@ -218,6 +218,9 @@ class AttemptExecutor(
             fallbackable = true,
             // APAP自身のRate Limiterによる拒否でありProviderの応答ではないため、CB記録対象としない。
             cbRecordable = false,
+            // maxWaitMillisは「呼び出し側が待つ意思のあった上限」であり、次回の再試行猶予の
+            // 妥当な目安として使う（waitedMillisではなく、待機してもなお不足だった上限側を使う）。
+            retryAfterMs = rejected.maxWaitMillis,
         )
 
     private fun candidateNotFoundError(): NormalizedError =
