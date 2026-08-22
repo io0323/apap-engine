@@ -1,10 +1,16 @@
 package apap.testkit.inmemory
 
 import apap.domain.model.conversation.Memory
+import apap.domain.model.conversation.MemoryScope
+import apap.domain.model.vo.TenantId
 import apap.domain.port.MemoryRepository
 import kotlin.math.sqrt
 
-/** 02_システム仕様.md 2.17: top-k類似検索（類似度=コサイン類似度、閾値以上のみ、類似度降順）。 */
+/**
+ * 02_システム仕様.md 2.17: top-k類似検索（類似度=コサイン類似度、閾値以上のみ、類似度降順）。
+ * テナント一致 かつ `scopes`のいずれかに一致するもののみを検索対象とする
+ * （4.3.5「scopeを跨ぐ参照不可」、`apap.domain.port.MemoryRepository`のKDoc参照）。
+ */
 class InMemoryMemoryRepository : MemoryRepository {
     private val memories = mutableMapOf<String, Memory>()
 
@@ -13,11 +19,14 @@ class InMemoryMemoryRepository : MemoryRepository {
     }
 
     override fun searchByVector(
+        tenantId: TenantId,
+        scopes: Set<MemoryScope>,
         vector: List<Double>,
         topK: Int,
         threshold: Double,
     ): List<Memory> =
         memories.values
+            .filter { it.tenantId == tenantId && it.scope in scopes }
             .map { it to cosineSimilarity(vector, it.embedding) }
             .filter { (_, similarity) -> similarity >= threshold }
             .sortedByDescending { (_, similarity) -> similarity }

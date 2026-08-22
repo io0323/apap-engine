@@ -19,6 +19,13 @@ class TokenEstimationServiceTest {
     }
 
     @Test
+    fun `rawHeuristicTokenCount is the unmargined char-per-token estimate`() {
+        val config = TokenEstimationConfig(charsPerTokenByModel = mapOf(modelId to 4.0))
+        // 10 chars / 4.0 = 2.5 -> ceil -> 3 (no margin applied, unlike estimateHeuristic)
+        assertEquals(3, TokenEstimationService.rawHeuristicTokenCount("0123456789", modelId, config))
+    }
+
+    @Test
     fun `HEURISTIC mode falls back to defaultCharsPerToken when the model is not configured`() {
         val config = TokenEstimationConfig(defaultCharsPerToken = 5.0)
         val estimated = TokenEstimationService.estimateHeuristic("a".repeat(10), ModelId(testUlid('Z')), config)

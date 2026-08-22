@@ -8,7 +8,9 @@ import apap.adapter.spi.SecretAccessor
 import apap.adapter.spi.SecretValue
 import apap.cache.ratelimit.RateLimiterConfig
 import apap.cache.ratelimit.TokenBucketRateLimiter
-import apap.context.PassthroughContextManager
+import apap.context.ContextManager
+import apap.domain.model.conversation.Conversation
+import apap.domain.model.execution.CanonicalRequest
 import apap.domain.model.execution.CbState
 import apap.domain.model.execution.ExecutionContext
 import apap.domain.model.execution.ProcessedPrompt
@@ -16,8 +18,11 @@ import apap.domain.model.provider.Endpoint
 import apap.domain.model.provider.RateLimits
 import apap.domain.model.vo.AdapterErrorCategory
 import apap.domain.model.vo.CbKey
+import apap.domain.model.vo.ContentPart
 import apap.domain.model.vo.CredentialRef
+import apap.domain.model.vo.ModelId
 import apap.domain.model.vo.ProviderId
+import apap.domain.service.conversation.AssembledContext
 import apap.domain.service.routing.FallbackChain
 import apap.execution.adapter.out.InMemoryCircuitBreakerStateStore
 import apap.execution.attempt.AttemptExecutor
@@ -68,7 +73,26 @@ class FallbackEngineTest {
         }
     private val rateLimiterConfig = RateLimiterConfig(defaultCapacity = 1000, defaultRefillPerSecond = 1000.0)
     private val rateLimiter = TokenBucketRateLimiter(clock, events, ids, rateLimiterConfig)
-    private val contextManager = PassthroughContextManager(optedIn = true)
+
+    /**
+     * このテストは[ContextManager.refit]（実際に`FallbackEngine`が呼ぶ口）のみを対象とし、
+     * P5当時のPassthrough実装と同じ「無変更で返す」挙動のフェイクとする。`build`は本テストの
+     * 対象外（未使用）のため呼ばれたら失敗させる。
+     */
+    private val contextManager =
+        object : ContextManager {
+            override fun build(
+                request: CanonicalRequest,
+                systemPrompt: List<ContentPart>,
+                conversation: Conversation?,
+                modelId: ModelId,
+            ): AssembledContext = error("not used by this test")
+
+            override fun refit(
+                prompt: ProcessedPrompt,
+                modelId: ModelId,
+            ): ProcessedPrompt = prompt
+        }
 
     private fun initialized(
         providerId: ProviderId,

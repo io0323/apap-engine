@@ -35,6 +35,7 @@ import apap.testkit.inmemory.InMemoryClock
 import apap.testkit.inmemory.InMemoryDomainEventPublisher
 import apap.testkit.inmemory.InMemoryHealthLatencyStatsRepository
 import apap.testkit.inmemory.InMemoryIdGenerator
+import apap.testkit.inmemory.InMemoryMemoryRepository
 import apap.testkit.inmemory.InMemoryModelRepository
 import apap.testkit.inmemory.InMemoryPolicyRepository
 import apap.testkit.inmemory.InMemoryProviderRepository
@@ -42,6 +43,7 @@ import apap.testkit.inmemory.InMemoryQuotaSnapshotRepository
 import apap.testkit.inmemory.InMemoryTenantEntitlementRepository
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.time.Duration
@@ -140,6 +142,7 @@ class ExecutionEngineComposerTest {
                     InMemoryHealthLatencyStatsRepository(),
                     InMemoryQuotaSnapshotRepository(),
                     InMemoryTenantEntitlementRepository(),
+                    InMemoryMemoryRepository(),
                     adapterRegistry,
                     clock,
                     ids,
@@ -166,4 +169,35 @@ class ExecutionEngineComposerTest {
             assertEquals(modelId, response.resolvedModel)
             assertTrue(events.publishedEvents.any { it is RequestCompleted })
         }
+
+    /**
+     * 完了条件の直接的な証跡: P6でPrompt/ContextがoptInToStubsの対象から外れたこと。
+     * `optInToStubs`未指定（既定false）でもPromptEngine/ContextManagerの構築自体は成功し、
+     * 例外はそれより後段のCacheEngine（P7未着手のまま）でのみ発生することを確認する。
+     */
+    @Test
+    fun `build succeeds past Prompt and Context construction without optInToStubs`() {
+        val events = InMemoryDomainEventPublisher()
+        val composer =
+            ExecutionEngineComposer(
+                InMemoryProviderRepository(),
+                InMemoryModelRepository(),
+                InMemoryAliasRepository(),
+                InMemoryPolicyRepository(),
+                InMemoryHealthLatencyStatsRepository(),
+                InMemoryQuotaSnapshotRepository(),
+                InMemoryTenantEntitlementRepository(),
+                InMemoryMemoryRepository(),
+                object : AdapterRegistry {
+                    override fun resolve(pluginId: String): ResolvedPlugin = throw PluginNotFoundException(pluginId)
+                },
+                InMemoryClock(Instant.parse("2026-01-01T00:00:00Z")),
+                InMemoryIdGenerator(),
+                events,
+                events,
+            )
+
+        val exception = assertThrows(IllegalStateException::class.java) { composer.build() }
+        assertTrue(exception.message.orEmpty().contains("CacheEngine"))
+    }
 }

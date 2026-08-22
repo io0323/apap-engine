@@ -4,8 +4,10 @@ import apap.domain.model.vo.AdapterErrorCategory
 import apap.domain.model.vo.ErrorCode
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.time.Duration
 
 /** 02_システム仕様.md 2.11の表をそのまま検証する。 */
 class ErrorClassificationServiceTest {
@@ -90,5 +92,22 @@ class ErrorClassificationServiceTest {
             ErrorClassificationService.classify(AdapterErrorCategory.TRANSIENT, "boom", providerDetail = "raw-detail")
         assertEquals(AdapterErrorCategory.TRANSIENT, error.category)
         assertEquals("raw-detail", error.providerDetail)
+    }
+
+    @Test
+    fun `retryAfter is carried through into retryAfterMs`() {
+        val error =
+            ErrorClassificationService.classify(
+                AdapterErrorCategory.RATE_LIMITED,
+                "429",
+                retryAfter = Duration.ofSeconds(2),
+            )
+        assertEquals(2000L, error.retryAfterMs)
+    }
+
+    @Test
+    fun `retryAfterMs defaults to null when retryAfter is omitted`() {
+        val error = ErrorClassificationService.classify(AdapterErrorCategory.TRANSIENT, "network error")
+        assertNull(error.retryAfterMs)
     }
 }

@@ -24,6 +24,8 @@ class DomainDependencyRuleTest {
             "apap.plugin",
             "apap.api",
             "apap.application",
+            "apap.prompt",
+            "apap.context",
             // Presentation/Transportフレームワーク
             "io.ktor",
             // DIコンテナ・アプリケーションフレームワーク（01_CLAUDE.md 不変条件6）
