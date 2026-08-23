@@ -4,6 +4,8 @@ import apap.cache.CacheEngine
 import apap.cache.ratelimit.AcquireResult
 import apap.cache.ratelimit.RateLimitScope
 import apap.cache.ratelimit.RateLimiter
+import apap.context.ContextLengthExceededException
+import apap.context.ContextManager
 import apap.cost.CostEngine
 import apap.cost.quota.QuotaManager
 import apap.cost.quota.Reservation
@@ -20,9 +22,14 @@ import apap.domain.model.execution.ExecutionContext
 import apap.domain.model.execution.ProcessedPrompt
 import apap.domain.model.vo.AdapterErrorCategory
 import apap.domain.model.vo.ErrorCode
+import apap.domain.model.vo.ModelId
+import apap.domain.model.vo.Money
 import apap.domain.model.vo.NormalizedError
+import apap.domain.model.vo.ProviderId
 import apap.domain.model.vo.TenantId
+import apap.domain.model.vo.TokenCount
 import apap.domain.port.Clock
+import apap.domain.port.ConversationRepository
 import apap.domain.port.DomainEventPublisher
 import apap.domain.port.IdGenerator
 import apap.execution.attempt.AttemptResult
@@ -60,9 +67,11 @@ interface ExecutionEngine {
  * 各フェーズの所要時間は[PhaseTimings]（Clock経由）で計測しログに残す（メトリクス出力はP8、
  * 計測点のみ本フェーズで用意する）。
  */
-@Suppress("LongParameterList")
+@Suppress("LongParameterList", "TooManyFunctions")
 class DefaultExecutionEngine(
     private val promptEngine: PromptEngine,
+    private val contextManager: ContextManager,
+    private val conversationRepository: ConversationRepository,
     private val cacheEngine: CacheEngine,
     private val routingEngine: RoutingEngine,
     private val quotaManager: QuotaManager,
@@ -120,38 +129,26 @@ class DefaultExecutionEngine(
                 )
             }
         val primaryCandidate = decision.chain.candidates.first()
+        val contextualPrompt =
+            phases.time("context") { buildContextualPrompt(request, prompt, primaryCandidate.modelId) }
         val estimatedTokens =
             phases.time("token-estimate") {
-                tokenEstimator.estimate(primaryCandidate, primaryCandidate.modelId, prompt)
+                tokenEstimator.estimate(primaryCandidate, primaryCandidate.modelId, contextualPrompt)
             }
-        val estimatedCost = costEngine.estimate(primaryCandidate.providerId, primaryCandidate.modelId, prompt)
+        val estimatedCost =
+            costEngine.estimate(primaryCandidate.providerId, primaryCandidate.modelId, contextualPrompt)
 
-        val ctx =
-            ExecutionContext.start(
-                requestId = request.requestId,
-                tenantId = request.tenantId,
-                traceId = request.traceId,
-                now = clock.now(),
-                timeoutBudget = request.timeoutBudget,
-                idempotencyKey = request.idempotencyKey,
-            )
+        val ctx = startExecutionContext(request)
         val reservation =
-            quotaManager.checkAndReserve(
-                tenantId = request.tenantId,
-                providerId = primaryCandidate.providerId,
-                modelId = primaryCandidate.modelId,
-                estimatedTokens = estimatedTokens,
-                estimatedCost = estimatedCost,
-                policy = quotaPolicyProvider(request.tenantId),
-                traceId = request.traceId,
-                now = clock.now(),
-            )
+            reserveQuota(request, primaryCandidate.providerId, primaryCandidate.modelId, estimatedTokens, estimatedCost)
 
         publish(RequestStarted(meta(request), request.requestId, request.capabilityId, request.tenantId))
         val startedAt = clock.now()
 
         val result =
-            phases.time("execution") { fallbackEngine.executeWithChain(decision.chain, prompt, request, ctx) }
+            phases.time("execution") {
+                fallbackEngine.executeWithChain(decision.chain, contextualPrompt, request, ctx)
+            }
 
         return when (result) {
             is AttemptResult.Success -> onSuccess(request, prompt, result, reservation, startedAt)
@@ -226,6 +223,73 @@ class DefaultExecutionEngine(
         }
         return cached.copy(cached = true)
     }
+
+    private fun startExecutionContext(request: CanonicalRequest): ExecutionContext =
+        ExecutionContext.start(
+            requestId = request.requestId,
+            tenantId = request.tenantId,
+            traceId = request.traceId,
+            now = clock.now(),
+            timeoutBudget = request.timeoutBudget,
+            idempotencyKey = request.idempotencyKey,
+        )
+
+    @Suppress("LongParameterList")
+    private fun reserveQuota(
+        request: CanonicalRequest,
+        providerId: ProviderId,
+        modelId: ModelId,
+        estimatedTokens: TokenCount,
+        estimatedCost: Money,
+    ): Reservation =
+        quotaManager.checkAndReserve(
+            tenantId = request.tenantId,
+            providerId = providerId,
+            modelId = modelId,
+            estimatedTokens = estimatedTokens,
+            estimatedCost = estimatedCost,
+            policy = quotaPolicyProvider(request.tenantId),
+            traceId = request.traceId,
+            now = clock.now(),
+        )
+
+    /**
+     * 02_システム仕様.md 2.8 step2/2.16: Conversation解決とContext組立（読み取り側のみ、
+     * P6が意図的に配線を見送っていた口をここで埋める）。System Prompt→Memory注入→履歴→
+     * 今回入力（[promptEngine]が既にValidation/Optimization/Renderingを終えたもの）の順で合成する
+     * （KDoc根拠、要件充足に影響しないためADR化せず）。
+     *
+     * Turn永続化（2.8 step11、応答成功後のConversation Manager書込）は本フェーズの対象外のまま
+     * 据え置く（着手前レビューで読み取り側のみに限定する判断）。Fallback候補ごとの再構成もしない
+     * （primaryCandidateのmodelId1つに対してのみ構築し、それでも超過する場合は
+     * [ContextLengthExceededException]をFallback不可（`fallbackable=false`）として即座に失敗させる）。
+     */
+    private fun buildContextualPrompt(
+        request: CanonicalRequest,
+        prompt: ProcessedPrompt,
+        modelId: ModelId,
+    ): ProcessedPrompt {
+        val conversation = request.conversationId?.let { conversationRepository.findById(it) }
+        val assembled =
+            try {
+                contextManager.build(request, systemPrompt = emptyList(), conversation, modelId)
+            } catch (e: ContextLengthExceededException) {
+                throw ExecutionFailedException(contextLengthExceededError(e))
+            }
+        val historyContent = assembled.turns.flatMap { it.contentParts }
+        val mergedInput = assembled.systemPrompt + assembled.memoryInjection + historyContent + prompt.input
+        return ProcessedPrompt(input = mergedInput, estimatedTokens = assembled.estimatedTokens)
+    }
+
+    private fun contextLengthExceededError(e: ContextLengthExceededException): NormalizedError =
+        NormalizedError(
+            code = e.errorCode,
+            category = AdapterErrorCategory.INVALID_REQUEST,
+            message = e.message ?: "context length exceeded even after compaction",
+            retryable = false,
+            fallbackable = false,
+            cbRecordable = false,
+        )
 
     private fun cacheHitRateLimitedError(rejected: AcquireResult.Rejected): NormalizedError =
         NormalizedError(

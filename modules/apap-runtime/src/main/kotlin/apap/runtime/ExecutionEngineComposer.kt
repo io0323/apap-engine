@@ -25,6 +25,7 @@ import apap.domain.model.vo.ModelId
 import apap.domain.model.vo.TenantId
 import apap.domain.port.AliasRepository
 import apap.domain.port.Clock
+import apap.domain.port.ConversationRepository
 import apap.domain.port.DomainEventPublisher
 import apap.domain.port.DomainEventSubscriber
 import apap.domain.port.HealthLatencyStatsRepository
@@ -67,11 +68,12 @@ import apap.routing.ZeroCostEstimator
  * `false`（既定）の場合はここで構築時例外となり、呼び出し側が「未実装の機能に依存している」ことを
  * 起動時に必ず認識させる。
  *
- * `SessionManager`/`ConversationManager`/`apap.prompt.PromptTemplateManager`は本Composerが
- * 構築する`ExecutionEngine`のいずれの依存にも入らない（現行の既定Prompt Pipeline/Fallback
- * refitはSession/Conversation解決やTemplate参照をまだ消費しない、KDoc参照:
- * [apap.context.ContextManager]）ため、意図的にここへは配線しない。埋込先アプリケーションが
- * それぞれのRepositoryから直接構築して使う。
+ * `ExecutionEngine`は`conversationRepository`から読み取り専用でConversationを解決し
+ * `ContextManager.build`へ渡す（02_システム仕様.md 2.8 step2、着手前レビューで読み取り側のみに
+ * 限定）。Turn永続化（2.8 step11、応答成功後の書込）は対象外のため`SessionManager`/
+ * `ConversationManager`/`apap.prompt.PromptTemplateManager`は本Composerが構築する
+ * `ExecutionEngine`の依存には入らない。埋込先アプリケーションがそれぞれのRepositoryから
+ * 直接構築して使う（Turn永続化はSession/Gateway層の責務）。
  */
 @Suppress("LongParameterList")
 class ExecutionEngineComposer(
@@ -83,6 +85,7 @@ class ExecutionEngineComposer(
     private val quotaSnapshotRepository: QuotaSnapshotRepository,
     private val tenantEntitlementRepository: TenantEntitlementRepository,
     private val memoryRepository: MemoryRepository,
+    private val conversationRepository: ConversationRepository,
     private val adapterRegistry: AdapterRegistry,
     private val clock: Clock,
     private val idGenerator: IdGenerator,
@@ -179,6 +182,8 @@ class ExecutionEngineComposer(
 
         return DefaultExecutionEngine(
             promptEngine,
+            contextManager,
+            conversationRepository,
             cacheEngine,
             routingEngine,
             quotaManager,
