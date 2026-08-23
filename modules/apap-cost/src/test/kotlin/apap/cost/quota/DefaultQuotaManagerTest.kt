@@ -173,4 +173,29 @@ class DefaultQuotaManagerTest {
         reserve(qm, policy = policy(limits))
         assertThrows(QuotaExceededException::class.java) { reserve(qm, policy = policy(limits)) }
     }
+
+    @Test
+    fun `quota resets after crossing a period boundary`() {
+        // A TTL far longer than the boundary crossing below isolates the reset from TTL self-healing
+        // (DefaultQuotaManagerTest's other TTL-expiry tests cover that separate mechanism).
+        val qm = manager(QuotaManagerConfig(reservationTtl = Duration.ofDays(30)))
+        val limits = QuotaLimits(requests = 1)
+        reserve(qm, policy = policy(limits))
+        assertThrows(QuotaExceededException::class.java) { reserve(qm, policy = policy(limits)) }
+
+        // Cross the DAILY period boundary (clock starts at 2026-01-01T00:00:00Z).
+        clock.advanceTo(Instant.parse("2026-01-02T00:00:01Z"))
+        // The previous day's pending/committed requests must no longer count against the limit.
+        reserve(qm, policy = policy(limits))
+    }
+
+    @Test
+    fun `quota is not reset by advancing time within the same period`() {
+        val qm = manager()
+        val limits = QuotaLimits(requests = 1)
+        reserve(qm, policy = policy(limits))
+        // Within both the same DAILY window and the default reservation TTL (10min): must not self-heal.
+        clock.advanceBy(300)
+        assertThrows(QuotaExceededException::class.java) { reserve(qm, policy = policy(limits)) }
+    }
 }
