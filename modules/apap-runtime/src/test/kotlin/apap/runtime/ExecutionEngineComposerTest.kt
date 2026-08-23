@@ -14,6 +14,8 @@ import apap.domain.event.RequestCompleted
 import apap.domain.model.conversation.Conversation
 import apap.domain.model.conversation.Turn
 import apap.domain.model.conversation.TurnRole
+import apap.domain.model.cost.PriceBook
+import apap.domain.model.cost.PriceEntry
 import apap.domain.model.execution.CanonicalRequest
 import apap.domain.model.modelcatalog.Model
 import apap.domain.model.modelcatalog.ModelCapability
@@ -29,6 +31,8 @@ import apap.domain.model.vo.CredentialRef
 import apap.domain.model.vo.CredentialState
 import apap.domain.model.vo.ErrorCode
 import apap.domain.model.vo.ModelId
+import apap.domain.model.vo.Money
+import apap.domain.model.vo.Period
 import apap.domain.model.vo.ProviderId
 import apap.domain.model.vo.Region
 import apap.domain.model.vo.RegionCodeTable
@@ -41,6 +45,7 @@ import apap.provider.AdapterRegistry
 import apap.provider.PluginNotFoundException
 import apap.provider.ResolvedPlugin
 import apap.testkit.inmemory.InMemoryAliasRepository
+import apap.testkit.inmemory.InMemoryBudgetRepository
 import apap.testkit.inmemory.InMemoryClock
 import apap.testkit.inmemory.InMemoryConversationRepository
 import apap.testkit.inmemory.InMemoryDomainEventPublisher
@@ -49,14 +54,19 @@ import apap.testkit.inmemory.InMemoryIdGenerator
 import apap.testkit.inmemory.InMemoryMemoryRepository
 import apap.testkit.inmemory.InMemoryModelRepository
 import apap.testkit.inmemory.InMemoryPolicyRepository
+import apap.testkit.inmemory.InMemoryPriceBookRepository
 import apap.testkit.inmemory.InMemoryProviderRepository
+import apap.testkit.inmemory.InMemoryQuotaPolicyRepository
 import apap.testkit.inmemory.InMemoryQuotaSnapshotRepository
 import apap.testkit.inmemory.InMemoryTenantEntitlementRepository
+import apap.testkit.inmemory.InMemoryUsageRepository
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.math.BigDecimal
 import java.time.Duration
 import java.time.Instant
 
@@ -72,6 +82,22 @@ class ExecutionEngineComposerTest {
     private val modelId = ModelId("01ARZ3NDEKTSV4RRFFQ69G5FA2")
     private val tenantId = TenantId("01ARZ3NDEKTSV4RRFFQ69G5FA3")
     private val requestId = RequestId("01ARZ3NDEKTSV4RRFFQ69G5FA4")
+
+    /**
+     * DefaultCostEngine.estimate/calculateは単価未登録のModelに対しPriceEntryNotFoundExceptionを
+     * 送出する（FR-OBS-005）。costEngineを実配線する以上、cost計算に無関心なスモークテストでも
+     * ダミーの単価表を用意する必要がある。
+     */
+    private fun priceBookRepository(vararg modelIds: ModelId): InMemoryPriceBookRepository {
+        val repository = InMemoryPriceBookRepository()
+        val period = Period(Instant.parse("2020-01-01T00:00:00Z"), Instant.parse("2030-01-01T00:00:00Z"))
+        val entries =
+            modelIds.map { id ->
+                PriceEntry(id, Money(BigDecimal("1.00"), "USD"), Money(BigDecimal("1.00"), "USD"), period)
+            }
+        repository.save(PriceBook("book-1", entries))
+        return repository
+    }
 
     @Suppress("LongMethod")
     @Test
@@ -155,12 +181,15 @@ class ExecutionEngineComposerTest {
                     InMemoryTenantEntitlementRepository(),
                     InMemoryMemoryRepository(),
                     InMemoryConversationRepository(),
+                    priceBookRepository(modelId),
+                    InMemoryBudgetRepository(),
+                    InMemoryUsageRepository(),
+                    InMemoryQuotaPolicyRepository(),
                     adapterRegistry,
                     clock,
                     ids,
                     events,
                     events,
-                    optInToStubs = true,
                 ).build()
 
             val request =
@@ -183,12 +212,12 @@ class ExecutionEngineComposerTest {
         }
 
     /**
-     * 完了条件の直接的な証跡: P6でPrompt/ContextがoptInToStubsの対象から外れたこと。
-     * `optInToStubs`未指定（既定false）でもPromptEngine/ContextManagerの構築自体は成功し、
-     * 例外はそれより後段のCacheEngine（P7未着手のまま）でのみ発生することを確認する。
+     * 完了条件の直接的な証跡: P5〜P7を通じてPrompt/Context/Cache/Costの全スタブが実装へ置き換わり、
+     * `optInToStubs`パラメータ自体が削除されたこと（このコンストラクタ呼出が引数無しで成功すれば、
+     * `optInToStubs`という名前付き引数はコンパイル時にそもそも存在し得ない）。
      */
     @Test
-    fun `build succeeds past Prompt and Context construction without optInToStubs`() {
+    fun `build succeeds with no optInToStubs parameter at all`() {
         val events = InMemoryDomainEventPublisher()
         val composer =
             ExecutionEngineComposer(
@@ -201,6 +230,10 @@ class ExecutionEngineComposerTest {
                 InMemoryTenantEntitlementRepository(),
                 InMemoryMemoryRepository(),
                 InMemoryConversationRepository(),
+                InMemoryPriceBookRepository(),
+                InMemoryBudgetRepository(),
+                InMemoryUsageRepository(),
+                InMemoryQuotaPolicyRepository(),
                 object : AdapterRegistry {
                     override fun resolve(pluginId: String): ResolvedPlugin = throw PluginNotFoundException(pluginId)
                 },
@@ -210,8 +243,7 @@ class ExecutionEngineComposerTest {
                 events,
             )
 
-        val exception = assertThrows(IllegalStateException::class.java) { composer.build() }
-        assertTrue(exception.message.orEmpty().contains("CacheEngine"))
+        assertDoesNotThrow { composer.build() }
     }
 
     /**
@@ -322,12 +354,15 @@ class ExecutionEngineComposerTest {
                     InMemoryTenantEntitlementRepository(),
                     InMemoryMemoryRepository(),
                     conversationRepository,
+                    priceBookRepository(modelId),
+                    InMemoryBudgetRepository(),
+                    InMemoryUsageRepository(),
+                    InMemoryQuotaPolicyRepository(),
                     adapterRegistry,
                     clock,
                     ids,
                     events,
                     events,
-                    optInToStubs = true,
                 ).build()
 
             val request =
@@ -442,12 +477,15 @@ class ExecutionEngineComposerTest {
                     InMemoryTenantEntitlementRepository(),
                     InMemoryMemoryRepository(),
                     InMemoryConversationRepository(),
+                    InMemoryPriceBookRepository(),
+                    InMemoryBudgetRepository(),
+                    InMemoryUsageRepository(),
+                    InMemoryQuotaPolicyRepository(),
                     adapterRegistry,
                     clock,
                     ids,
                     events,
                     events,
-                    optInToStubs = true,
                 ).build()
 
             val request =
