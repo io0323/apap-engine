@@ -56,10 +56,15 @@ data class RequestStarted(
  * [apap.infrastructure.eventbus.ExternalEventBusForwarder]の実装は読み取り・外部転送しないこと
  * （AUDIT_RECORD.request_bodyは監査ポリシーopt-in時のみ、かつマスキング後にのみ永続化される。
  * 既定はAudit Engineがハッシュ化した上でこれらのフィールド自体は永続化しない）。
+ *
+ * `capabilityId`は02_システム仕様.md 2.19 `apap_requests_total{tenant, capability, provider, model,
+ * status}`用に追加した。Audit Engineは`RequestReceived`相関から取得できるため必須ではなかったが、
+ * Metrics Engineは`requestId`相関キャッシュを持たずイベント単体で完結させるため、ここに直接持たせる。
  */
 data class RequestCompleted(
     override val meta: EventMetadata,
     val requestId: RequestId,
+    val capabilityId: CapabilityId,
     val provider: String,
     val model: String,
     val usage: Usage,
@@ -72,10 +77,14 @@ data class RequestCompleted(
     val responseBody: String? = null,
 ) : DomainEvent
 
-/** `durationMs`/`requestBody`はAudit Engine向けに追加した（[RequestReceived]/[RequestCompleted]のKDoc参照）。 */
+/**
+ * `durationMs`/`requestBody`はAudit Engine向けに追加した（[RequestReceived]/[RequestCompleted]の
+ * KDoc参照）。`capabilityId`は[RequestCompleted]と同じ理由でMetrics Engine向けに追加した。
+ */
 data class RequestFailed(
     override val meta: EventMetadata,
     val requestId: RequestId,
+    val capabilityId: CapabilityId,
     val errorCode: ErrorCode,
     val attempts: Int,
     val fallbacks: Int,

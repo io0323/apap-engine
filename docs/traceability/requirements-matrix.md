@@ -65,7 +65,7 @@ Service/Port/Event）のみが揃った状態を指す。Application/Infrastruct
 | FR-RSP-002 | エラー正規化（Provider固有エラー → 共通エラーコード体系）を行うこと | apap.domain.model.vo.NormalizedError（cbRecordable追加）, ErrorCode, apap.domain.service.execution.ErrorClassificationService, apap.execution.mapping.ResponseMapper.normalizeError | NormalizedErrorTest, ErrorClassificationServiceTest, AttemptExecutorTest | 実装中 |
 | FR-RSP-003 | Streamingチャンクの正規化（デルタ形式統一、ToolCallの逐次組立）を行うこと | apap.domain.model.execution.StreamChunk/StreamChunkType, apap.execution.streaming.StreamingEngine, ToolCallAssembler, apap.execution.mapping.ResponseMapper.normalizeChunk | StreamingEngineTest | 実装中 |
 | FR-OBS-001 | Audit Log（Request / Response / ルーティング決定 / Cost / Duration / 実行Provider・Model）を改竄不能な形で記録すること | apap.domain.model.audit.AuditRecord, apap.domain.port.AuditRepository, apap.infrastructure.eventbus.SynchronousEventBus, apap.observability.audit.AuditEngine（Event Bus購読、requestIdでRequestReceived〜RequestCompleted/RequestFailedを相関、同期実行パスをブロックしない非同期永続化） | AuditRecordTest, SynchronousEventBusTest, AuditEngineTest | 実装中（追記専用ストアはIn-Memory実装のみ、JDBC実装とGateway検索APIは未着手） |
-| FR-OBS-002 | Metrics（Latency分位点、Error Rate、Token Usage、Cost、Availability、Cache Hit率、Fallback率）を出力すること | - | - | 未実装 |
+| FR-OBS-002 | Metrics（Latency分位点、Error Rate、Token Usage、Cost、Availability、Cache Hit率、Fallback率）を出力すること | apap.domain.port.MetricsRecorder（2.19表の全11メトリクスを定義）, apap.observability.metrics.OpenTelemetryMetricsRecorder（OpenTelemetry Metrics API実装）, apap.observability.metrics.MetricsEngine（Event Bus購読、requests_total/duration/tokens_total/cost_total/retries_total/fallbacks_total/circuit_breaker_state/streaming_connections/rate_limit_events_total{reject}を記録） | MetricsEngineTest, InMemoryMetricsRecorderを使う各種テスト | 実装中（cache_events_total・overhead_duration_seconds・provider_health・rate_limit_events_total{wait}はメソッドは存在するが呼び出し元が未配線、MetricsEngineのKDocに明記。Cache層/Health Store/PhaseTimingsの配線は別タスク） |
 | FR-OBS-003 | 分散Tracing（W3C Trace Context伝播、Adapter呼出までのSpan）を提供すること | - | - | 未実装 |
 | FR-OBS-004 | Usage Analytics（テナント/Capability/Model別の集計API）を提供すること | - | - | 未実装 |
 | FR-OBS-005 | Cost Management（単価表管理、リクエスト毎コスト算出、Budget、閾値アラート）を提供すること | apap.domain.model.cost.PriceBook, Budget, apap.domain.service.cost.CostCalculationService, apap.domain.event.CostThresholdExceeded, apap.cost.CostEngine/DefaultCostEngine（P7でPassthroughCostEngineを置換、estimate/calculateはPriceEntryNotFoundExceptionで単価未登録を検出、recordはUsageRepository記録とBudget閾値監視を行う）。単価未登録Modelはルーティング段階で候補から除外されるため（ADR-0021）、通常の実行フローではPriceEntryNotFoundExceptionへは到達しない（不整合時の最終防御として保持） | PriceBookTest, BudgetAndQuotaPolicyTest, CostCalculationServiceTest, DefaultCostEngineTest | 実装済 |
@@ -96,7 +96,7 @@ Service/Port/Event）のみが揃った状態を指す。Application/Infrastruct
 | NFR-MNT-003 | 全公開APIはバージョニング（URLパス /v1）し、後方互換を1メジャーバージョン維持する | - | - | 未実装 |
 | NFR-MNT-004 | 設定は宣言的（GitOps可能なYAML/API）に管理し、変更履歴を保持する | - | - | 未実装 |
 | NFR-OBS-001 | 全リクエストにRequest ID / Trace IDを付与し、ログ・メトリクス・トレースを相関可能とする | - | - | 未実装 |
-| NFR-OBS-002 | メトリクスはOpenMetrics互換形式で公開する | - | - | 未実装 |
+| NFR-OBS-002 | メトリクスはOpenMetrics互換形式で公開する | apap.observability.metrics.OpenTelemetryMetricsRecorder（OpenTelemetry API経由。実際のOpenMetrics/Prometheus形式での公開は宿主が注入するSDKのExporter設定に依存、CLAUDE.md不変条件6） | MetricsEngineTest | 実装中（Exporter配線はGateway/宿主側の責務、本モジュールはAPI呼出までを担う） |
 | NFR-OBS-003 | 構造化ログ（JSON）とし、機微情報を含めない | - | - | 未実装 |
 | NFR-OBS-004 | SLO（可用性・レイテンシ）をメトリクスから算出可能とする | - | - | 未実装 |
 | NFR-SEC-001 | Credentialは専用Secret Storeに保存し、メモリ上でも必要最小期間のみ保持する | - | - | 未実装 |

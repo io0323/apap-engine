@@ -109,6 +109,7 @@ class DomainEventInstantiationTest {
         RequestCompleted(
             meta(requestId.value),
             requestId,
+            capabilityId,
             providerId.value,
             modelId.value,
             usage,
@@ -123,6 +124,7 @@ class DomainEventInstantiationTest {
         RequestFailed(
             meta(requestId.value),
             requestId,
+            capabilityId,
             ErrorCode.PROVIDER_ERROR,
             3,
             1,

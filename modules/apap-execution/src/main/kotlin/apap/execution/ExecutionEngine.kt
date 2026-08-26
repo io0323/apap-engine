@@ -261,6 +261,7 @@ class DefaultExecutionEngine(
             RequestCompleted(
                 meta(request),
                 request.requestId,
+                request.capabilityId,
                 result.candidate.providerId.value,
                 result.candidate.modelId.value,
                 response.usage,
@@ -288,6 +289,7 @@ class DefaultExecutionEngine(
             RequestFailed(
                 meta(request),
                 request.requestId,
+                request.capabilityId,
                 result.error.code,
                 result.attempts,
                 result.fallbacks,
