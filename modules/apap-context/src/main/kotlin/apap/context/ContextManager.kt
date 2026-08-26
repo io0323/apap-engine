@@ -21,7 +21,8 @@ import apap.domain.service.conversation.AssembledContext
  *   決定できない。呼び出し側が明示的に指定する。
  */
 interface ContextManager {
-    fun build(
+    /** ADR-0023: [QueryEmbedder.embed]がsuspendのAdapter呼出を要しうるため`suspend`とする。 */
+    suspend fun build(
         request: CanonicalRequest,
         systemPrompt: List<ContentPart>,
         conversation: Conversation?,

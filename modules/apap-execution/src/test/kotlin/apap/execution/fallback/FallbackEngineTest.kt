@@ -81,7 +81,7 @@ class FallbackEngineTest {
      */
     private val contextManager =
         object : ContextManager {
-            override fun build(
+            override suspend fun build(
                 request: CanonicalRequest,
                 systemPrompt: List<ContentPart>,
                 conversation: Conversation?,

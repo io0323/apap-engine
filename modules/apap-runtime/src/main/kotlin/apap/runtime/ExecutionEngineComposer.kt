@@ -17,6 +17,7 @@ import apap.cache.ratelimit.TokenBucketRateLimiter
 import apap.context.CompactionStrategy
 import apap.context.ContextManager
 import apap.context.ContextTokenCounter
+import apap.context.ConversationManager
 import apap.context.DefaultContextManager
 import apap.context.HeuristicContextTokenCounter
 import apap.context.MemoryManager
@@ -84,11 +85,11 @@ import apap.routing.RoutingEngine
  * 完全に削除する」方針）。
  *
  * `ExecutionEngine`は`conversationRepository`から読み取り専用でConversationを解決し
- * `ContextManager.build`へ渡す（02_システム仕様.md 2.8 step2、着手前レビューで読み取り側のみに
- * 限定）。Turn永続化（2.8 step11、応答成功後の書込）は対象外のため`SessionManager`/
- * `ConversationManager`/`apap.prompt.PromptTemplateManager`は本Composerが構築する
- * `ExecutionEngine`の依存には入らない。埋込先アプリケーションがそれぞれのRepositoryから
- * 直接構築して使う（Turn永続化はSession/Gateway層の責務）。
+ * `ContextManager.build`へ渡す（02_システム仕様.md 2.8 step2）。Turn永続化（2.8 step11、
+ * user turnはProvider呼出前・assistant turnは応答確定後）は`ConversationManager`経由で本Composerが
+ * 配線する（着手前レビューで解消、`apap.execution.ExecutionEngine`のKDoc参照）。`SessionManager`/
+ * `apap.prompt.PromptTemplateManager`は引き続き対象外（Session発行/検証やPrompt Template解決は
+ * Gateway/Session層の責務であり、本Composerが構築する`ExecutionEngine`の依存には入らない）。
  *
  * [quotaPolicyRepository]と[quotaPolicyProvider]は役割が異なり併存する: 前者は登録・一覧・更新の
  * CRUD（管理API向け）、後者はExecutionEngine実行時の高速な解決口。[quotaPolicyProvider]の既定実装は
@@ -129,7 +130,14 @@ class ExecutionEngineComposer(
         HeuristicContextTokenCounter(it, tokenEstimationConfig)
     },
     private val compactionStrategy: CompactionStrategy = TruncateOldestCompactionStrategy(),
-    private val queryEmbedder: QueryEmbedder = NoOpQueryEmbedder(optedIn = true),
+    /**
+     * ADR-0023: 実装（P8以降）が[CircuitBreaker]/[RateLimiter]を正しく経由できるよう、既に構築済みの
+     * インスタンスを受け取れるファクトリとする（[ResilientQueryEmbedder]参照）。既定はNoOpのまま
+     * （ラップしても意味がないため既定では[ResilientQueryEmbedder]を挟まない）。
+     */
+    private val queryEmbedderFactory: (CircuitBreaker, RateLimiter) -> QueryEmbedder = { _, _ ->
+        NoOpQueryEmbedder(optedIn = true)
+    },
     private val memoryScopes: Set<MemoryScope> = MemoryScope.entries.toSet(),
     private val memoryTopK: Int = DEFAULT_MEMORY_TOP_K,
     private val memorySimilarityThreshold: Double = DEFAULT_MEMORY_SIMILARITY_THRESHOLD,
@@ -167,7 +175,9 @@ class ExecutionEngineComposer(
         val quotaManager: QuotaManager = DefaultQuotaManager(idGenerator, clock, eventPublisher, quotaManagerConfig)
 
         val promptEngine: PromptEngine = DefaultPromptEngine()
+        val conversationManager = ConversationManager(conversationRepository, clock, idGenerator, eventPublisher)
         val memoryManager = MemoryManager(memoryRepository, clock, idGenerator, eventPublisher)
+        val queryEmbedder = queryEmbedderFactory(circuitBreaker, rateLimiter)
         val contextManager: ContextManager =
             DefaultContextManager(
                 modelRepository = modelRepository,
@@ -234,6 +244,7 @@ class ExecutionEngineComposer(
             promptEngine,
             contextManager,
             conversationRepository,
+            conversationManager,
             cacheEngine,
             routingEngine,
             quotaManager,

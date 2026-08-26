@@ -6,6 +6,7 @@ import apap.cache.ratelimit.RateLimitScope
 import apap.cache.ratelimit.RateLimiter
 import apap.context.ContextLengthExceededException
 import apap.context.ContextManager
+import apap.context.ConversationManager
 import apap.cost.CostEngine
 import apap.cost.quota.QuotaManager
 import apap.cost.quota.Reservation
@@ -15,12 +16,15 @@ import apap.domain.event.RequestCompleted
 import apap.domain.event.RequestFailed
 import apap.domain.event.RequestReceived
 import apap.domain.event.RequestStarted
+import apap.domain.model.conversation.TurnRole
 import apap.domain.model.cost.QuotaPolicy
 import apap.domain.model.execution.CanonicalRequest
 import apap.domain.model.execution.CanonicalResponse
 import apap.domain.model.execution.ExecutionContext
 import apap.domain.model.execution.ProcessedPrompt
 import apap.domain.model.vo.AdapterErrorCategory
+import apap.domain.model.vo.ContentPart
+import apap.domain.model.vo.ConversationId
 import apap.domain.model.vo.ErrorCode
 import apap.domain.model.vo.ModelId
 import apap.domain.model.vo.Money
@@ -28,6 +32,7 @@ import apap.domain.model.vo.NormalizedError
 import apap.domain.model.vo.ProviderId
 import apap.domain.model.vo.TenantId
 import apap.domain.model.vo.TokenCount
+import apap.domain.model.vo.Usage
 import apap.domain.port.Clock
 import apap.domain.port.ConversationRepository
 import apap.domain.port.DomainEventPublisher
@@ -72,6 +77,7 @@ class DefaultExecutionEngine(
     private val promptEngine: PromptEngine,
     private val contextManager: ContextManager,
     private val conversationRepository: ConversationRepository,
+    private val conversationManager: ConversationManager,
     private val cacheEngine: CacheEngine,
     private val routingEngine: RoutingEngine,
     private val quotaManager: QuotaManager,
@@ -113,6 +119,8 @@ class DefaultExecutionEngine(
         if (cached != null) {
             return handleCacheHit(request, cached)
         }
+
+        recordUserTurn(request)
 
         val decision =
             phases.time("routing") {
@@ -177,6 +185,7 @@ class DefaultExecutionEngine(
         quotaManager.commit(reservation, result.response.usage, cost.amount)
         costEngine.record(request, response, durationMs)
         cacheEngine.store(request, prompt, response)
+        recordAssistantTurn(request, response)
         publish(
             RequestCompleted(
                 meta(request),
@@ -254,17 +263,15 @@ class DefaultExecutionEngine(
         )
 
     /**
-     * 02_システム仕様.md 2.8 step2/2.16: Conversation解決とContext組立（読み取り側のみ、
-     * P6が意図的に配線を見送っていた口をここで埋める）。System Prompt→Memory注入→履歴→
-     * 今回入力（[promptEngine]が既にValidation/Optimization/Renderingを終えたもの）の順で合成する
-     * （KDoc根拠、要件充足に影響しないためADR化せず）。
+     * 02_システム仕様.md 2.8 step2/2.16: Conversation解決とContext組立。System Prompt→Memory注入→
+     * 履歴→今回入力（[promptEngine]が既にValidation/Optimization/Renderingを終えたもの）の順で
+     * 合成する（KDoc根拠、要件充足に影響しないためADR化せず）。
      *
-     * Turn永続化（2.8 step11、応答成功後のConversation Manager書込）は本フェーズの対象外のまま
-     * 据え置く（着手前レビューで読み取り側のみに限定する判断）。Fallback候補ごとの再構成もしない
-     * （primaryCandidateのmodelId1つに対してのみ構築し、それでも超過する場合は
-     * [ContextLengthExceededException]をFallback不可（`fallbackable=false`）として即座に失敗させる）。
+     * Fallback候補ごとの再構成はしない（primaryCandidateのmodelId1つに対してのみ構築し、それでも
+     * 超過する場合は[ContextLengthExceededException]をFallback不可（`fallbackable=false`）として
+     * 即座に失敗させる）。
      */
-    private fun buildContextualPrompt(
+    private suspend fun buildContextualPrompt(
         request: CanonicalRequest,
         prompt: ProcessedPrompt,
         modelId: ModelId,
@@ -279,6 +286,84 @@ class DefaultExecutionEngine(
         val historyContent = assembled.turns.flatMap { it.contentParts }
         val mergedInput = assembled.systemPrompt + assembled.memoryInjection + historyContent + prompt.input
         return ProcessedPrompt(input = mergedInput, estimatedTokens = assembled.estimatedTokens)
+    }
+
+    /**
+     * 02_システム仕様.md 2.8 step11: user turnはリクエスト受理時（Provider呼出前）に書く
+     * （Provider呼出が失敗しても入力を失わないため）。Cache Engineの冪等キー短絡
+     * （[handleCacheHit]、`executeClaimed`でこの呼出より前に早期returnする）より後に置くことで、
+     * 同一冪等キーでの再送がここへ到達せず二重書込にならない。Retry/Fallbackは`executeClaimed`
+     * 1回の呼出につき高々1回しか通過しない経路（[fallbackEngine]呼出より前）に置くことで、
+     * 内部リトライ・フォールバック候補の複数試行でも重複しない
+     * （要件充足に影響しない実装判断のためADR化せず根拠をここに残す）。
+     */
+    private fun recordUserTurn(request: CanonicalRequest) {
+        val conversationId = request.conversationId ?: return
+        persistTurn(conversationId, TurnRole.USER, request.input, modelUsed = null, usage = null)
+    }
+
+    /**
+     * 02_システム仕様.md 2.8 step11: assistant turnは応答確定後に書く。[onSuccess]内で
+     * `executeClaimed`1回の呼出につき高々1回だけ呼ばれる（Fallback Chain全体が単一の
+     * [AttemptResult.Success]へ収束した後のため、内部リトライ・フォールバックの試行回数に
+     * 依存しない）。Tool Call専用応答（`output`が空、`toolCalls`のみ）はTurnの
+     * ContentPart表現を持たない（04_ドメイン設計.md 4.3.4はTurnにToolCall専用の型を定義して
+     * いない）ため、[toolCallSummary]で読める形のContentPart.Textへ変換して記録する
+     * （要件充足に影響しない実装判断のためADR化せず根拠をここに残す）。
+     */
+    private fun recordAssistantTurn(
+        request: CanonicalRequest,
+        response: CanonicalResponse,
+    ) {
+        val conversationId = request.conversationId ?: return
+        val contentParts = assistantTurnContent(response)
+        if (contentParts.isEmpty()) {
+            logger.warn(
+                "skipping assistant turn persistence for conversationId={}: no output or tool calls to record",
+                conversationId.value,
+            )
+            return
+        }
+        persistTurn(conversationId, TurnRole.ASSISTANT, contentParts, response.resolvedModel, response.usage)
+    }
+
+    private fun assistantTurnContent(response: CanonicalResponse): List<ContentPart> {
+        if (response.output.isNotEmpty()) return response.output
+        return response.toolCalls.orEmpty().map { call ->
+            ContentPart.Text(toolCallSummary(call.toolName, call.arguments))
+        }
+    }
+
+    private fun toolCallSummary(
+        toolName: String,
+        arguments: String,
+    ): String = "[tool_call] $toolName($arguments)"
+
+    /**
+     * 永続化の失敗で応答を失敗させない（応答は既に生成済み、あるいはユーザ入力の受理は既に完了して
+     * いるため）。ログのみに留める: `docs/design/14_イベント一覧.md`の50イベント一覧は編集不可
+     * （CLAUDE.md不変条件8）であり、この失敗専用の新規DomainEventを追加できない
+     * （要件充足に影響しない実装判断のためADR化せず根拠をここに残す。メトリクス化はP8
+     * Observability着手時に改めて検討する）。
+     */
+    private fun persistTurn(
+        conversationId: ConversationId,
+        role: TurnRole,
+        contentParts: List<ContentPart>,
+        modelUsed: ModelId?,
+        usage: Usage?,
+    ) {
+        runCatching {
+            conversationManager.appendTurn(conversationId, role, contentParts, modelUsed, usage)
+        }.onFailure { e ->
+            logger.warn(
+                "failed to persist {} turn for conversationId={}: {}",
+                role,
+                conversationId.value,
+                e.message,
+                e,
+            )
+        }
     }
 
     private fun contextLengthExceededError(e: ContextLengthExceededException): NormalizedError =
@@ -317,6 +402,10 @@ class DefaultExecutionEngine(
             aggregateId = request.requestId.value,
             version = 0,
         )
+
+    private companion object {
+        val logger = LoggerFactory.getLogger(DefaultExecutionEngine::class.java)
+    }
 }
 
 /**

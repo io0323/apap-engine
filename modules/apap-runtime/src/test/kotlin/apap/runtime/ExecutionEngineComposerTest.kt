@@ -3,6 +3,7 @@ package apap.runtime
 import apap.adapter.mock.MockAdapterConfig
 import apap.adapter.mock.MockProviderAdapter
 import apap.adapter.spi.AdapterConfig
+import apap.adapter.spi.AdapterErrorCategory
 import apap.adapter.spi.AdapterRequest
 import apap.adapter.spi.AdapterResponse
 import apap.adapter.spi.ProviderAdapter
@@ -41,6 +42,7 @@ import apap.domain.model.vo.SemVer
 import apap.domain.model.vo.SessionId
 import apap.domain.model.vo.TenantId
 import apap.execution.ExecutionFailedException
+import apap.execution.retry.RetryConfig
 import apap.provider.AdapterRegistry
 import apap.provider.PluginNotFoundException
 import apap.provider.ResolvedPlugin
@@ -75,6 +77,7 @@ import java.time.Instant
  * 02_システム仕様.md 2.8のRequest Flowを最小構成（adapter-mock、実Providerへは接続しない）で
  * 一気通貫に実行できることを確認するスモークテスト。
  */
+@Suppress("LargeClass")
 class ExecutionEngineComposerTest {
     private val region = Region.of("jp-east", RegionCodeTable(setOf("jp-east")))
     private val capabilityId = CapabilityId("chat")
@@ -209,6 +212,424 @@ class ExecutionEngineComposerTest {
             assertEquals(providerId, response.resolvedProvider)
             assertEquals(modelId, response.resolvedModel)
             assertTrue(events.publishedEvents.any { it is RequestCompleted })
+        }
+
+    /**
+     * 着手前レビュー: Turn永続化（2.8 step11）の解消。conversation_id指定の連続リクエストで、
+     * 履歴（user turn 1件+assistant turn 1件、seq 1〜4）が実際に蓄積されることを確認する。
+     */
+    @Suppress("LongMethod")
+    @Test
+    fun `sequential requests with the same conversationId accumulate history`() =
+        runBlocking {
+            val providerRepository = InMemoryProviderRepository()
+            val modelRepository = InMemoryModelRepository()
+            val clock = InMemoryClock(Instant.parse("2026-01-01T00:00:00Z"))
+            val ids = InMemoryIdGenerator()
+            val events = InMemoryDomainEventPublisher()
+            val conversationRepository = InMemoryConversationRepository()
+
+            providerRepository.save(
+                Provider(
+                    providerId = providerId,
+                    name = "provider-a",
+                    adapterPluginId = "plugin-a",
+                    spiVersion = SemVer(1, 0, 0),
+                    endpoints = listOf(Endpoint("ep1", region, "https://example.internal", 100)),
+                    authType = "api_key",
+                    credentialRefs = listOf(CredentialRef("secret-ref", 1, CredentialState.ACTIVE)),
+                    rateLimits = RateLimits(600, 100_000, 10),
+                    priority = 50,
+                    regions = setOf(region),
+                    status = ProviderStatus.ACTIVE,
+                ),
+            )
+            modelRepository.save(
+                Model(
+                    modelId = modelId,
+                    providerId = providerId,
+                    modelName = "model-a",
+                    version = "1.0",
+                    capabilities = listOf(ModelCapability(capabilityId)),
+                    contextWindow = 8000,
+                    maxOutputTokens = 1000,
+                    regions = setOf(region),
+                    status = ModelStatus.ACTIVE,
+                    priority = 50,
+                ),
+            )
+
+            val adapter = MockProviderAdapter(MockAdapterConfig(supportedCapabilities = setOf(capabilityId)))
+            adapter.initialize(
+                AdapterConfig(
+                    providerId,
+                    listOf(Endpoint("ep1", region, "https://example.internal", 100)),
+                    RateLimits(600, 100_000, 10),
+                    setOf(region),
+                ),
+                object : SecretAccessor {
+                    override fun resolve(ref: CredentialRef): SecretValue = SecretValue("secret".toCharArray())
+                },
+            )
+            val adapterRegistry =
+                object : AdapterRegistry {
+                    override fun resolve(pluginId: String): ResolvedPlugin {
+                        if (pluginId != "plugin-a") throw PluginNotFoundException(pluginId)
+                        return ResolvedPlugin(
+                            adapter,
+                            PluginManifest(
+                                "plugin-a",
+                                SemVer(1, 0, 0),
+                                SemVerRange(listOf(SemVerRange.Comparator(SemVerRange.Op.GTE, SemVer(1, 0, 0)))),
+                                "apap.adapter.mock.MockProviderAdapter",
+                                setOf(capabilityId),
+                                setOf("api_key"),
+                                "sig",
+                            ),
+                        )
+                    }
+                }
+
+            val conversationId = ConversationId("01ARZ3NDEKTSV4RRFFQ69G5FA6")
+            conversationRepository.save(
+                Conversation(
+                    conversationId = conversationId,
+                    sessionId = SessionId("01ARZ3NDEKTSV4RRFFQ69G5FA5"),
+                    tenantId = tenantId,
+                ),
+            )
+
+            val engine =
+                ExecutionEngineComposer(
+                    providerRepository,
+                    modelRepository,
+                    InMemoryAliasRepository(),
+                    InMemoryPolicyRepository(),
+                    InMemoryHealthLatencyStatsRepository(),
+                    InMemoryQuotaSnapshotRepository(),
+                    InMemoryTenantEntitlementRepository(),
+                    InMemoryMemoryRepository(),
+                    conversationRepository,
+                    priceBookRepository(modelId),
+                    InMemoryBudgetRepository(),
+                    InMemoryUsageRepository(),
+                    InMemoryQuotaPolicyRepository(),
+                    adapterRegistry,
+                    clock,
+                    ids,
+                    events,
+                    events,
+                ).build()
+
+            fun request(text: String): CanonicalRequest {
+                val requestIdValue = if (text == "first") "01ARZ3NDEKTSV4RRFFQ69G5FA7" else "01ARZ3NDEKTSV4RRFFQ69G5FA8"
+                return CanonicalRequest(
+                    requestId = RequestId(requestIdValue),
+                    tenantId = tenantId,
+                    principal = "user-1",
+                    capabilityId = capabilityId,
+                    input = listOf(ContentPart.Text(text)),
+                    conversationId = conversationId,
+                    timeoutBudget = Duration.ofSeconds(30),
+                    traceId = "trace-1",
+                )
+            }
+
+            engine.execute(request("first"))
+            engine.execute(request("second"))
+
+            val turns = conversationRepository.findTurns(conversationId, 1..Int.MAX_VALUE)
+            assertEquals(4, turns.size)
+            assertEquals(listOf(1, 2, 3, 4), turns.map { it.seq })
+            assertEquals(
+                listOf(TurnRole.USER, TurnRole.ASSISTANT, TurnRole.USER, TurnRole.ASSISTANT),
+                turns.map { it.role },
+            )
+        }
+
+    /**
+     * 着手前レビュー: Turn永続化の失敗（未startのconversationIdを指定、
+     * ConversationManager.appendTurnがConversationNotFoundExceptionを送出する）が応答を
+     * 失敗させないことを確認する。
+     */
+    @Suppress("LongMethod")
+    @Test
+    fun `a turn persistence failure does not fail the response`() =
+        runBlocking {
+            val providerRepository = InMemoryProviderRepository()
+            val modelRepository = InMemoryModelRepository()
+            val clock = InMemoryClock(Instant.parse("2026-01-01T00:00:00Z"))
+            val ids = InMemoryIdGenerator()
+            val events = InMemoryDomainEventPublisher()
+            // Deliberately never saved: appendTurn will throw ConversationNotFoundException.
+            val conversationRepository = InMemoryConversationRepository()
+            val unknownConversationId = ConversationId("01ARZ3NDEKTSV4RRFFQ69G5FA9")
+
+            providerRepository.save(
+                Provider(
+                    providerId = providerId,
+                    name = "provider-a",
+                    adapterPluginId = "plugin-a",
+                    spiVersion = SemVer(1, 0, 0),
+                    endpoints = listOf(Endpoint("ep1", region, "https://example.internal", 100)),
+                    authType = "api_key",
+                    credentialRefs = listOf(CredentialRef("secret-ref", 1, CredentialState.ACTIVE)),
+                    rateLimits = RateLimits(600, 100_000, 10),
+                    priority = 50,
+                    regions = setOf(region),
+                    status = ProviderStatus.ACTIVE,
+                ),
+            )
+            modelRepository.save(
+                Model(
+                    modelId = modelId,
+                    providerId = providerId,
+                    modelName = "model-a",
+                    version = "1.0",
+                    capabilities = listOf(ModelCapability(capabilityId)),
+                    contextWindow = 8000,
+                    maxOutputTokens = 1000,
+                    regions = setOf(region),
+                    status = ModelStatus.ACTIVE,
+                    priority = 50,
+                ),
+            )
+
+            val adapter = MockProviderAdapter(MockAdapterConfig(supportedCapabilities = setOf(capabilityId)))
+            adapter.initialize(
+                AdapterConfig(
+                    providerId,
+                    listOf(Endpoint("ep1", region, "https://example.internal", 100)),
+                    RateLimits(600, 100_000, 10),
+                    setOf(region),
+                ),
+                object : SecretAccessor {
+                    override fun resolve(ref: CredentialRef): SecretValue = SecretValue("secret".toCharArray())
+                },
+            )
+            val adapterRegistry =
+                object : AdapterRegistry {
+                    override fun resolve(pluginId: String): ResolvedPlugin {
+                        if (pluginId != "plugin-a") throw PluginNotFoundException(pluginId)
+                        return ResolvedPlugin(
+                            adapter,
+                            PluginManifest(
+                                "plugin-a",
+                                SemVer(1, 0, 0),
+                                SemVerRange(listOf(SemVerRange.Comparator(SemVerRange.Op.GTE, SemVer(1, 0, 0)))),
+                                "apap.adapter.mock.MockProviderAdapter",
+                                setOf(capabilityId),
+                                setOf("api_key"),
+                                "sig",
+                            ),
+                        )
+                    }
+                }
+
+            val engine =
+                ExecutionEngineComposer(
+                    providerRepository,
+                    modelRepository,
+                    InMemoryAliasRepository(),
+                    InMemoryPolicyRepository(),
+                    InMemoryHealthLatencyStatsRepository(),
+                    InMemoryQuotaSnapshotRepository(),
+                    InMemoryTenantEntitlementRepository(),
+                    InMemoryMemoryRepository(),
+                    conversationRepository,
+                    priceBookRepository(modelId),
+                    InMemoryBudgetRepository(),
+                    InMemoryUsageRepository(),
+                    InMemoryQuotaPolicyRepository(),
+                    adapterRegistry,
+                    clock,
+                    ids,
+                    events,
+                    events,
+                ).build()
+
+            val request =
+                CanonicalRequest(
+                    requestId = requestId,
+                    tenantId = tenantId,
+                    principal = "user-1",
+                    capabilityId = capabilityId,
+                    input = listOf(ContentPart.Text("hello")),
+                    conversationId = unknownConversationId,
+                    timeoutBudget = Duration.ofSeconds(30),
+                    traceId = "trace-1",
+                )
+
+            val response = engine.execute(request)
+
+            assertTrue(response.output.isNotEmpty())
+        }
+
+    /**
+     * 着手前レビュー: 冪等性要件（1リクエスト=user turn 1件+assistant turn 1件）。Retry
+     * （最初のProviderが3回とも失敗）とFallback（2段目のProviderで成功）を経ても、記録される
+     * turnが重複しないことを確認する（最も壊れやすい箇所、というタスク要求への直接的な証跡）。
+     */
+    @Suppress("LongMethod")
+    @Test
+    fun `retries and fallback do not duplicate turn persistence`() =
+        runBlocking {
+            val providerRepository = InMemoryProviderRepository()
+            val modelRepository = InMemoryModelRepository()
+            val clock = InMemoryClock(Instant.parse("2026-01-01T00:00:00Z"))
+            val ids = InMemoryIdGenerator()
+            val events = InMemoryDomainEventPublisher()
+            val conversationRepository = InMemoryConversationRepository()
+
+            val failingProviderId = ProviderId("01ARZ3NDEKTSV4RRFFQ69G5FB0")
+            val healthyProviderId = ProviderId("01ARZ3NDEKTSV4RRFFQ69G5FB1")
+            val failingModelId = ModelId("01ARZ3NDEKTSV4RRFFQ69G5FB2")
+            val healthyModelId = ModelId("01ARZ3NDEKTSV4RRFFQ69G5FB3")
+
+            fun saveProvider(
+                id: ProviderId,
+                pluginId: String,
+                priority: Int,
+            ) = providerRepository.save(
+                Provider(
+                    providerId = id,
+                    name = "provider-${id.value}",
+                    adapterPluginId = pluginId,
+                    spiVersion = SemVer(1, 0, 0),
+                    endpoints = listOf(Endpoint("ep1", region, "https://example.internal", 100)),
+                    authType = "api_key",
+                    credentialRefs = listOf(CredentialRef("secret-ref", 1, CredentialState.ACTIVE)),
+                    rateLimits = RateLimits(600, 100_000, 10),
+                    priority = priority,
+                    regions = setOf(region),
+                    status = ProviderStatus.ACTIVE,
+                ),
+            )
+
+            fun saveModel(
+                id: ModelId,
+                pid: ProviderId,
+            ) = modelRepository.save(
+                Model(
+                    modelId = id,
+                    providerId = pid,
+                    modelName = "model-${id.value}",
+                    version = "1.0",
+                    capabilities = listOf(ModelCapability(capabilityId)),
+                    contextWindow = 8000,
+                    maxOutputTokens = 1000,
+                    regions = setOf(region),
+                    status = ModelStatus.ACTIVE,
+                    priority = 50,
+                ),
+            )
+
+            // Higher priority: routed first, tried and exhausted before Fallback moves on.
+            saveProvider(failingProviderId, "plugin-failing", priority = 100)
+            saveProvider(healthyProviderId, "plugin-healthy", priority = 50)
+            saveModel(failingModelId, failingProviderId)
+            saveModel(healthyModelId, healthyProviderId)
+
+            fun initializedAdapter(
+                id: ProviderId,
+                config: MockAdapterConfig,
+            ): MockProviderAdapter {
+                val adapter = MockProviderAdapter(config)
+                adapter.initialize(
+                    AdapterConfig(
+                        id,
+                        listOf(Endpoint("ep1", region, "https://example.internal", 100)),
+                        RateLimits(600, 100_000, 10),
+                        setOf(region),
+                    ),
+                    object : SecretAccessor {
+                        override fun resolve(ref: CredentialRef): SecretValue = SecretValue("secret".toCharArray())
+                    },
+                )
+                return adapter
+            }
+
+            val failingAdapter =
+                initializedAdapter(
+                    failingProviderId,
+                    MockAdapterConfig(
+                        supportedCapabilities = setOf(capabilityId),
+                        forcedErrorCategory = AdapterErrorCategory.TRANSIENT,
+                    ),
+                )
+            val healthyConfig = MockAdapterConfig(supportedCapabilities = setOf(capabilityId))
+            val healthyAdapter = initializedAdapter(healthyProviderId, healthyConfig)
+
+            fun manifest(pluginId: String) =
+                PluginManifest(
+                    pluginId,
+                    SemVer(1, 0, 0),
+                    SemVerRange(listOf(SemVerRange.Comparator(SemVerRange.Op.GTE, SemVer(1, 0, 0)))),
+                    "apap.adapter.mock.MockProviderAdapter",
+                    setOf(capabilityId),
+                    setOf("api_key"),
+                    "sig",
+                )
+            val adapterRegistry =
+                object : AdapterRegistry {
+                    override fun resolve(pluginId: String): ResolvedPlugin =
+                        when (pluginId) {
+                            "plugin-failing" -> ResolvedPlugin(failingAdapter, manifest(pluginId))
+                            "plugin-healthy" -> ResolvedPlugin(healthyAdapter, manifest(pluginId))
+                            else -> throw PluginNotFoundException(pluginId)
+                        }
+                }
+
+            val conversationId = ConversationId("01ARZ3NDEKTSV4RRFFQ69G5FB4")
+            conversationRepository.save(
+                Conversation(
+                    conversationId = conversationId,
+                    sessionId = SessionId("01ARZ3NDEKTSV4RRFFQ69G5FB5"),
+                    tenantId = tenantId,
+                ),
+            )
+
+            val engine =
+                ExecutionEngineComposer(
+                    providerRepository,
+                    modelRepository,
+                    InMemoryAliasRepository(),
+                    InMemoryPolicyRepository(),
+                    InMemoryHealthLatencyStatsRepository(),
+                    InMemoryQuotaSnapshotRepository(),
+                    InMemoryTenantEntitlementRepository(),
+                    InMemoryMemoryRepository(),
+                    conversationRepository,
+                    priceBookRepository(failingModelId, healthyModelId),
+                    InMemoryBudgetRepository(),
+                    InMemoryUsageRepository(),
+                    InMemoryQuotaPolicyRepository(),
+                    adapterRegistry,
+                    clock,
+                    ids,
+                    events,
+                    events,
+                    retryConfig = RetryConfig(maxAttempts = 3, baseBackoffMs = 1),
+                ).build()
+
+            val request =
+                CanonicalRequest(
+                    requestId = requestId,
+                    tenantId = tenantId,
+                    principal = "user-1",
+                    capabilityId = capabilityId,
+                    input = listOf(ContentPart.Text("hello")),
+                    conversationId = conversationId,
+                    timeoutBudget = Duration.ofSeconds(30),
+                    traceId = "trace-1",
+                )
+
+            val response = engine.execute(request)
+
+            assertEquals(healthyProviderId, response.resolvedProvider)
+            val turns = conversationRepository.findTurns(conversationId, 1..Int.MAX_VALUE)
+            assertEquals(2, turns.size)
+            assertEquals(listOf(TurnRole.USER, TurnRole.ASSISTANT), turns.map { it.role })
         }
 
     /**
