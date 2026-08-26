@@ -25,7 +25,7 @@ class CostEstimatorTest {
 
         val cost = estimator.estimate(ProviderId("01ARZ3NDEKTSV4RRFFQ69G5FAX"), ModelId("01ARZ3NDEKTSV4RRFFQ69G5FAY"))
 
-        assertEquals(0, cost.amount.signum())
-        assertEquals("JPY", cost.currency)
+        assertEquals(0, cost?.amount?.signum())
+        assertEquals("JPY", cost?.currency)
     }
 }

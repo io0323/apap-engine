@@ -3,8 +3,10 @@ package apap.cost.quota
 import apap.domain.event.EventMetadata
 import apap.domain.event.QuotaExceeded
 import apap.domain.model.cost.QuotaPolicy
+import apap.domain.model.cost.RecurringPeriodType
 import apap.domain.model.vo.ModelId
 import apap.domain.model.vo.Money
+import apap.domain.model.vo.Period
 import apap.domain.model.vo.ProviderId
 import apap.domain.model.vo.TenantId
 import apap.domain.model.vo.TokenCount
@@ -12,33 +14,45 @@ import apap.domain.model.vo.Usage
 import apap.domain.port.Clock
 import apap.domain.port.DomainEventPublisher
 import apap.domain.port.IdGenerator
-import org.slf4j.LoggerFactory
+import apap.domain.service.cost.PeriodWindowService
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * テナント単位の予約済(pending)/確定済(committed)累計。期間境界でのリセット
- * （`BudgetPeriodReset`、Scheduler駆動）は本フェーズの対象外とし、プロセス起動からの累計に対して
- * 上限判定を行う（真の期間集計はCostEngine本実装(P7)の範囲）。
- *
- * **既知の制約**: リセットがないため、長時間稼働するプロセスでは`committedRequests`等が
- * 単調増加し続け、いずれ上限に達したまま二度と回復せず全リクエストを拒否する状態になる
- * （「未実装」より悪い、常時QuotaExceededを返す状態）。他のP6/P7スタブ（PassthroughPromptEngine等）
- * と同様に構築時WARNで検知可能にする（[DefaultQuotaManager]のinitブロック参照）。
+ * テナント単位の予約済(pending)/確定済(committed)累計。[currentWindow]が保持する期間境界を
+ * 跨いだことを検知した時点で、そのテナントの累計をゼロへ戻す（FR-EXE-004: 期間別リセット）。
+ * `policy`未指定のテナントにも既定でDAILY境界を適用する（[DefaultQuotaManager.ledgerFor]参照）。
  */
 private class TenantLedger {
+    var currentWindow: Period? = null
     var committedRequests: Long = 0
     var committedTokens: Long = 0
     var committedCost: Money? = null
     var pendingRequests: Long = 0
     var pendingTokens: Long = 0
     var pendingCost: Money? = null
+
+    fun resetForNewWindow(window: Period) {
+        currentWindow = window
+        committedRequests = 0
+        committedTokens = 0
+        committedCost = null
+        pendingRequests = 0
+        pendingTokens = 0
+        pendingCost = null
+    }
 }
 
 /**
  * [QuotaManager]の既定実装。決済漏れ0を保証するため、[checkAndReserve]/[commit]/[release]/
  * [expireStale]のすべてで、まず期限切れpending予約を掃除してから本処理へ進む（外部Schedulerが
  * [expireStale]を呼ばなくても、後続の呼出のたびに自己修復する）。
+ *
+ * 期間境界リセット（FR-EXE-004）は、新規の消費が発生する2つの入口（[checkAndReserve]・
+ * [recordCacheShortCircuit]）でのみ[ledgerFor]を通じて判定する。[commit]/[release]は
+ * 既存の[Reservation]（[checkAndReserve]時点で境界判定済み）を決済するだけであり、ここで
+ * 改めて境界判定を行うと、境界を跨ぐ間際に作られた予約の決済分がリセットで失われかねないため
+ * 意図的に対象外とする（要件充足に影響しない実装判断のためADR化せず、根拠をここに残す）。
  */
 @Suppress("TooManyFunctions")
 class DefaultQuotaManager(
@@ -47,15 +61,6 @@ class DefaultQuotaManager(
     private val eventPublisher: DomainEventPublisher,
     private val config: QuotaManagerConfig = QuotaManagerConfig(),
 ) : QuotaManager {
-    init {
-        logger.warn(
-            "DefaultQuotaManager has no period-boundary reset (BudgetPeriodReset, Scheduler-driven, " +
-                "is out of scope for this phase). Limits are enforced against process-lifetime " +
-                "cumulative usage: a long-running process will permanently deny all requests for a " +
-                "tenant once its limit is first reached. See requirements-matrix.md FR-EXE-004.",
-        )
-    }
-
     private val ledgers = ConcurrentHashMap<TenantId, TenantLedger>()
     private val reservations = ConcurrentHashMap<String, Reservation>()
 
@@ -72,7 +77,7 @@ class DefaultQuotaManager(
         now: Instant,
     ): Reservation {
         sweepExpired(now)
-        val ledger = ledgers.computeIfAbsent(tenantId) { TenantLedger() }
+        val ledger = ledgerFor(tenantId, policy, now)
         if (policy != null) {
             enforceLimits(tenantId, ledger, policy, estimatedTokens, estimatedCost, traceId)
         }
@@ -125,7 +130,7 @@ class DefaultQuotaManager(
     ) {
         // ADR-0012: Cache短絡時はrequestsのみ・テナントスコープのみ消費。予約フェーズを経ないため
         // pendingではなく直接committedへ計上する。
-        val ledger = ledgers.computeIfAbsent(tenantId) { TenantLedger() }
+        val ledger = ledgerFor(tenantId, policy, clock.now())
         ledger.committedRequests += 1
     }
 
@@ -146,6 +151,21 @@ class DefaultQuotaManager(
 
     private fun sweepExpired(now: Instant) {
         expireStale(now)
+    }
+
+    /** FR-EXE-004: [tenantId]の現在の期間境界を計算し、前回の境界と異なれば台帳をリセットする。 */
+    private fun ledgerFor(
+        tenantId: TenantId,
+        policy: QuotaPolicy?,
+        now: Instant,
+    ): TenantLedger {
+        val periodType = policy?.period ?: RecurringPeriodType.DAILY
+        val window = PeriodWindowService.windowContaining(now, periodType)
+        val ledger = ledgers.computeIfAbsent(tenantId) { TenantLedger() }
+        if (ledger.currentWindow != window) {
+            ledger.resetForNewWindow(window)
+        }
+        return ledger
     }
 
     private fun requirePending(reservation: Reservation): Reservation {
@@ -230,8 +250,4 @@ class DefaultQuotaManager(
         current: Money?,
         delta: Money,
     ): Money? = current?.let { it - delta }
-
-    private companion object {
-        val logger = LoggerFactory.getLogger(DefaultQuotaManager::class.java)
-    }
 }

@@ -1,7 +1,16 @@
 package apap.runtime
 
+import apap.cache.CacheCodec
+import apap.cache.CacheConfig
 import apap.cache.CacheEngine
-import apap.cache.PassthroughCacheEngine
+import apap.cache.CacheKeyStrategy
+import apap.cache.CacheStore
+import apap.cache.CacheabilityPolicy
+import apap.cache.DefaultCacheEngine
+import apap.cache.DefaultCacheabilityPolicy
+import apap.cache.InMemoryCacheStore
+import apap.cache.NormalizedJsonCacheKeyStrategy
+import apap.cache.PassthroughCacheCodec
 import apap.cache.ratelimit.RateLimiter
 import apap.cache.ratelimit.RateLimiterConfig
 import apap.cache.ratelimit.TokenBucketRateLimiter
@@ -15,15 +24,18 @@ import apap.context.NoOpQueryEmbedder
 import apap.context.QueryEmbedder
 import apap.context.TruncateOldestCompactionStrategy
 import apap.cost.CostEngine
-import apap.cost.PassthroughCostEngine
+import apap.cost.CostEngineConfig
+import apap.cost.DefaultCostEngine
 import apap.cost.quota.DefaultQuotaManager
 import apap.cost.quota.QuotaManager
 import apap.cost.quota.QuotaManagerConfig
 import apap.domain.model.conversation.MemoryScope
 import apap.domain.model.cost.QuotaPolicy
+import apap.domain.model.execution.CanonicalResponse
 import apap.domain.model.vo.ModelId
 import apap.domain.model.vo.TenantId
 import apap.domain.port.AliasRepository
+import apap.domain.port.BudgetRepository
 import apap.domain.port.Clock
 import apap.domain.port.ConversationRepository
 import apap.domain.port.DomainEventPublisher
@@ -33,9 +45,12 @@ import apap.domain.port.IdGenerator
 import apap.domain.port.MemoryRepository
 import apap.domain.port.ModelRepository
 import apap.domain.port.PolicyRepository
+import apap.domain.port.PriceBookRepository
 import apap.domain.port.ProviderRepository
+import apap.domain.port.QuotaPolicyRepository
 import apap.domain.port.QuotaSnapshotRepository
 import apap.domain.port.TenantEntitlementRepository
+import apap.domain.port.UsageRepository
 import apap.domain.service.execution.TokenEstimationConfig
 import apap.execution.DefaultExecutionEngine
 import apap.execution.ExecutionEngine
@@ -53,20 +68,20 @@ import apap.prompt.PromptEngine
 import apap.provider.AdapterRegistry
 import apap.routing.CandidateFactory
 import apap.routing.CostEstimator
+import apap.routing.RealCostEstimator
 import apap.routing.RoutingCandidateCache
 import apap.routing.RoutingEngine
-import apap.routing.ZeroCostEstimator
 
 /**
  * 03_基本設計.md 3.15 DI構成のコンポジションルート: 実行エンジン一式（apap-execution）を
  * Routing/Prompt/Context/Cache/Costの各Portと配線する。コンストラクタ注入のみ（フィールド注入禁止）
  * という方針に従い、本クラス自体はコンテナを持たず、単に組立関数を提供するだけの薄い層とする。
  *
- * P6でPrompt/Contextは実装（[DefaultPromptEngine]/[DefaultContextManager]）へ置き換わり、
- * `optInToStubs`の対象からは外れた（無条件に構築する）。P7未着手のPassthrough実装
- * （[PassthroughCacheEngine]/[PassthroughCostEngine]）のみ、[optInToStubs]が`true`の場合に使う。
- * `false`（既定）の場合はここで構築時例外となり、呼び出し側が「未実装の機能に依存している」ことを
- * 起動時に必ず認識させる。
+ * P5〜P7を通じて、当初Passthroughスタブだった4系統（Prompt/Context: P6、Cache/Cost: P7）は
+ * すべて実装（[DefaultPromptEngine]/[DefaultContextManager]/[DefaultCacheEngine]/
+ * [DefaultCostEngine]）へ置き換わった。参照先がゼロになったため、スタブ使用を明示的にopt-inさせる
+ * 旧`optInToStubs`パラメータと`requireStubOptIn`メソッドは削除した（CLAUDE.md「確実に不要なら
+ * 完全に削除する」方針）。
  *
  * `ExecutionEngine`は`conversationRepository`から読み取り専用でConversationを解決し
  * `ContextManager.build`へ渡す（02_システム仕様.md 2.8 step2、着手前レビューで読み取り側のみに
@@ -74,6 +89,10 @@ import apap.routing.ZeroCostEstimator
  * `ConversationManager`/`apap.prompt.PromptTemplateManager`は本Composerが構築する
  * `ExecutionEngine`の依存には入らない。埋込先アプリケーションがそれぞれのRepositoryから
  * 直接構築して使う（Turn永続化はSession/Gateway層の責務）。
+ *
+ * [quotaPolicyRepository]と[quotaPolicyProvider]は役割が異なり併存する: 前者は登録・一覧・更新の
+ * CRUD（管理API向け）、後者はExecutionEngine実行時の高速な解決口。[quotaPolicyProvider]の既定実装は
+ * [quotaPolicyRepository]経由（`findByTenant`の先頭要素）とする。
  */
 @Suppress("LongParameterList")
 class ExecutionEngineComposer(
@@ -86,19 +105,25 @@ class ExecutionEngineComposer(
     private val tenantEntitlementRepository: TenantEntitlementRepository,
     private val memoryRepository: MemoryRepository,
     private val conversationRepository: ConversationRepository,
+    private val priceBookRepository: PriceBookRepository,
+    private val budgetRepository: BudgetRepository,
+    private val usageRepository: UsageRepository,
+    private val quotaPolicyRepository: QuotaPolicyRepository,
     private val adapterRegistry: AdapterRegistry,
     private val clock: Clock,
     private val idGenerator: IdGenerator,
     private val eventPublisher: DomainEventPublisher,
     private val eventSubscriber: DomainEventSubscriber,
-    private val optInToStubs: Boolean = false,
-    private val quotaPolicyProvider: (TenantId) -> QuotaPolicy? = { null },
+    private val quotaPolicyProvider: (TenantId) -> QuotaPolicy? = {
+        quotaPolicyRepository.findByTenant(it).firstOrNull()
+    },
     private val circuitBreakerConfig: CircuitBreakerConfig = CircuitBreakerConfig(),
     private val retryConfig: RetryConfig = RetryConfig(),
     private val structuredOutputConfig: StructuredOutputConfig = StructuredOutputConfig(),
     private val rateLimiterConfig: RateLimiterConfig = RateLimiterConfig(),
     private val quotaManagerConfig: QuotaManagerConfig = QuotaManagerConfig(),
-    private val routingCostEstimator: CostEstimator = ZeroCostEstimator(),
+    private val costEngineConfig: CostEngineConfig = CostEngineConfig(),
+    private val routingCostEstimator: CostEstimator = RealCostEstimator(priceBookRepository, clock),
     private val tokenEstimationConfig: TokenEstimationConfig = TokenEstimationConfig(),
     private val contextTokenCounterFactory: (ModelId) -> ContextTokenCounter = {
         HeuristicContextTokenCounter(it, tokenEstimationConfig)
@@ -108,6 +133,11 @@ class ExecutionEngineComposer(
     private val memoryScopes: Set<MemoryScope> = MemoryScope.entries.toSet(),
     private val memoryTopK: Int = DEFAULT_MEMORY_TOP_K,
     private val memorySimilarityThreshold: Double = DEFAULT_MEMORY_SIMILARITY_THRESHOLD,
+    private val cacheStore: CacheStore<CanonicalResponse> = InMemoryCacheStore(clock),
+    private val cacheCodec: CacheCodec<CanonicalResponse, CanonicalResponse> = PassthroughCacheCodec(),
+    private val cacheKeyStrategy: CacheKeyStrategy = NormalizedJsonCacheKeyStrategy(),
+    private val cacheabilityPolicy: CacheabilityPolicy = DefaultCacheabilityPolicy(),
+    private val cacheConfig: CacheConfig = CacheConfig(),
 ) {
     @Suppress("LongMethod")
     fun build(): ExecutionEngine {
@@ -153,8 +183,28 @@ class ExecutionEngineComposer(
                 memoryTopK = memoryTopK,
                 memorySimilarityThreshold = memorySimilarityThreshold,
             )
-        val cacheEngine: CacheEngine = PassthroughCacheEngine(optedIn = requireStubOptIn("CacheEngine"))
-        val costEngine: CostEngine = PassthroughCostEngine(optedIn = requireStubOptIn("CostEngine"))
+        val defaultCacheEngine =
+            DefaultCacheEngine(
+                cacheStore,
+                cacheCodec,
+                cacheKeyStrategy,
+                cacheabilityPolicy,
+                cacheConfig,
+                aliasRepository,
+                clock,
+            )
+        eventSubscriber.subscribe { defaultCacheEngine.apply(it) }
+        val cacheEngine: CacheEngine = defaultCacheEngine
+        val costEngine: CostEngine =
+            DefaultCostEngine(
+                priceBookRepository,
+                budgetRepository,
+                usageRepository,
+                clock,
+                idGenerator,
+                eventPublisher,
+                costEngineConfig,
+            )
 
         val attemptExecutor =
             AttemptExecutor(
@@ -197,15 +247,6 @@ class ExecutionEngineComposer(
             eventPublisher,
             quotaPolicyProvider,
         )
-    }
-
-    private fun requireStubOptIn(name: String): Boolean {
-        check(optInToStubs) {
-            "$name has no real implementation yet (P7). Construct ExecutionEngineComposer with " +
-                "optInToStubs=true to acknowledge this and use the passthrough stub, or supply a real " +
-                "implementation once available."
-        }
-        return true
     }
 
     private companion object {

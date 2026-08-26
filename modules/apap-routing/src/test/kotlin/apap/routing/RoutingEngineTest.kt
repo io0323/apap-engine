@@ -3,6 +3,8 @@ package apap.routing
 import apap.domain.event.EventMetadata
 import apap.domain.event.ProviderDraining
 import apap.domain.event.ProviderEnabled
+import apap.domain.model.cost.PriceBook
+import apap.domain.model.cost.PriceEntry
 import apap.domain.model.modelcatalog.AliasTarget
 import apap.domain.model.modelcatalog.Model
 import apap.domain.model.modelcatalog.ModelAlias
@@ -16,10 +18,14 @@ import apap.domain.model.vo.CapabilityId
 import apap.domain.model.vo.CredentialRef
 import apap.domain.model.vo.CredentialState
 import apap.domain.model.vo.ModelId
+import apap.domain.model.vo.Money
+import apap.domain.model.vo.OptimizeFor
+import apap.domain.model.vo.Period
 import apap.domain.model.vo.ProviderId
 import apap.domain.model.vo.Region
 import apap.domain.model.vo.RegionCodeTable
 import apap.domain.model.vo.RequestId
+import apap.domain.model.vo.RoutingPreferences
 import apap.domain.model.vo.SemVer
 import apap.domain.model.vo.TenantId
 import apap.testkit.inmemory.InMemoryAliasRepository
@@ -29,6 +35,7 @@ import apap.testkit.inmemory.InMemoryDomainEventPublisher
 import apap.testkit.inmemory.InMemoryHealthLatencyStatsRepository
 import apap.testkit.inmemory.InMemoryModelRepository
 import apap.testkit.inmemory.InMemoryPolicyRepository
+import apap.testkit.inmemory.InMemoryPriceBookRepository
 import apap.testkit.inmemory.InMemoryProviderRepository
 import apap.testkit.inmemory.InMemoryQuotaSnapshotRepository
 import apap.testkit.inmemory.InMemoryTenantEntitlementRepository
@@ -36,6 +43,8 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.math.BigDecimal
+import java.time.Instant
 
 class RoutingEngineTest {
     private val region = Region.of("jp-east", RegionCodeTable(setOf("jp-east")))
@@ -201,5 +210,66 @@ class RoutingEngineTest {
                 .first()
                 .modelId,
         )
+    }
+
+    @Test
+    fun `optimize_for=cost picks the cheaper candidate once RealCostEstimator is wired`() {
+        val cheapProviderId = ProviderId("01ARZ3NDEKTSV4RRFFQ69G5FB0")
+        val expensiveProviderId = ProviderId("01ARZ3NDEKTSV4RRFFQ69G5FB1")
+        val cheapModelId = ModelId("01ARZ3NDEKTSV4RRFFQ69G5FB2")
+        val expensiveModelId = ModelId("01ARZ3NDEKTSV4RRFFQ69G5FB3")
+        enableProvider(cheapProviderId)
+        enableProvider(expensiveProviderId)
+        modelRepository.save(model(cheapModelId, cheapProviderId, ModelStatus.ACTIVE))
+        modelRepository.save(model(expensiveModelId, expensiveProviderId, ModelStatus.ACTIVE))
+
+        val priceBookRepository = InMemoryPriceBookRepository()
+        val period = Period(Instant.parse("2026-01-01T00:00:00Z"), Instant.parse("2027-01-01T00:00:00Z"))
+        priceBookRepository.save(
+            PriceBook(
+                "book-1",
+                listOf(
+                    PriceEntry(
+                        cheapModelId,
+                        Money(BigDecimal("0.10"), "USD"),
+                        Money(BigDecimal("0.10"), "USD"),
+                        period,
+                    ),
+                    PriceEntry(
+                        expensiveModelId,
+                        Money(BigDecimal("10.00"), "USD"),
+                        Money(BigDecimal("10.00"), "USD"),
+                        period,
+                    ),
+                ),
+            ),
+        )
+
+        val costAwareFactory =
+            CandidateFactory(
+                providerRepository,
+                modelRepository,
+                aliasRepository,
+                InMemoryCircuitBreakerStateRepository(),
+                InMemoryHealthLatencyStatsRepository(),
+                InMemoryQuotaSnapshotRepository(),
+                InMemoryTenantEntitlementRepository(),
+                RealCostEstimator(priceBookRepository, clock),
+                cache,
+                clock,
+            )
+        val costAwareEngine = RoutingEngine(costAwareFactory, policyRepository, randomSource = { 0.0 })
+
+        val preferences = RoutingPreferences(optimizeFor = OptimizeFor.COST)
+        val decision =
+            costAwareEngine.route(RoutingRequest(capabilityId, tenantId, preferences = preferences), requestId)
+
+        assertEquals(
+            cheapModelId,
+            decision.chain.candidates
+                .first()
+                .modelId,
+        )
+        assertTrue(!decision.costEstimationStubbed)
     }
 }

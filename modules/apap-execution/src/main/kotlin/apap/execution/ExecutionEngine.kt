@@ -173,10 +173,10 @@ class DefaultExecutionEngine(
                 resolvedModel = result.candidate.modelId,
                 idGenerator = idGenerator,
             )
-        quotaManager.commit(reservation, result.response.usage, cost.amount)
-        costEngine.record(response)
-        cacheEngine.store(request, prompt, response)
         val durationMs = Duration.between(startedAt, clock.now()).toMillis()
+        quotaManager.commit(reservation, result.response.usage, cost.amount)
+        costEngine.record(request, response, durationMs)
+        cacheEngine.store(request, prompt, response)
         publish(
             RequestCompleted(
                 meta(request),
