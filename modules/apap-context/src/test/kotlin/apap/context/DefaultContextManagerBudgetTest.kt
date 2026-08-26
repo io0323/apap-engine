@@ -25,6 +25,7 @@ import apap.testkit.inmemory.InMemoryDomainEventPublisher
 import apap.testkit.inmemory.InMemoryIdGenerator
 import apap.testkit.inmemory.InMemoryMemoryRepository
 import apap.testkit.inmemory.InMemoryModelRepository
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -124,33 +125,35 @@ class DefaultContextManagerBudgetTest {
     )
 
     @Test
-    fun `boundary exactly at budget keeps all turns without truncation`() {
-        // "hi" (2 chars) fixed input + one 8-char turn = 10 chars.
-        // budget = contextWindow(11) - maxOutputTokens(1) = 10.
-        model(contextWindow = 11)
-        val result =
-            manager().build(request("hi"), emptyList(), conversation(listOf(turn(1, "12345678"))), modelId)
-        assertFalse(result.truncated)
-        assertEquals(1, result.turns.size)
-        assertEquals(TokenCount(10), result.estimatedTokens)
-    }
+    fun `boundary exactly at budget keeps all turns without truncation`() =
+        runBlocking {
+            // "hi" (2 chars) fixed input + one 8-char turn = 10 chars.
+            // budget = contextWindow(11) - maxOutputTokens(1) = 10.
+            model(contextWindow = 11)
+            val result =
+                manager().build(request("hi"), emptyList(), conversation(listOf(turn(1, "12345678"))), modelId)
+            assertFalse(result.truncated)
+            assertEquals(1, result.turns.size)
+            assertEquals(TokenCount(10), result.estimatedTokens)
+        }
 
     @Test
-    fun `one token over budget truncates the oldest turn deterministically`() {
-        model(contextWindow = 11)
-        val history = listOf(turn(1, "12345678"), turn(2, "9"))
-        val result = manager().build(request("hi"), emptyList(), conversation(history), modelId)
-        assertTrue(result.truncated)
-        // The oldest turn (seq=1) is dropped first; the newest (seq=2) is kept.
-        assertEquals(listOf(2), result.turns.map { it.seq })
-    }
+    fun `one token over budget truncates the oldest turn deterministically`() =
+        runBlocking {
+            model(contextWindow = 11)
+            val history = listOf(turn(1, "12345678"), turn(2, "9"))
+            val result = manager().build(request("hi"), emptyList(), conversation(history), modelId)
+            assertTrue(result.truncated)
+            // The oldest turn (seq=1) is dropped first; the newest (seq=2) is kept.
+            assertEquals(listOf(2), result.turns.map { it.seq })
+        }
 
     @Test
     fun `still over budget after dropping all history fires TokenLimitExceeded and throws`() {
         model(contextWindow = 6)
         val exception =
             assertThrows(ContextLengthExceededException::class.java) {
-                manager().build(request("far too long for the budget"), emptyList(), null, modelId)
+                runBlocking { manager().build(request("far too long for the budget"), emptyList(), null, modelId) }
             }
         assertEquals(ErrorCode.CONTEXT_LENGTH_EXCEEDED, exception.errorCode)
 
@@ -161,21 +164,22 @@ class DefaultContextManagerBudgetTest {
     }
 
     @Test
-    fun `EXACT mode uses a smaller safety margin than HEURISTIC, yielding a larger usable budget`() {
-        model(contextWindow = 100, maxOutputTokens = 1)
-        val config = TokenEstimationConfig(exactSafetyMarginRatio = 0.05, heuristicSafetyMarginRatio = 0.50)
-        // Fixed input is 1 char; budgets are EXACT=95, HEURISTIC=50 -> 94/49 left for history.
-        // 90 chars of history fits under EXACT's remaining budget but not under HEURISTIC's.
-        val history = listOf(turn(1, "a".repeat(90)))
+    fun `EXACT mode uses a smaller safety margin than HEURISTIC, yielding a larger usable budget`() =
+        runBlocking {
+            model(contextWindow = 100, maxOutputTokens = 1)
+            val config = TokenEstimationConfig(exactSafetyMarginRatio = 0.05, heuristicSafetyMarginRatio = 0.50)
+            // Fixed input is 1 char; budgets are EXACT=95, HEURISTIC=50 -> 94/49 left for history.
+            // 90 chars of history fits under EXACT's remaining budget but not under HEURISTIC's.
+            val history = listOf(turn(1, "a".repeat(90)))
 
-        val exactResult =
-            manager(FixedCharTokenCounter(TokenEstimationMode.EXACT), config)
-                .build(request(" "), emptyList(), conversation(history), modelId)
-        assertFalse(exactResult.truncated)
+            val exactResult =
+                manager(FixedCharTokenCounter(TokenEstimationMode.EXACT), config)
+                    .build(request(" "), emptyList(), conversation(history), modelId)
+            assertFalse(exactResult.truncated)
 
-        val heuristicResult =
-            manager(FixedCharTokenCounter(TokenEstimationMode.HEURISTIC), config)
-                .build(request(" "), emptyList(), conversation(history), modelId)
-        assertTrue(heuristicResult.truncated)
-    }
+            val heuristicResult =
+                manager(FixedCharTokenCounter(TokenEstimationMode.HEURISTIC), config)
+                    .build(request(" "), emptyList(), conversation(history), modelId)
+            assertTrue(heuristicResult.truncated)
+        }
 }

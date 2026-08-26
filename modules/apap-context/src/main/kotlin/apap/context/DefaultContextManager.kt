@@ -46,7 +46,7 @@ class DefaultContextManager(
     private val memoryTopK: Int = DEFAULT_MEMORY_TOP_K,
     private val memorySimilarityThreshold: Double = DEFAULT_MEMORY_SIMILARITY_THRESHOLD,
 ) : ContextManager {
-    override fun build(
+    override suspend fun build(
         request: CanonicalRequest,
         systemPrompt: List<ContentPart>,
         conversation: Conversation?,
@@ -103,7 +103,7 @@ class DefaultContextManager(
         return ProcessedPrompt(input = remaining, estimatedTokens = finalTokens)
     }
 
-    private fun resolveMemoryInjection(request: CanonicalRequest): List<ContentPart> {
+    private suspend fun resolveMemoryInjection(request: CanonicalRequest): List<ContentPart> {
         val queryVector = queryEmbedder.embed(request.input)
         if (queryVector.isEmpty()) return emptyList()
         return memoryManager

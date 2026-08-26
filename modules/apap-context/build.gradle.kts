@@ -9,4 +9,7 @@ dependencies {
     implementation(libs.findLibrary("slf4j-api").get())
     testImplementation(project(":modules:apap-testkit"))
     testImplementation(libs.findLibrary("konsist").get())
+    // ADR-0023: ContextManager.build/QueryEmbedder.embedがsuspendになったため、テストからの
+    // 呼出にrunBlockingを使う。
+    testImplementation(libs.findLibrary("kotlinx-coroutines-core").get())
 }
