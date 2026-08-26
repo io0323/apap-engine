@@ -90,8 +90,22 @@ class DomainEventInstantiationTest {
 
     @Test
     fun `all 14_2 execution events can be constructed`() {
-        RequestReceived(meta(requestId.value), requestId, capabilityId, tenantId)
-        RequestStarted(meta(requestId.value), requestId, capabilityId, tenantId)
+        RequestReceived(
+            meta(requestId.value),
+            requestId,
+            capabilityId,
+            tenantId,
+            "principal-1",
+            "alias-1",
+            conversationId,
+        )
+        RequestStarted(
+            meta(requestId.value),
+            requestId,
+            capabilityId,
+            tenantId,
+            "policy=null; chain=p:m; reason=selected",
+        )
         RequestCompleted(
             meta(requestId.value),
             requestId,
@@ -101,8 +115,20 @@ class DomainEventInstantiationTest {
             cost,
             120,
             FinishReason.COMPLETED,
+            retries = 1,
+            fallbacks = 0,
+            requestBody = "[input]",
+            responseBody = "[output]",
         )
-        RequestFailed(meta(requestId.value), requestId, ErrorCode.PROVIDER_ERROR, 3, 1)
+        RequestFailed(
+            meta(requestId.value),
+            requestId,
+            ErrorCode.PROVIDER_ERROR,
+            3,
+            1,
+            durationMs = 120,
+            requestBody = "[input]",
+        )
         RequestCancelled(meta(requestId.value), requestId, usage)
         RetryExecuted(meta(requestId.value), requestId, "${providerId.value}:${modelId.value}", 2, "TRANSIENT")
         FallbackExecuted(meta(requestId.value), requestId, "candidate-1", "candidate-2", "PROVIDER_UNAVAILABLE")

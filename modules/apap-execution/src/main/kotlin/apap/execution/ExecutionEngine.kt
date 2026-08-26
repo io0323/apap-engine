@@ -100,7 +100,7 @@ class DefaultExecutionEngine(
     private val phases = PhaseTimings(clock)
 
     override suspend fun execute(request: CanonicalRequest): CanonicalResponse {
-        publish(RequestReceived(meta(request), request.requestId, request.capabilityId, request.tenantId))
+        publish(requestReceived(request))
 
         val idempotencyKey = compositeIdempotencyKey(request)
         idempotencyGuard.claim(idempotencyKey)
@@ -120,7 +120,7 @@ class DefaultExecutionEngine(
      */
     override fun executeStream(request: CanonicalRequest): Flow<StreamChunk> =
         flow {
-            publish(RequestReceived(meta(request), request.requestId, request.capabilityId, request.tenantId))
+            publish(requestReceived(request))
             val idempotencyKey = compositeIdempotencyKey(request)
             idempotencyGuard.claim(idempotencyKey)
             try {
@@ -162,7 +162,15 @@ class DefaultExecutionEngine(
         val reservation =
             reserveQuota(request, primaryCandidate.providerId, primaryCandidate.modelId, estimatedTokens, estimatedCost)
 
-        publish(RequestStarted(meta(request), request.requestId, request.capabilityId, request.tenantId))
+        publish(
+            RequestStarted(
+                meta(request),
+                request.requestId,
+                request.capabilityId,
+                request.tenantId,
+                decision.toAuditSummary(),
+            ),
+        )
 
         return streamingRequestExecutor.execute(decision.chain, contextualPrompt, request, ctx, reservation)
     }
@@ -205,7 +213,15 @@ class DefaultExecutionEngine(
         val reservation =
             reserveQuota(request, primaryCandidate.providerId, primaryCandidate.modelId, estimatedTokens, estimatedCost)
 
-        publish(RequestStarted(meta(request), request.requestId, request.capabilityId, request.tenantId))
+        publish(
+            RequestStarted(
+                meta(request),
+                request.requestId,
+                request.capabilityId,
+                request.tenantId,
+                decision.toAuditSummary(),
+            ),
+        )
         val startedAt = clock.now()
 
         val result =
@@ -215,7 +231,7 @@ class DefaultExecutionEngine(
 
         return when (result) {
             is AttemptResult.Success -> onSuccess(request, prompt, result, reservation, startedAt)
-            is AttemptResult.Failure -> onFailure(request, result, reservation)
+            is AttemptResult.Failure -> onFailure(request, result, reservation, startedAt)
         }
     }
 
@@ -251,6 +267,10 @@ class DefaultExecutionEngine(
                 response.cost,
                 durationMs,
                 response.finishReason,
+                retries = result.attempts,
+                fallbacks = result.fallbacks,
+                requestBody = serializeContent(request.input),
+                responseBody = serializeContent(response.output),
             ),
         )
         return response
@@ -260,8 +280,10 @@ class DefaultExecutionEngine(
         request: CanonicalRequest,
         result: AttemptResult.Failure,
         reservation: Reservation,
+        startedAt: Instant,
     ): CanonicalResponse {
         quotaManager.release(reservation)
+        val durationMs = Duration.between(startedAt, clock.now()).toMillis()
         publish(
             RequestFailed(
                 meta(request),
@@ -269,10 +291,30 @@ class DefaultExecutionEngine(
                 result.error.code,
                 result.attempts,
                 result.fallbacks,
+                durationMs = durationMs,
+                requestBody = serializeContent(request.input),
             ),
         )
         throw ExecutionFailedException(result.error)
     }
+
+    /**
+     * Audit Engine向けの生コンテンツ文字列化（[RequestCompleted]/[RequestFailed]のKDoc参照）。
+     * `ContentPart`はdata classのため`toString()`で決定的な構造表現が得られる。要件充足に
+     * 影響しない実装判断のためADR化せず、独自シリアライズ（Jackson等）は導入しない。
+     */
+    private fun serializeContent(parts: List<ContentPart>): String = parts.toString()
+
+    private fun requestReceived(request: CanonicalRequest): RequestReceived =
+        RequestReceived(
+            meta(request),
+            request.requestId,
+            request.capabilityId,
+            request.tenantId,
+            request.principal,
+            request.modelAlias,
+            request.conversationId,
+        )
 
     private suspend fun handleCacheHit(
         request: CanonicalRequest,

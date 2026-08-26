@@ -12,6 +12,13 @@ sealed interface AttemptResult {
         val prompt: ProcessedPrompt,
         /** 実際に成功した候補。ResponseMapperのresolvedProvider/resolvedModelに使う。 */
         val candidate: Candidate,
+        /**
+         * 成功に至るまでの1候補内の試行回数（[AttemptExecutor]が集計）。既定1（初回で成功）。
+         * `RequestCompleted{retries}`用（Audit Engine向け、[apap.domain.event.RequestCompleted]参照）。
+         */
+        val attempts: Int = 1,
+        /** 成功に至るまでにFallbackEngineが経由した段数（[Failure.fallbacks]と同じ集計元）。 */
+        val fallbacks: Int = 0,
     ) : AttemptResult
 
     data class Failure(
