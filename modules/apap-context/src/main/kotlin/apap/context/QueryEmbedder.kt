@@ -9,10 +9,11 @@ fun interface QueryEmbedder {
 }
 
 /**
- * 実ベクトル化（P7以降）未着手のためのパススルー実装: 常に空ベクトルを返し、[DefaultContextManager]は
- * これを「Memory注入なし」として扱う。`apap.prompt.PassthroughPromptEngine`（P5当時）と同じ方針:
- * [optedIn]の明示的な`true`指定を必須とし、構築時にWARNログを出す。ExecutionEngineComposerは
- * 既定でこの実装を`optedIn=true`として配線する（`apap.routing.ZeroCostEstimator`と同じく、
+ * 実ベクトル化（P8以降、実装位置とResilience機構からの分離方針はADR-0022で決定済み）未着手の
+ * ためのパススルー実装: 常に空ベクトルを返し、[DefaultContextManager]はこれを「Memory注入なし」
+ * として扱う。`apap.prompt.PassthroughPromptEngine`（P5当時）と同じ方針: [optedIn]の明示的な
+ * `true`指定を必須とし、構築時にWARNログを出す。ExecutionEngineComposerは既定でこの実装を
+ * `optedIn=true`として配線する（`apap.routing.ZeroCostEstimator`と同じく、
  * 「未接続であることが常に明示されている既定」であり、`optInToStubs`全体のゲートとは別軸）。
  */
 class NoOpQueryEmbedder(

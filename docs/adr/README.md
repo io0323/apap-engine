@@ -25,6 +25,7 @@ Architecture Decision Record。`docs/design/*.md` は一次情報として編集
 | [ADR-0019](ADR-0019-adapter-chunk-explicit-tool-call-completion-signal.md) | AdapterChunkにToolCallデルタの明示的完了シグナルを追加する | Accepted | 補足（P6着手前レビュー、02_システム仕様.md 2.10） |
 | [ADR-0020](ADR-0020-fallback-budget-threshold-reverts-to-p50-latency.md) | Fallback移行の予算充足判定をp50レイテンシへ復帰する（ADR-0018のSupersede） | Accepted | 補足（着手前レビュー、NFR-AVL-002） |
 | [ADR-0021](ADR-0021-unpriced-model-hard-exclusion.md) | 単価未登録Modelはルーティング候補から除外する（ハードフィルタ方式、P7着手前レビュー） | Accepted | 補足（P7着手前レビュー、FR-OBS-005、FR-RTE-002） |
+| [ADR-0022](ADR-0022-query-embedder-resilience-boundary.md) | QueryEmbedderの実装位置とResilience機構からの意図的な分離（実ベクトル化はP8以降） | Accepted | 補足（P7着手前レビュー、FR-CTX-004） |
 
 ## 命名規則
 
