@@ -23,10 +23,15 @@ import org.slf4j.LoggerFactory
 interface CostEstimator {
     val isStub: Boolean get() = false
 
+    /**
+     * ADR-0021: 戻り値`null`は「有効なPriceEntryが存在しない」ことを表す。呼び出し元
+     * （[CandidateFactory]）はその場合Candidate自体を組み立てず除外する（ペナルティではなく
+     * ハードフィルタ相当の除外、単価未登録Modelを選択させないため）。
+     */
     fun estimate(
         providerId: ProviderId,
         modelId: ModelId,
-    ): Money
+    ): Money?
 }
 
 class ZeroCostEstimator(
@@ -45,7 +50,7 @@ class ZeroCostEstimator(
     override fun estimate(
         providerId: ProviderId,
         modelId: ModelId,
-    ): Money = Money.zero(currency)
+    ): Money? = Money.zero(currency)
 
     companion object {
         private const val DEFAULT_CURRENCY = "USD"

@@ -19,6 +19,7 @@ import apap.domain.port.QuotaSnapshotRepository
 import apap.domain.port.TenantEntitlementRepository
 import apap.domain.service.provider.CanaryResolutionService
 import apap.domain.service.routing.Candidate
+import org.slf4j.LoggerFactory
 
 /**
  * 03_基本設計.md 3.6 `CandidateFactory`: Model+Provider+Health+Price → Candidate。
@@ -82,13 +83,30 @@ class CandidateFactory(
         return listOfNotNull(model?.let { it to (it.status == ModelStatus.TESTING) })
     }
 
+    /**
+     * ADR-0021: 単価未登録のModel（`costEstimator.estimate`が`null`）はCandidate自体を
+     * 組み立てず`null`を返す（[build]の`mapNotNull`で除外される）。02_システム仕様.md 2.5.2の
+     * ハードフィルタ a〜g（[RoutingHardFilters]、Candidateの存在を前提とした事後フィルタ）とは
+     * 別枠のCandidate解決自体の一部として扱う（このクラスのKDoc「Model+Provider+Health+Price →
+     * Candidate」が示す通り、Priceは元々Candidate解決の入力の一部）。
+     */
     private fun toCandidate(
         provider: Provider,
         model: Model,
         isCanaryEligible: Boolean,
         capabilityId: CapabilityId,
         tenantId: TenantId,
-    ): Candidate {
+    ): Candidate? {
+        val estimatedCost =
+            costEstimator.estimate(provider.providerId, model.modelId) ?: run {
+                logger.warn(
+                    "Excluding candidate providerId={} modelId={} from routing: no PriceEntry is " +
+                        "registered for this model (ADR-0021).",
+                    provider.providerId.value,
+                    model.modelId.value,
+                )
+                return null
+            }
         val now = clock.now()
         val cbKey = CbKey(provider.providerId, model.modelId)
         val cbState = circuitBreakerStateRepository.find(cbKey)?.state ?: CbState.CLOSED
@@ -104,7 +122,7 @@ class CandidateFactory(
             cbState = cbState,
             health = cache.providerHealth(provider.providerId) ?: ProviderHealthStatus.UP,
             supportedRegions = model.regions,
-            estimatedCost = costEstimator.estimate(provider.providerId, model.modelId),
+            estimatedCost = estimatedCost,
             p50LatencyMs = healthSnapshot.p50LatencyMs.toDouble(),
             p90LatencyMs = healthSnapshot.p90LatencyMs.toDouble(),
             successRate = healthSnapshot.successRate,
@@ -113,5 +131,9 @@ class CandidateFactory(
             hasPermission = hasPermission,
             quotaRemaining = quotaRemaining,
         )
+    }
+
+    private companion object {
+        val logger = LoggerFactory.getLogger(CandidateFactory::class.java)
     }
 }

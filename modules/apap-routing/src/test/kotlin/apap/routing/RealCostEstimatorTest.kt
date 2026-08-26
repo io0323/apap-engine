@@ -52,13 +52,14 @@ class RealCostEstimatorTest {
         val expensiveEstimator = RealCostEstimator(expensiveBookRepository, clock)
         val expensiveEstimate = expensiveEstimator.estimate(providerId, modelId)
 
-        assertTrue(cheapEstimate < expensiveEstimate)
+        assertTrue(cheapEstimate != null && expensiveEstimate != null && cheapEstimate < expensiveEstimate)
     }
 
+    /** ADR-0021: 単価未登録はペナルティではなく`null`（[CandidateFactory]がCandidate自体を除外する）。 */
     @Test
-    fun `an unpriced model returns the configured penalty instead of zero`() {
+    fun `an unpriced model returns null instead of a penalty`() {
         val estimator = RealCostEstimator(priceBookRepository, clock)
         val estimate = estimator.estimate(providerId, modelId)
-        assertTrue(estimate.amount.signum() > 0)
+        assertEquals(null, estimate)
     }
 }

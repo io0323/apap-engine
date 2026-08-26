@@ -84,9 +84,9 @@ class ExecutionEngineComposerTest {
     private val requestId = RequestId("01ARZ3NDEKTSV4RRFFQ69G5FA4")
 
     /**
-     * DefaultCostEngine.estimate/calculateは単価未登録のModelに対しPriceEntryNotFoundExceptionを
-     * 送出する（FR-OBS-005）。costEngineを実配線する以上、cost計算に無関心なスモークテストでも
-     * ダミーの単価表を用意する必要がある。
+     * ADR-0021: 単価未登録のModelはRouting候補から除外される。costEngine/routingCostEstimatorを
+     * 実配線する以上、cost計算に無関心なスモークテストでもダミーの単価表を用意する必要がある
+     * （用意しないとRoutingが候補ゼロでNoCandidateAvailableExceptionを送出してしまう）。
      */
     private fun priceBookRepository(vararg modelIds: ModelId): InMemoryPriceBookRepository {
         val repository = InMemoryPriceBookRepository()
@@ -477,7 +477,7 @@ class ExecutionEngineComposerTest {
                     InMemoryTenantEntitlementRepository(),
                     InMemoryMemoryRepository(),
                     InMemoryConversationRepository(),
-                    InMemoryPriceBookRepository(),
+                    priceBookRepository(modelId),
                     InMemoryBudgetRepository(),
                     InMemoryUsageRepository(),
                     InMemoryQuotaPolicyRepository(),

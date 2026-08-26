@@ -191,6 +191,29 @@ class CandidateFactoryTest {
         assertExcluded()
     }
 
+    /** ADR-0021: 単価未登録のModelはCandidate自体が組み立てられず除外される（ハードフィルタa〜g以前）。 */
+    @Test
+    fun `excluded when the model has no registered PriceEntry`() {
+        seedActiveProviderAndModel()
+        val unpricedFactory =
+            CandidateFactory(
+                providerRepository,
+                modelRepository,
+                aliasRepository,
+                circuitBreakerStateRepository,
+                healthLatencyStatsRepository,
+                quotaSnapshotRepository,
+                tenantEntitlementRepository,
+                RealCostEstimator(apap.testkit.inmemory.InMemoryPriceBookRepository(), clock),
+                cache,
+                clock,
+            )
+
+        val candidates = unpricedFactory.build(capabilityId, null, tenantId, requestId)
+
+        assertTrue(candidates.isEmpty(), "expected the unpriced candidate to be excluded but it was: $candidates")
+    }
+
     private fun healthChangedEvent(
         providerId: ProviderId,
         to: apap.domain.model.provider.ProviderHealthStatus,

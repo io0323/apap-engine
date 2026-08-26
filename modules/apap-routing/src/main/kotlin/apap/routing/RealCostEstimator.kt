@@ -8,7 +8,6 @@ import apap.domain.model.vo.Usage
 import apap.domain.port.Clock
 import apap.domain.port.PriceBookRepository
 import apap.domain.service.cost.CostCalculationService
-import java.math.BigDecimal
 
 /**
  * [CostEstimator]の既定実装（[ZeroCostEstimator]の差替先）。FR-RTE-002: S_costが実効性を持つように
@@ -20,31 +19,27 @@ import java.math.BigDecimal
  * `apap.cost.CostEngine.estimate`（実行直前、apap-cost）の責務とする
  * （要件充足に影響しない実装判断のためADR化せず根拠をここに残す）。
  *
- * 単価未登録のModelは、タスク要求「ルーティング候補にできない」を完全除外ではなく
- * [unpricedModelPenalty]（既定で他候補より十分高い値）を返すことで満たす:
- * `RoutingDomainService.computeScores`のmin-max正規化によりS_costが最劣後になり、
- * cost最適化時に選ばれにくくなる（0除外ではなくスコアで不利にする設計、要件充足に影響しない
- * 実装判断のためADR化せず根拠をここに残す）。
+ * 単価未登録のModelはADR-0021により`null`を返す。[CandidateFactory]はこれをCandidate生成の
+ * 段階で除外する（ペナルティでスコアを不利にするだけでは、唯一の候補である場合や他軸が優越する
+ * 場合に選択され得てしまい、選択後の`apap.cost.DefaultCostEngine`が`PriceEntryNotFoundException`で
+ * 未処理のまま失敗する経路を防げないため）。
  */
 class RealCostEstimator(
     private val priceBookRepository: PriceBookRepository,
     private val clock: Clock,
     private val representativeInputTokens: Int = DEFAULT_REPRESENTATIVE_TOKENS,
     private val representativeOutputTokens: Int = DEFAULT_REPRESENTATIVE_TOKENS,
-    private val unpricedModelPenalty: Money = Money(BigDecimal(UNPRICED_PENALTY_AMOUNT), DEFAULT_CURRENCY),
 ) : CostEstimator {
     override fun estimate(
         providerId: ProviderId,
         modelId: ModelId,
-    ): Money {
-        val priceEntry = priceBookRepository.findCurrentEntry(modelId, clock.now()) ?: return unpricedModelPenalty
+    ): Money? {
+        val priceEntry = priceBookRepository.findCurrentEntry(modelId, clock.now()) ?: return null
         val usage = Usage.of(TokenCount(representativeInputTokens), TokenCount(representativeOutputTokens))
         return CostCalculationService.calculate(usage, priceEntry).amount
     }
 
-    companion object {
-        private const val DEFAULT_REPRESENTATIVE_TOKENS = 1000
-        private const val UNPRICED_PENALTY_AMOUNT = "1000000"
-        private const val DEFAULT_CURRENCY = "USD"
+    private companion object {
+        const val DEFAULT_REPRESENTATIVE_TOKENS = 1000
     }
 }
