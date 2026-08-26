@@ -1,6 +1,5 @@
 package apap.cache
 
-import apap.domain.model.execution.CanonicalResponse
 import apap.domain.port.Clock
 import java.time.Duration
 import java.time.Instant
@@ -10,19 +9,22 @@ import java.util.concurrent.ConcurrentHashMap
  * 16_拡張ポイント.md 16.4 SPI: Cache本体のKVS抽象。Request Cache・Response Cacheの双方が
  * 共有する（キー空間は[CacheKeyStrategy]が`req:`/`resp:`prefixで分離する）。
  *
- * 値の型は[CanonicalResponse]に固定する（本リポジトリがキャッシュする対象はこれのみのため、
- * CLAUDE.md「ハイポセティカルな将来要件のために設計しない」に従いバイト列/汎用KVS抽象は採らない）。
- * `CanonicalResponse`はContentPartの直和型等を含みapap-domainがJacksonへ依存できない
- * （不変条件2: 依存は内向き一方向）ため素朴なreflectionシリアライズが使えず、分散KVS実装（P8想定）が
- * 必要とするバイト列変換は、その実装自身の責務としてこのインターフェースの外側で行う
- * （例: `RedisCacheStore`が内部でシリアライズ方式を選ぶ）。
+ * 値の直列化表現の型[E]はSPI利用側（[DefaultCacheEngine]）が[CacheCodec]で決める。
+ * `CanonicalResponse`（キャッシュする対象そのものの型）自体をここに固定しない: apap-domainは
+ * Jacksonへ依存できない（不変条件2）ためCanonicalResponse自身にバイト列変換手段を持たせられず、
+ * 分散KVS実装（ADR-0001, P8想定）はいずれ実際のバイト列直列化を必要とする。[CacheStore]の値型を
+ * 先に`CanonicalResponse`固定で実装してしまうと、P8でバイト列が必要になった時点でこの
+ * インターフェース自体の破壊的変更（SPI変更）になる。[E]を型パラメータとして残すことで、
+ * P8では`CacheStore<ByteArray>`と`CacheCodec<CanonicalResponse, ByteArray>`を組み合わせるだけで
+ * 済み、In-Memory実装（既定）は`CacheStore<CanonicalResponse>`と[PassthroughCacheCodec]
+ * （恒等変換、直列化なし）を組み合わせる。
  */
-interface CacheStore {
-    fun get(key: String): CanonicalResponse?
+interface CacheStore<E> {
+    fun get(key: String): E?
 
     fun put(
         key: String,
-        value: CanonicalResponse,
+        value: E,
         ttl: Duration,
     )
 
@@ -35,19 +37,20 @@ interface CacheStore {
 /**
  * ADR-0001の[apap.cache.ratelimit.TokenBucketRateLimiter]と同じ方針: 単一プロセス埋込利用では
  * 本in-memory実装が既定（分散KVS実装はP8想定）。TTL超過エントリは専用スイープスレッドを持たず、
- * 読取（[get]/[scanByPrefix]）時に遅延削除する。
+ * 読取（[get]/[scanByPrefix]）時に遅延削除する。[E]は通常[PassthroughCacheCodec]と組み合わせ
+ * `CanonicalResponse`のまま保持する（直列化しない）。
  */
-class InMemoryCacheStore(
+class InMemoryCacheStore<E>(
     private val clock: Clock,
-) : CacheStore {
-    private class Entry(
-        val value: CanonicalResponse,
+) : CacheStore<E> {
+    private class Entry<E>(
+        val value: E,
         val expiresAt: Instant,
     )
 
-    private val entries = ConcurrentHashMap<String, Entry>()
+    private val entries = ConcurrentHashMap<String, Entry<E>>()
 
-    override fun get(key: String): CanonicalResponse? {
+    override fun get(key: String): E? {
         val entry = entries[key]
         val expired = entry != null && isExpired(entry)
         if (expired) entries.remove(key)
@@ -56,7 +59,7 @@ class InMemoryCacheStore(
 
     override fun put(
         key: String,
-        value: CanonicalResponse,
+        value: E,
         ttl: Duration,
     ) {
         entries[key] = Entry(value, clock.now().plus(ttl))
@@ -73,5 +76,5 @@ class InMemoryCacheStore(
             .map { it.key }
     }
 
-    private fun isExpired(entry: Entry): Boolean = !entry.expiresAt.isAfter(clock.now())
+    private fun isExpired(entry: Entry<E>): Boolean = !entry.expiresAt.isAfter(clock.now())
 }

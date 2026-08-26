@@ -1,5 +1,6 @@
 package apap.runtime
 
+import apap.cache.CacheCodec
 import apap.cache.CacheConfig
 import apap.cache.CacheEngine
 import apap.cache.CacheKeyStrategy
@@ -9,6 +10,7 @@ import apap.cache.DefaultCacheEngine
 import apap.cache.DefaultCacheabilityPolicy
 import apap.cache.InMemoryCacheStore
 import apap.cache.NormalizedJsonCacheKeyStrategy
+import apap.cache.PassthroughCacheCodec
 import apap.cache.ratelimit.RateLimiter
 import apap.cache.ratelimit.RateLimiterConfig
 import apap.cache.ratelimit.TokenBucketRateLimiter
@@ -29,6 +31,7 @@ import apap.cost.quota.QuotaManager
 import apap.cost.quota.QuotaManagerConfig
 import apap.domain.model.conversation.MemoryScope
 import apap.domain.model.cost.QuotaPolicy
+import apap.domain.model.execution.CanonicalResponse
 import apap.domain.model.vo.ModelId
 import apap.domain.model.vo.TenantId
 import apap.domain.port.AliasRepository
@@ -130,7 +133,8 @@ class ExecutionEngineComposer(
     private val memoryScopes: Set<MemoryScope> = MemoryScope.entries.toSet(),
     private val memoryTopK: Int = DEFAULT_MEMORY_TOP_K,
     private val memorySimilarityThreshold: Double = DEFAULT_MEMORY_SIMILARITY_THRESHOLD,
-    private val cacheStore: CacheStore = InMemoryCacheStore(clock),
+    private val cacheStore: CacheStore<CanonicalResponse> = InMemoryCacheStore(clock),
+    private val cacheCodec: CacheCodec<CanonicalResponse, CanonicalResponse> = PassthroughCacheCodec(),
     private val cacheKeyStrategy: CacheKeyStrategy = NormalizedJsonCacheKeyStrategy(),
     private val cacheabilityPolicy: CacheabilityPolicy = DefaultCacheabilityPolicy(),
     private val cacheConfig: CacheConfig = CacheConfig(),
@@ -180,7 +184,15 @@ class ExecutionEngineComposer(
                 memorySimilarityThreshold = memorySimilarityThreshold,
             )
         val defaultCacheEngine =
-            DefaultCacheEngine(cacheStore, cacheKeyStrategy, cacheabilityPolicy, cacheConfig, aliasRepository, clock)
+            DefaultCacheEngine(
+                cacheStore,
+                cacheCodec,
+                cacheKeyStrategy,
+                cacheabilityPolicy,
+                cacheConfig,
+                aliasRepository,
+                clock,
+            )
         eventSubscriber.subscribe { defaultCacheEngine.apply(it) }
         val cacheEngine: CacheEngine = defaultCacheEngine
         val costEngine: CostEngine =

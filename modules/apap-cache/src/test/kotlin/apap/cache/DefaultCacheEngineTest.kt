@@ -40,9 +40,10 @@ class DefaultCacheEngineTest {
     private val embeddingCapability = CapabilityId("embedding")
     private val chatCapability = CapabilityId("chat_completion")
 
-    private fun engine(config: CacheConfig = CacheConfig()): DefaultCacheEngine =
+    private fun engine(config: CacheConfig = CacheConfig()): DefaultCacheEngine<CanonicalResponse> =
         DefaultCacheEngine(
             cacheStore = InMemoryCacheStore(clock),
+            cacheCodec = PassthroughCacheCodec(),
             cacheKeyStrategy = NormalizedJsonCacheKeyStrategy(),
             cacheabilityPolicy = DefaultCacheabilityPolicy(),
             config = config,
@@ -163,6 +164,30 @@ class DefaultCacheEngineTest {
         assertNull(cache.lookup(req, prompt))
     }
 
+    /**
+     * DefaultCacheEngine/CacheStoreの型パラメータ[E]がCanonicalResponse以外でも動くこと
+     * （分散KVS実装、P8想定、が`CacheStore<ByteArray>`+`CacheCodec<CanonicalResponse, ByteArray>`を
+     * 差し込めるSPI seamであることの直接的な証跡）。
+     */
+    @Test
+    fun `DefaultCacheEngine works through a non-identity CacheCodec (E = String)`() {
+        val cache =
+            DefaultCacheEngine(
+                cacheStore = InMemoryCacheStore<String>(clock),
+                cacheCodec = ResponseIdOnlyCodec(),
+                cacheKeyStrategy = NormalizedJsonCacheKeyStrategy(),
+                cacheabilityPolicy = DefaultCacheabilityPolicy(),
+                config = CacheConfig(),
+                aliasRepository = aliasRepository,
+                clock = clock,
+            )
+        val req = request(temperature = 0.0)
+        cache.store(req, prompt, response("resp-xyz"))
+
+        val hit = cache.lookup(req, prompt)
+        assertEquals("resp-xyz", hit?.responseId)
+    }
+
     private fun eventMetadata(): EventMetadata =
         EventMetadata(
             eventId = "01ARZ3NDEKTSV4RRFFQ69G5FA6",
@@ -172,4 +197,11 @@ class DefaultCacheEngineTest {
             aggregateId = "01ARZ3NDEKTSV4RRFFQ69G5FA4",
             version = 1,
         )
+
+    /** テスト用の最小限のCodec: 直列化表現[String]としてresponseIdのみを保持する。 */
+    private inner class ResponseIdOnlyCodec : CacheCodec<CanonicalResponse, String> {
+        override fun encode(value: CanonicalResponse): String = value.responseId
+
+        override fun decode(encoded: String): CanonicalResponse = response(encoded)
+    }
 }
