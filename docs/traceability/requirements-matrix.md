@@ -25,7 +25,7 @@ Service/Port/Event）のみが揃った状態を指す。Application/Infrastruct
 | FR-CAP-001 | Chat（Multi Turn / System Prompt / User Prompt）を提供すること | - | - | 未実装 |
 | FR-CAP-002 | Completionを提供すること | - | - | 未実装 |
 | FR-CAP-003 | Structured Output（JSON Schema指定、出力検証、違反時の是正リトライ）を提供すること | - | - | 未実装 |
-| FR-CAP-004 | Streaming（Chat / Completion / TTSの逐次応答、SSEおよびgRPC stream）を提供すること | - | - | 未実装 |
+| FR-CAP-004 | Streaming（Chat / Completion / TTSの逐次応答、SSEおよびgRPC stream）を提供すること | apap.execution.ExecutionEngine.executeStream, apap.execution.streaming.StreamingRequestExecutor（着手前レビューで解消: Prompt→Cache-bypass→Routing→Quota予約→StreamingEngine→Flow<StreamChunk>の配線、初回チャンク送出前のみFallback対象、message_end時のQuota commit/Cost記録、中断時の部分commit、StreamingTurnRecorder接続）, apap.execution.streaming.StreamingEngine/StreamingTurnRecorder | StreamingEngineTest, StreamingTurnRecorderTest, CapabilitySmokeTest（streaming chat: チャンク列・Usage確定・Turn記録をE2E検証） | 部分実装（`Flow<StreamChunk>`を返す内部オーケストレーションは実配線・E2E検証済み。SSE/gRPCのワイヤープロトコル変換自体はGateway層、P10の対象） |
 | FR-CAP-005 | Function Calling / Tool Calling（定義の共通形式化、呼出指示の正規化、結果返信、並列呼出）を提供すること | - | - | 未実装 |
 | FR-CAP-006 | Embedding（単発・Batch、次元数指定）を提供すること | - | - | 未実装 |
 | FR-CAP-007 | Vision（画像入力理解）/ Image Analysis を提供すること | - | - | 未実装 |

@@ -63,6 +63,10 @@ import apap.execution.circuitbreaker.CircuitBreakerConfig
 import apap.execution.estimation.TokenEstimator
 import apap.execution.fallback.FallbackEngine
 import apap.execution.retry.RetryConfig
+import apap.execution.streaming.StreamingConfig
+import apap.execution.streaming.StreamingEngine
+import apap.execution.streaming.StreamingRequestExecutor
+import apap.execution.streaming.StreamingTurnRecorder
 import apap.execution.structuredoutput.StructuredOutputConfig
 import apap.prompt.DefaultPromptEngine
 import apap.prompt.PromptEngine
@@ -146,6 +150,7 @@ class ExecutionEngineComposer(
     private val cacheKeyStrategy: CacheKeyStrategy = NormalizedJsonCacheKeyStrategy(),
     private val cacheabilityPolicy: CacheabilityPolicy = DefaultCacheabilityPolicy(),
     private val cacheConfig: CacheConfig = CacheConfig(),
+    private val streamingConfig: StreamingConfig = StreamingConfig(),
 ) {
     @Suppress("LongMethod")
     fun build(): ExecutionEngine {
@@ -240,6 +245,24 @@ class ExecutionEngineComposer(
             )
         val tokenEstimator = TokenEstimator(providerRepository, adapterRegistry, tokenEstimationConfig)
 
+        val streamingEngine = StreamingEngine(clock, eventPublisher, idGenerator, streamingConfig)
+        val streamingTurnRecorder = StreamingTurnRecorder(conversationManager)
+        val streamingRequestExecutor =
+            StreamingRequestExecutor(
+                providerRepository,
+                modelRepository,
+                adapterRegistry,
+                circuitBreaker,
+                rateLimiter,
+                streamingEngine,
+                streamingTurnRecorder,
+                quotaManager,
+                costEngine,
+                clock,
+                eventPublisher,
+                idGenerator,
+            )
+
         return DefaultExecutionEngine(
             promptEngine,
             contextManager,
@@ -251,6 +274,7 @@ class ExecutionEngineComposer(
             costEngine,
             rateLimiter,
             fallbackEngine,
+            streamingRequestExecutor,
             tokenEstimator,
             IdempotencyGuard(),
             clock,

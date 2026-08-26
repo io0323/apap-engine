@@ -22,6 +22,7 @@ import apap.domain.model.execution.CanonicalRequest
 import apap.domain.model.execution.CanonicalResponse
 import apap.domain.model.execution.ExecutionContext
 import apap.domain.model.execution.ProcessedPrompt
+import apap.domain.model.execution.StreamChunk
 import apap.domain.model.vo.AdapterErrorCategory
 import apap.domain.model.vo.ContentPart
 import apap.domain.model.vo.ConversationId
@@ -41,10 +42,13 @@ import apap.execution.attempt.AttemptResult
 import apap.execution.estimation.TokenEstimator
 import apap.execution.fallback.FallbackEngine
 import apap.execution.mapping.ResponseMapper
+import apap.execution.streaming.StreamingRequestExecutor
 import apap.prompt.PromptEngine
 import apap.routing.RoutingEngine
 import apap.routing.RoutingRequest
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.time.Instant
@@ -62,9 +66,10 @@ interface ExecutionEngine {
      * 3.3.3は`executeStream(request, sink: ChunkSink): void`とコールバック形式で定義するが、
      * 本リポジトリはSPI/Streaming Engine双方でKotlin Flowを採用済み（`ProviderAdapter.asFlow()`等）
      * のため、それに揃えてFlowを返す形にする（要件充足に影響しない実装判断のためADR化せず
-     * ここに根拠を残す）。
+     * ここに根拠を残す）。戻り値は[StreamChunk]（着手前レビューでStreaming経路の実配線が完了し、
+     * ワイルドカード型を維持する理由が無くなったため確定させた）。
      */
-    fun executeStream(request: CanonicalRequest): Flow<*>
+    fun executeStream(request: CanonicalRequest): Flow<StreamChunk>
 }
 
 /**
@@ -84,6 +89,7 @@ class DefaultExecutionEngine(
     private val costEngine: CostEngine,
     private val rateLimiter: RateLimiter,
     private val fallbackEngine: FallbackEngine,
+    private val streamingRequestExecutor: StreamingRequestExecutor,
     private val tokenEstimator: TokenEstimator,
     private val idempotencyGuard: IdempotencyGuard,
     private val clock: Clock,
@@ -105,12 +111,61 @@ class DefaultExecutionEngine(
         }
     }
 
-    override fun executeStream(request: CanonicalRequest): Flow<*> =
-        throw UnsupportedOperationException(
-            "Streaming orchestration wiring (Routing/Quota + StreamingEngine.normalize) is completed by " +
-                "apap-runtime's composition root, not DefaultExecutionEngine itself; " +
-                "see apap.execution.streaming.StreamingEngine.",
-        )
+    /**
+     * 02_システム仕様.md 2.10 Streaming Flow（着手前レビューで解消: [StreamingEngine]実装済みだが
+     * 呼び出し元が無かった）。Cacheは既定でバイパスする（2.14: temperature>0/Streamingは既定で
+     * Response Cache対象外——`apap.cache.CacheabilityPolicy`の対象外である以前に、そもそも
+     * 照会自体を行わない）。Prompt処理直後、Routing/Quota予約より前にuser turnを記録する
+     * （[recordUserTurn]、Provider呼出が失敗しても入力を失わない、非Streaming版と同じ判断）。
+     */
+    override fun executeStream(request: CanonicalRequest): Flow<StreamChunk> =
+        flow {
+            publish(RequestReceived(meta(request), request.requestId, request.capabilityId, request.tenantId))
+            val idempotencyKey = compositeIdempotencyKey(request)
+            idempotencyGuard.claim(idempotencyKey)
+            try {
+                emitAll(executeStreamClaimed(request))
+            } finally {
+                idempotencyGuard.release(idempotencyKey)
+            }
+        }
+
+    private suspend fun executeStreamClaimed(request: CanonicalRequest): Flow<StreamChunk> {
+        val prompt = phases.time("prompt") { promptEngine.process(request) }
+        recordUserTurn(request)
+
+        val decision =
+            phases.time("routing") {
+                routingEngine.route(
+                    RoutingRequest(
+                        request.capabilityId,
+                        request.tenantId,
+                        request.modelAlias,
+                        request.constraints,
+                        request.preferences,
+                        request.conversationId,
+                    ),
+                    request.requestId,
+                )
+            }
+        val primaryCandidate = decision.chain.candidates.first()
+        val contextualPrompt =
+            phases.time("context") { buildContextualPrompt(request, prompt, primaryCandidate.modelId) }
+        val estimatedTokens =
+            phases.time("token-estimate") {
+                tokenEstimator.estimate(primaryCandidate, primaryCandidate.modelId, contextualPrompt)
+            }
+        val estimatedCost =
+            costEngine.estimate(primaryCandidate.providerId, primaryCandidate.modelId, contextualPrompt)
+
+        val ctx = startExecutionContext(request)
+        val reservation =
+            reserveQuota(request, primaryCandidate.providerId, primaryCandidate.modelId, estimatedTokens, estimatedCost)
+
+        publish(RequestStarted(meta(request), request.requestId, request.capabilityId, request.tenantId))
+
+        return streamingRequestExecutor.execute(decision.chain, contextualPrompt, request, ctx, reservation)
+    }
 
     private suspend fun executeClaimed(request: CanonicalRequest): CanonicalResponse {
         val prompt = phases.time("prompt") { promptEngine.process(request) }

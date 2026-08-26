@@ -27,8 +27,8 @@ import org.slf4j.LoggerFactory
  * - 永続化の失敗で下流のFlow収集（既に送出済みのチャンク）へ影響させない（ログのみ、
  *   [apap.execution.ExecutionEngine.persistTurn]と同じ方針）。
  *
- * 呼び出し元は、Streaming request flow全体の配線（Routing/Quota + Adapter呼出 + この[record]）を
- * 組み立てる側（現状apap-runtimeに未配線、`apap.execution.ExecutionEngine.executeStream`のKDoc参照）。
+ * 呼び出し元は[apap.execution.streaming.StreamingRequestExecutor]（着手前レビューでStreaming
+ * request flow全体の配線が完了し、本クラスも実行経路から呼ばれるようになった）。
  */
 class StreamingTurnRecorder(
     private val conversationManager: ConversationManager,
