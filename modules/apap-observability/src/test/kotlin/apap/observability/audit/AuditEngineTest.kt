@@ -63,6 +63,7 @@ class AuditEngineTest {
             RequestCompleted(
                 meta("e3"),
                 requestId,
+                capabilityId,
                 providerId.value,
                 "01ARZ3NDEKTSV4RRFFQ69G5FCC",
                 usage,
@@ -109,6 +110,7 @@ class AuditEngineTest {
             RequestCompleted(
                 meta("e3"),
                 requestId,
+                capabilityId,
                 providerId.value,
                 "01ARZ3NDEKTSV4RRFFQ69G5FCC",
                 usage,
@@ -136,6 +138,7 @@ class AuditEngineTest {
             RequestFailed(
                 meta("e2"),
                 requestId,
+                capabilityId,
                 ErrorCode.PROVIDER_ERROR,
                 attempts = 3,
                 fallbacks = 1,
@@ -164,6 +167,7 @@ class AuditEngineTest {
             RequestCompleted(
                 meta("e2"),
                 requestId,
+                capabilityId,
                 providerId.value,
                 "01ARZ3NDEKTSV4RRFFQ69G5FCC",
                 usage,
@@ -192,6 +196,7 @@ class AuditEngineTest {
             RequestCompleted(
                 meta("e1"),
                 requestId,
+                capabilityId,
                 providerId.value,
                 "01ARZ3NDEKTSV4RRFFQ69G5FCC",
                 usage,

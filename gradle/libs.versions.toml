@@ -26,6 +26,11 @@ json-schema-validator = "1.5.9"
 # gradle/libs.versions.tomlのjacksonエントリ）の実宣言値と手動で揃える。ズレを見つけたら
 # このバージョンをprompt-engine側に追従させ、ADR-0017の「見直す条件」に該当しないか確認すること。
 jackson = "2.22.1"
+# CLAUDE.md不変条件6: apap-runtime/apap-domainにはAPIのみ持ち込み、SDKは宿主が注入する。
+# apap-observabilityのMetrics/TracingはOpenTelemetry API（opentelemetry-api）のみをimplementation
+# 依存とする。opentelemetry-sdk/opentelemetry-sdk-testingはapap-observability自身のテストでのみ
+# （実SDKに対してMeter/Tracer呼出が正しく機能することを検証するため）testImplementationとして使う。
+opentelemetry = "1.64.0"
 
 [libraries]
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
@@ -35,6 +40,9 @@ slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 json-schema-validator = { module = "com.networknt:json-schema-validator", version.ref = "json-schema-validator" }
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
+opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version.ref = "opentelemetry" }
+opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version.ref = "opentelemetry" }
+opentelemetry-sdk-testing = { module = "io.opentelemetry:opentelemetry-sdk-testing", version.ref = "opentelemetry" }
 
 # build-logic（Convention Plugin）が implementation として使う、プラグイン本体の座標
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
