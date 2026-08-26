@@ -64,7 +64,7 @@ Service/Port/Event）のみが揃った状態を指す。Application/Infrastruct
 | FR-RSP-001 | Response Normalization（Provider固有応答 → 共通応答モデル変換、FinishReason正規化、Usage正規化）を行うこと | apap.domain.model.vo.FinishReason, Usage, apap.domain.model.execution.CanonicalResponse, apap.execution.mapping.RequestMapper/ResponseMapper（AdapterRequest/AdapterResponse⇄Canonical変換） | TokenCountAndUsageTest, AttemptExecutorTest（RequestMapper/ResponseMapper経由の実行系結合） | 実装中 |
 | FR-RSP-002 | エラー正規化（Provider固有エラー → 共通エラーコード体系）を行うこと | apap.domain.model.vo.NormalizedError（cbRecordable追加）, ErrorCode, apap.domain.service.execution.ErrorClassificationService, apap.execution.mapping.ResponseMapper.normalizeError | NormalizedErrorTest, ErrorClassificationServiceTest, AttemptExecutorTest | 実装中 |
 | FR-RSP-003 | Streamingチャンクの正規化（デルタ形式統一、ToolCallの逐次組立）を行うこと | apap.domain.model.execution.StreamChunk/StreamChunkType, apap.execution.streaming.StreamingEngine, ToolCallAssembler, apap.execution.mapping.ResponseMapper.normalizeChunk | StreamingEngineTest | 実装中 |
-| FR-OBS-001 | Audit Log（Request / Response / ルーティング決定 / Cost / Duration / 実行Provider・Model）を改竄不能な形で記録すること | apap.domain.model.audit.AuditRecord, apap.domain.port.AuditRepository | AuditRecordTest | 実装中 |
+| FR-OBS-001 | Audit Log（Request / Response / ルーティング決定 / Cost / Duration / 実行Provider・Model）を改竄不能な形で記録すること | apap.domain.model.audit.AuditRecord, apap.domain.port.AuditRepository, apap.infrastructure.eventbus.SynchronousEventBus, apap.observability.audit.AuditEngine（Event Bus購読、requestIdでRequestReceived〜RequestCompleted/RequestFailedを相関、同期実行パスをブロックしない非同期永続化） | AuditRecordTest, SynchronousEventBusTest, AuditEngineTest | 実装中（追記専用ストアはIn-Memory実装のみ、JDBC実装とGateway検索APIは未着手） |
 | FR-OBS-002 | Metrics（Latency分位点、Error Rate、Token Usage、Cost、Availability、Cache Hit率、Fallback率）を出力すること | - | - | 未実装 |
 | FR-OBS-003 | 分散Tracing（W3C Trace Context伝播、Adapter呼出までのSpan）を提供すること | - | - | 未実装 |
 | FR-OBS-004 | Usage Analytics（テナント/Capability/Model別の集計API）を提供すること | - | - | 未実装 |
@@ -76,7 +76,7 @@ Service/Port/Event）のみが揃った状態を指す。Application/Infrastruct
 | FR-SEC-004 | 転送時暗号化（TLS 1.3）、保存時暗号化（AES-256相当）を行うこと | - | - | 未実装 |
 | FR-SEC-005 | Provider Isolation（Adapter毎の実行分離、あるProvider障害・脆弱性の他Provider波及防止）を行うこと | - | - | 未実装 |
 | FR-SEC-006 | 監査要件（誰が・いつ・何を・どのProviderで、保持期間設定）を満たすこと | - | - | 未実装 |
-| FR-SEC-007 | Prompt/Responseの機微情報マスキング（Audit保存時のPIIマスクポリシー）を提供すること | - | - | 未実装 |
+| FR-SEC-007 | Prompt/Responseの機微情報マスキング（Audit保存時のPIIマスクポリシー）を提供すること | apap.observability.audit.MaskingStrategy（SPI）, apap.observability.audit.RegexMaskingStrategy（既定実装、docs/observability/masking.mdに限界を明記）, apap.observability.audit.AuditConfig（マスキング未設定での本文保存opt-inをガード） | RegexMaskingStrategyTest, AuditEngineTest | 実装中 |
 | NFR-AVL-001 | サービス稼働率（APAP自体）: 99.95% / 月（24時間365日稼働） | - | - | 未実装（デプロイ・運用体制の整備が前提のため本フェーズ対象外） |
 | NFR-AVL-002 | 単一Provider全断時のサービス継続: Fallbackにより機能継続（対象Capabilityに代替Providerが存在する場合） | apap.execution.fallback.FallbackEngine, apap.execution.circuitbreaker.CircuitBreaker（CB Open候補のスキップ） | FallbackEngineTest | 実装中 |
 | NFR-AVL-003 | APAPノード障害時: ステートレス設計により他ノードへ即時フェイルオーバー、リクエスト損失なし（冪等キーで再実行可能） | apap.execution.IdempotencyGuard（同一(tenantId, idempotencyKey)の並行二重実行防止） | IdempotencyGuardTest | 部分実装（処理中の二重実行防止は実装済。ノード障害後の完了済リクエストの冪等リプレイはRequest Cache（P7、FR-EXE-005参照）待ち） |

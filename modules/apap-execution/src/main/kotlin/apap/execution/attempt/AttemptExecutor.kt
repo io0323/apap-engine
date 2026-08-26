@@ -74,7 +74,8 @@ class AttemptExecutor(
             }
 
             when (val outcome = attemptOnce(candidate, cbKey, prompt, req, ctx, remainingBudget)) {
-                is AttemptOutcome.Success -> return AttemptResult.Success(outcome.response, prompt, candidate)
+                is AttemptOutcome.Success ->
+                    return AttemptResult.Success(outcome.response, prompt, candidate, attempts = attempt)
                 is AttemptOutcome.Failed -> {
                     val error = outcome.error
                     if (error.category == AdapterErrorCategory.MODEL_ERROR) {

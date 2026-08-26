@@ -65,7 +65,9 @@ class FallbackEngine(
 
             val prompt = contextManager.refit(initialPrompt, candidate.modelId)
             val result = attemptExecutor.execute(candidate, prompt, req, ctx, correctionBudget)
-            if (result is AttemptResult.Success) return result
+            if (result is AttemptResult.Success) {
+                return result.copy(attempts = totalAttempts + result.attempts, fallbacks = fallbackCount)
+            }
 
             val failure = result as AttemptResult.Failure
             totalAttempts += failure.attempts
