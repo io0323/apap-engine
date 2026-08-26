@@ -1,0 +1,318 @@
+package apap.runtime
+
+import apap.adapter.mock.MockAdapterConfig
+import apap.adapter.mock.MockProviderAdapter
+import apap.adapter.spi.AdapterChunk
+import apap.adapter.spi.AdapterChunkType
+import apap.adapter.spi.AdapterConfig
+import apap.adapter.spi.SecretAccessor
+import apap.adapter.spi.SecretValue
+import apap.adapter.spi.TextContentPart
+import apap.adapter.spi.plugin.PluginManifest
+import apap.adapter.spi.plugin.SemVerRange
+import apap.domain.model.conversation.Conversation
+import apap.domain.model.conversation.TurnRole
+import apap.domain.model.cost.PriceBook
+import apap.domain.model.cost.PriceEntry
+import apap.domain.model.execution.CanonicalRequest
+import apap.domain.model.execution.StreamChunkType
+import apap.domain.model.modelcatalog.Model
+import apap.domain.model.modelcatalog.ModelCapability
+import apap.domain.model.modelcatalog.ModelStatus
+import apap.domain.model.provider.Endpoint
+import apap.domain.model.provider.Provider
+import apap.domain.model.provider.ProviderStatus
+import apap.domain.model.provider.RateLimits
+import apap.domain.model.vo.CapabilityId
+import apap.domain.model.vo.ContentPart
+import apap.domain.model.vo.ConversationId
+import apap.domain.model.vo.CredentialRef
+import apap.domain.model.vo.CredentialState
+import apap.domain.model.vo.ModelId
+import apap.domain.model.vo.Money
+import apap.domain.model.vo.Period
+import apap.domain.model.vo.ProviderId
+import apap.domain.model.vo.Region
+import apap.domain.model.vo.RegionCodeTable
+import apap.domain.model.vo.RequestId
+import apap.domain.model.vo.SemVer
+import apap.domain.model.vo.SessionId
+import apap.domain.model.vo.TenantId
+import apap.domain.model.vo.TokenCount
+import apap.domain.model.vo.Usage
+import apap.execution.ExecutionEngine
+import apap.provider.AdapterRegistry
+import apap.provider.PluginNotFoundException
+import apap.provider.ResolvedPlugin
+import apap.testkit.inmemory.InMemoryAliasRepository
+import apap.testkit.inmemory.InMemoryBudgetRepository
+import apap.testkit.inmemory.InMemoryClock
+import apap.testkit.inmemory.InMemoryConversationRepository
+import apap.testkit.inmemory.InMemoryDomainEventPublisher
+import apap.testkit.inmemory.InMemoryHealthLatencyStatsRepository
+import apap.testkit.inmemory.InMemoryIdGenerator
+import apap.testkit.inmemory.InMemoryMemoryRepository
+import apap.testkit.inmemory.InMemoryModelRepository
+import apap.testkit.inmemory.InMemoryPolicyRepository
+import apap.testkit.inmemory.InMemoryPriceBookRepository
+import apap.testkit.inmemory.InMemoryProviderRepository
+import apap.testkit.inmemory.InMemoryQuotaPolicyRepository
+import apap.testkit.inmemory.InMemoryQuotaSnapshotRepository
+import apap.testkit.inmemory.InMemoryTenantEntitlementRepository
+import apap.testkit.inmemory.InMemoryUsageRepository
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Disabled
+import org.junit.jupiter.api.Test
+import java.math.BigDecimal
+import java.time.Duration
+import java.time.Instant
+
+/**
+ * 着手前レビュー item2: 「実装とテストは存在し、composerにも配線されているが実行経路から呼ばれて
+ * いない」を個別対処ではなく機械的に検出するためのCapability別エンドツーエンドスモークテスト。
+ * [ExecutionEngineComposer]で組み立てた実エンジンに対して実行する（adapter-mockのみ、実Providerへは
+ * 接続しない）。各テストは「応答が返る」だけでなく、そのCapabilityに固有の副作用まで検証する。
+ * 対象は現時点で実装済みのCapability（chat/streaming chat/embedding）。未実装のCapabilityは
+ * [Disabled]でその旨を明示し、実装時にテストを有効化する運用とする。
+ */
+class CapabilitySmokeTest {
+    private val region = Region.of("jp-east", RegionCodeTable(setOf("jp-east")))
+    private val providerId = ProviderId("01ARZ3NDEKTSV4RRFFQ69G5FC0")
+    private val modelId = ModelId("01ARZ3NDEKTSV4RRFFQ69G5FC1")
+    private val tenantId = TenantId("01ARZ3NDEKTSV4RRFFQ69G5FC2")
+
+    private fun priceBookRepository(vararg modelIds: ModelId): InMemoryPriceBookRepository {
+        val repository = InMemoryPriceBookRepository()
+        val period = Period(Instant.parse("2020-01-01T00:00:00Z"), Instant.parse("2030-01-01T00:00:00Z"))
+        val entries =
+            modelIds.map { id ->
+                PriceEntry(id, Money(BigDecimal("1.00"), "USD"), Money(BigDecimal("1.00"), "USD"), period)
+            }
+        repository.save(PriceBook("book-1", entries))
+        return repository
+    }
+
+    private class Harness {
+        val providerRepository = InMemoryProviderRepository()
+        val modelRepository = InMemoryModelRepository()
+        val conversationRepository = InMemoryConversationRepository()
+        val usageRepository = InMemoryUsageRepository()
+        val clock = InMemoryClock(Instant.parse("2026-01-01T00:00:00Z"))
+        val events = InMemoryDomainEventPublisher()
+        val ids = InMemoryIdGenerator()
+    }
+
+    @Suppress("LongMethod")
+    private fun buildEngine(
+        harness: Harness,
+        capabilityId: CapabilityId,
+        adapterConfig: MockAdapterConfig,
+        priceBook: InMemoryPriceBookRepository,
+    ): ExecutionEngine {
+        harness.providerRepository.save(
+            Provider(
+                providerId = providerId,
+                name = "provider-a",
+                adapterPluginId = "plugin-a",
+                spiVersion = SemVer(1, 0, 0),
+                endpoints = listOf(Endpoint("ep1", region, "https://example.internal", 100)),
+                authType = "api_key",
+                credentialRefs = listOf(CredentialRef("secret-ref", 1, CredentialState.ACTIVE)),
+                rateLimits = RateLimits(600, 100_000, 10),
+                priority = 50,
+                regions = setOf(region),
+                status = ProviderStatus.ACTIVE,
+            ),
+        )
+        harness.modelRepository.save(
+            Model(
+                modelId = modelId,
+                providerId = providerId,
+                modelName = "model-a",
+                version = "1.0",
+                capabilities = listOf(ModelCapability(capabilityId)),
+                contextWindow = 8000,
+                maxOutputTokens = 1000,
+                regions = setOf(region),
+                status = ModelStatus.ACTIVE,
+                priority = 50,
+            ),
+        )
+
+        val adapter = MockProviderAdapter(adapterConfig)
+        adapter.initialize(
+            AdapterConfig(
+                providerId,
+                listOf(Endpoint("ep1", region, "https://example.internal", 100)),
+                RateLimits(600, 100_000, 10),
+                setOf(region),
+            ),
+            object : SecretAccessor {
+                override fun resolve(ref: CredentialRef): SecretValue = SecretValue("secret".toCharArray())
+            },
+        )
+        val adapterRegistry =
+            object : AdapterRegistry {
+                override fun resolve(pluginId: String): ResolvedPlugin {
+                    if (pluginId != "plugin-a") throw PluginNotFoundException(pluginId)
+                    return ResolvedPlugin(
+                        adapter,
+                        PluginManifest(
+                            "plugin-a",
+                            SemVer(1, 0, 0),
+                            SemVerRange(listOf(SemVerRange.Comparator(SemVerRange.Op.GTE, SemVer(1, 0, 0)))),
+                            "apap.adapter.mock.MockProviderAdapter",
+                            setOf(capabilityId),
+                            setOf("api_key"),
+                            "sig",
+                        ),
+                    )
+                }
+            }
+
+        return ExecutionEngineComposer(
+            harness.providerRepository,
+            harness.modelRepository,
+            InMemoryAliasRepository(),
+            InMemoryPolicyRepository(),
+            InMemoryHealthLatencyStatsRepository(),
+            InMemoryQuotaSnapshotRepository(),
+            InMemoryTenantEntitlementRepository(),
+            InMemoryMemoryRepository(),
+            harness.conversationRepository,
+            priceBook,
+            InMemoryBudgetRepository(),
+            harness.usageRepository,
+            InMemoryQuotaPolicyRepository(),
+            adapterRegistry,
+            harness.clock,
+            harness.ids,
+            harness.events,
+            harness.events,
+        ).build()
+    }
+
+    @Test
+    fun `chat capability returns a response and records both turns`() =
+        runBlocking {
+            val capabilityId = CapabilityId("chat")
+            val harness = Harness()
+            val adapterConfig = MockAdapterConfig(supportedCapabilities = setOf(capabilityId))
+            val engine = buildEngine(harness, capabilityId, adapterConfig, priceBookRepository(modelId))
+            val conversationId = ConversationId("01ARZ3NDEKTSV4RRFFQ69G5FC3")
+            harness.conversationRepository.save(
+                Conversation(conversationId, SessionId("01ARZ3NDEKTSV4RRFFQ69G5FC4"), tenantId),
+            )
+
+            val request =
+                CanonicalRequest(
+                    requestId = RequestId("01ARZ3NDEKTSV4RRFFQ69G5FC5"),
+                    tenantId = tenantId,
+                    principal = "user-1",
+                    capabilityId = capabilityId,
+                    input = listOf(ContentPart.Text("hello")),
+                    conversationId = conversationId,
+                    timeoutBudget = Duration.ofSeconds(30),
+                    traceId = "trace-1",
+                )
+
+            val response = engine.execute(request)
+            assertTrue(response.output.isNotEmpty())
+
+            val turns = harness.conversationRepository.findTurns(conversationId, 1..Int.MAX_VALUE)
+            assertEquals(2, turns.size)
+            assertEquals(listOf(TurnRole.USER, TurnRole.ASSISTANT), turns.map { it.role })
+        }
+
+    @Suppress("LongMethod")
+    @Test
+    fun `streaming chat capability returns chunks, confirms usage, and records both turns`() =
+        runBlocking {
+            val capabilityId = CapabilityId("chat")
+            val harness = Harness()
+            val streamChunks =
+                listOf(
+                    AdapterChunk(type = AdapterChunkType.MESSAGE_START, index = 0),
+                    AdapterChunk(type = AdapterChunkType.CONTENT_DELTA, index = 1, delta = TextContentPart("hello")),
+                    AdapterChunk(
+                        type = AdapterChunkType.USAGE,
+                        index = 2,
+                        usage = Usage.of(TokenCount(5), TokenCount(3)),
+                    ),
+                    AdapterChunk(type = AdapterChunkType.MESSAGE_END, index = 3),
+                )
+            val adapterConfig =
+                MockAdapterConfig(supportedCapabilities = setOf(capabilityId), streamChunks = streamChunks)
+            val engine = buildEngine(harness, capabilityId, adapterConfig, priceBookRepository(modelId))
+            val conversationId = ConversationId("01ARZ3NDEKTSV4RRFFQ69G5FC6")
+            harness.conversationRepository.save(
+                Conversation(conversationId, SessionId("01ARZ3NDEKTSV4RRFFQ69G5FC7"), tenantId),
+            )
+
+            val request =
+                CanonicalRequest(
+                    requestId = RequestId("01ARZ3NDEKTSV4RRFFQ69G5FC8"),
+                    tenantId = tenantId,
+                    principal = "user-1",
+                    capabilityId = capabilityId,
+                    input = listOf(ContentPart.Text("hello")),
+                    conversationId = conversationId,
+                    timeoutBudget = Duration.ofSeconds(30),
+                    traceId = "trace-1",
+                )
+
+            val chunks = engine.executeStream(request).toList()
+            assertTrue(chunks.any { it.type == StreamChunkType.MESSAGE_END })
+            assertTrue(chunks.none { it.type == StreamChunkType.ERROR })
+
+            val period = Period(Instant.parse("2020-01-01T00:00:00Z"), Instant.parse("2030-01-01T00:00:00Z"))
+            val aggregate = harness.usageRepository.aggregate(tenantId, period, emptyList())
+            assertEquals(1, aggregate.single().requestCount)
+            assertEquals(TokenCount(5), aggregate.single().totalUsage.inputTokens)
+
+            val turns = harness.conversationRepository.findTurns(conversationId, 1..Int.MAX_VALUE)
+            assertEquals(2, turns.size)
+            assertEquals(listOf(TurnRole.USER, TurnRole.ASSISTANT), turns.map { it.role })
+        }
+
+    @Test
+    fun `embedding capability is deterministic and its response gets cached`() =
+        runBlocking {
+            val capabilityId = CapabilityId("embedding")
+            val harness = Harness()
+            val adapterConfig = MockAdapterConfig(supportedCapabilities = setOf(capabilityId))
+            val engine = buildEngine(harness, capabilityId, adapterConfig, priceBookRepository(modelId))
+
+            fun request(requestId: String) =
+                CanonicalRequest(
+                    requestId = RequestId(requestId),
+                    tenantId = tenantId,
+                    principal = "user-1",
+                    capabilityId = capabilityId,
+                    input = listOf(ContentPart.Text("embed me")),
+                    timeoutBudget = Duration.ofSeconds(30),
+                    traceId = "trace-1",
+                )
+
+            val first = engine.execute(request("01ARZ3NDEKTSV4RRFFQ69G5FC9"))
+            assertFalse(first.cached)
+
+            val second = engine.execute(request("01ARZ3NDEKTSV4RRFFQ69G5FD0"))
+            assertTrue(second.cached)
+        }
+
+    /**
+     * FR-CAP-016 Batch Processingは`ExecutionEngineComposer`に配線されておらず（requirements-matrix.md
+     * 参照）、実行フローとして到達不能。個別対処ではなく機械的に検出する、というタスク要求どおり、
+     * 「未実装であること」をこのskipで明示する。実装時にこのテストを有効化すること。
+     */
+    @Disabled("Batch capability (FR-CAP-016) is not wired into ExecutionEngineComposer yet. Enable once implemented.")
+    @Test
+    fun `batch capability`() {
+        error("not implemented")
+    }
+}
