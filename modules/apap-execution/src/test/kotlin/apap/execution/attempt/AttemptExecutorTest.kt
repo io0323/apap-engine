@@ -40,6 +40,15 @@ import apap.testkit.inmemory.InMemoryDomainEventPublisher
 import apap.testkit.inmemory.InMemoryIdGenerator
 import apap.testkit.inmemory.InMemoryModelRepository
 import apap.testkit.inmemory.InMemoryProviderRepository
+import io.opentelemetry.api.OpenTelemetry
+import io.opentelemetry.api.common.AttributeKey
+import io.opentelemetry.api.trace.Span
+import io.opentelemetry.api.trace.Tracer
+import io.opentelemetry.sdk.OpenTelemetrySdk
+import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter
+import io.opentelemetry.sdk.trace.SdkTracerProvider
+import io.opentelemetry.sdk.trace.data.StatusData
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -73,6 +82,7 @@ class AttemptExecutorTest {
         retryConfig: RetryConfig = RetryConfig(),
         cb: CircuitBreaker = defaultCb(),
         rateLimiter: RateLimiter = this.rateLimiter,
+        tracer: Tracer = OpenTelemetry.noop().getTracer("test"),
     ): AttemptExecutor =
         AttemptExecutor(
             providerRepository,
@@ -84,6 +94,7 @@ class AttemptExecutorTest {
             events,
             ids,
             retryConfig,
+            tracer = tracer,
         )
 
     private fun ctx(timeoutBudget: Duration = Duration.ofSeconds(60)) =
@@ -125,6 +136,7 @@ class AttemptExecutorTest {
             testCanonicalRequest(),
             ctx(timeoutBudget),
             budget,
+            Span.getInvalid(),
         )
 
     @Test
@@ -143,6 +155,49 @@ class AttemptExecutorTest {
             val adapter = scriptedAdapter(AdapterErrorCategory.TRANSIENT)
             val result = run(executorFor(adapter, RetryConfig(baseBackoffMs = 1)))
             assertTrue(result is AttemptResult.Success)
+        }
+
+    /**
+     * 02_システム仕様.md 2.19 Span構成`attempt[n]`。実OpenTelemetry SDK（[InMemorySpanExporter]、
+     * テスト専用）で、リトライ毎に別Spanが作られ、失敗はERROR・成功はOKになることを検証する。
+     */
+    @Test
+    fun `each retry attempt is exported as its own Span with the correct status`() =
+        runBlocking {
+            val spanExporter = InMemorySpanExporter.create()
+            val tracerProvider =
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)).build()
+            val tracer =
+                OpenTelemetrySdk
+                    .builder()
+                    .setTracerProvider(tracerProvider)
+                    .build()
+                    .getTracer("test")
+            val adapter = scriptedAdapter(AdapterErrorCategory.TRANSIENT)
+            val executor = executorFor(adapter, RetryConfig(baseBackoffMs = 1), tracer = tracer)
+            val parentSpan = tracer.spanBuilder("parent").startSpan()
+
+            val result =
+                executor.execute(
+                    testCandidate(providerId, modelId),
+                    ProcessedPrompt(input = testCanonicalRequest().input),
+                    testCanonicalRequest(),
+                    ctx(),
+                    StructuredOutputCorrectionBudget(),
+                    parentSpan,
+                )
+            parentSpan.end()
+
+            assertTrue(result is AttemptResult.Success)
+            val spans = spanExporter.finishedSpanItems.filter { it.name.startsWith("attempt[") }
+            assertEquals(listOf("attempt[1]", "attempt[2]"), spans.map { it.name }.sorted())
+            val attempt1 = spans.single { it.name == "attempt[1]" }
+            val attempt2 = spans.single { it.name == "attempt[2]" }
+            assertEquals(StatusData.error().statusCode, attempt1.status.statusCode)
+            assertEquals(StatusData.ok().statusCode, attempt2.status.statusCode)
+            assertEquals(parentSpan.spanContext.spanId, attempt1.parentSpanId)
+            assertEquals(providerId.value, attempt2.attributes.get(AttributeKey.stringKey("provider")))
+            assertEquals(2L, attempt2.attributes.get(AttributeKey.longKey("attempt")))
         }
 
     @Test
@@ -234,6 +289,7 @@ class AttemptExecutorTest {
                     testCanonicalRequest(),
                     exhaustedCtx,
                     StructuredOutputCorrectionBudget(),
+                    Span.getInvalid(),
                 )
             assertTrue(result is AttemptResult.Failure)
             assertEquals(0, (result as AttemptResult.Failure).attempts)

@@ -76,6 +76,8 @@ import apap.routing.CostEstimator
 import apap.routing.RealCostEstimator
 import apap.routing.RoutingCandidateCache
 import apap.routing.RoutingEngine
+import io.opentelemetry.api.OpenTelemetry
+import io.opentelemetry.api.trace.Tracer
 
 /**
  * 03_基本設計.md 3.15 DI構成のコンポジションルート: 実行エンジン一式（apap-execution）を
@@ -119,6 +121,7 @@ class ExecutionEngineComposer(
     private val idGenerator: IdGenerator,
     private val eventPublisher: DomainEventPublisher,
     private val eventSubscriber: DomainEventSubscriber,
+    private val tracer: Tracer = OpenTelemetry.noop().getTracer("apap-execution"),
     private val quotaPolicyProvider: (TenantId) -> QuotaPolicy? = {
         quotaPolicyRepository.findByTenant(it).firstOrNull()
     },
@@ -232,6 +235,7 @@ class ExecutionEngineComposer(
                 eventPublisher,
                 idGenerator,
                 retryConfig,
+                tracer = tracer,
             )
         val fallbackEngine =
             FallbackEngine(
@@ -281,6 +285,7 @@ class ExecutionEngineComposer(
             idGenerator,
             eventPublisher,
             quotaPolicyProvider,
+            tracer = tracer,
         )
     }
 

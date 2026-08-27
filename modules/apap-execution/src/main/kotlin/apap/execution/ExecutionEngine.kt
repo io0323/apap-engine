@@ -46,6 +46,12 @@ import apap.execution.streaming.StreamingRequestExecutor
 import apap.prompt.PromptEngine
 import apap.routing.RoutingEngine
 import apap.routing.RoutingRequest
+import io.opentelemetry.api.OpenTelemetry
+import io.opentelemetry.api.trace.Span
+import io.opentelemetry.api.trace.SpanKind
+import io.opentelemetry.api.trace.StatusCode
+import io.opentelemetry.api.trace.Tracer
+import io.opentelemetry.context.Context
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
@@ -96,8 +102,9 @@ class DefaultExecutionEngine(
     private val idGenerator: IdGenerator,
     private val eventPublisher: DomainEventPublisher,
     private val quotaPolicyProvider: (TenantId) -> QuotaPolicy? = { null },
+    private val tracer: Tracer = OpenTelemetry.noop().getTracer(TRACER_NAME),
 ) : ExecutionEngine {
-    private val phases = PhaseTimings(clock)
+    private val phases = PhaseTimings(clock, tracer)
 
     override suspend fun execute(request: CanonicalRequest): CanonicalResponse {
         publish(requestReceived(request))
@@ -175,10 +182,37 @@ class DefaultExecutionEngine(
         return streamingRequestExecutor.execute(decision.chain, contextualPrompt, request, ctx, reservation)
     }
 
+    /**
+     * 02_システム仕様.md 2.19 Span構成（gateway → prompt → routing → attempt[n] → mapping）の
+     * ルートSpanを開く。`apap-gateway`（P10）が実装されるまでは本メソッドが実質的な入口のため
+     * ルートSpanとして開始する。GatewayがW3C Trace Contextを受け取って親Spanを設定した場合は、
+     * `tracer`に注入されたSDK側のContext伝播（宿主の責務）を通じてそちらが親になる
+     * （要件充足に影響しない実装判断のためADR化せず、根拠をここに残す）。
+     */
+    @Suppress("TooGenericExceptionCaught")
     private suspend fun executeClaimed(request: CanonicalRequest): CanonicalResponse {
-        val prompt = phases.time("prompt") { promptEngine.process(request) }
+        val rootSpan = tracer.spanBuilder("apap.execute").setSpanKind(SpanKind.SERVER).startSpan()
+        return try {
+            val response = executeClaimedTraced(request, rootSpan)
+            rootSpan.setStatus(StatusCode.OK)
+            response
+        } catch (e: Throwable) {
+            // Spanのライフサイクル管理のため、送出元を問わず全ての例外を記録してからそのまま再送出する。
+            rootSpan.recordException(e)
+            rootSpan.setStatus(StatusCode.ERROR)
+            throw e
+        } finally {
+            rootSpan.end()
+        }
+    }
 
-        val cached = phases.time("cache-lookup") { cacheEngine.lookup(request, prompt) }
+    private suspend fun executeClaimedTraced(
+        request: CanonicalRequest,
+        rootSpan: Span,
+    ): CanonicalResponse {
+        val prompt = phases.time("prompt", rootSpan) { promptEngine.process(request) }
+
+        val cached = phases.time("cache-lookup", rootSpan) { cacheEngine.lookup(request, prompt) }
         if (cached != null) {
             return handleCacheHit(request, cached)
         }
@@ -186,7 +220,7 @@ class DefaultExecutionEngine(
         recordUserTurn(request)
 
         val decision =
-            phases.time("routing") {
+            phases.time("routing", rootSpan) {
                 routingEngine.route(
                     RoutingRequest(
                         request.capabilityId,
@@ -201,9 +235,9 @@ class DefaultExecutionEngine(
             }
         val primaryCandidate = decision.chain.candidates.first()
         val contextualPrompt =
-            phases.time("context") { buildContextualPrompt(request, prompt, primaryCandidate.modelId) }
+            phases.time("context", rootSpan) { buildContextualPrompt(request, prompt, primaryCandidate.modelId) }
         val estimatedTokens =
-            phases.time("token-estimate") {
+            phases.time("token-estimate", rootSpan) {
                 tokenEstimator.estimate(primaryCandidate, primaryCandidate.modelId, contextualPrompt)
             }
         val estimatedCost =
@@ -225,33 +259,36 @@ class DefaultExecutionEngine(
         val startedAt = clock.now()
 
         val result =
-            phases.time("execution") {
-                fallbackEngine.executeWithChain(decision.chain, contextualPrompt, request, ctx)
+            phases.time("execution", rootSpan) { executionSpan ->
+                fallbackEngine.executeWithChain(decision.chain, contextualPrompt, request, ctx, executionSpan)
             }
 
         return when (result) {
-            is AttemptResult.Success -> onSuccess(request, prompt, result, reservation, startedAt)
+            is AttemptResult.Success -> onSuccess(request, prompt, result, reservation, startedAt, rootSpan)
             is AttemptResult.Failure -> onFailure(request, result, reservation, startedAt)
         }
     }
 
-    private fun onSuccess(
+    private suspend fun onSuccess(
         request: CanonicalRequest,
         prompt: ProcessedPrompt,
         result: AttemptResult.Success,
         reservation: Reservation,
         startedAt: Instant,
+        rootSpan: Span,
     ): CanonicalResponse {
         val cost = costEngine.calculate(result.response.usage, result.candidate.modelId)
         val response =
-            ResponseMapper.normalize(
-                response = result.response,
-                requestId = request.requestId,
-                cost = cost,
-                resolvedProvider = result.candidate.providerId,
-                resolvedModel = result.candidate.modelId,
-                idGenerator = idGenerator,
-            )
+            phases.time("mapping", rootSpan) {
+                ResponseMapper.normalize(
+                    response = result.response,
+                    requestId = request.requestId,
+                    cost = cost,
+                    resolvedProvider = result.candidate.providerId,
+                    resolvedModel = result.candidate.modelId,
+                    idGenerator = idGenerator,
+                )
+            }
         val durationMs = Duration.between(startedAt, clock.now()).toMillis()
         quotaManager.commit(reservation, result.response.usage, cost.amount)
         costEngine.record(request, response, durationMs)
@@ -504,15 +541,26 @@ class DefaultExecutionEngine(
 
     private companion object {
         val logger = LoggerFactory.getLogger(DefaultExecutionEngine::class.java)
+        const val TRACER_NAME = "apap-execution"
     }
 }
 
 /**
- * 02_システム仕様.md 2.8の各フェーズ所要時間の計測点（メトリクス出力自体はP8）。
- * `Clock`経由で計測するためテストでも決定的。
+ * 02_システム仕様.md 2.8の各フェーズ所要時間の計測点、および2.19 Span計装点。`Clock`経由で
+ * 計測するためテストでも決定的。
+ *
+ * [time]の2引数版（`parentSpan`なし）はSpanを作らずログのみ行う既存挙動を保つ
+ * （`executeStreamClaimed`のStreaming経路向け。Streaming/Fallback ChainのSpan計装は
+ * `StreamingRequestExecutor`側の対応が必要な別タスクとして残す）。3引数版
+ * （`parentSpan`あり、非Streaming経路が使う）はOpenTelemetry APIで子Spanを作り、成功/失敗を
+ * `StatusCode`へ反映して`span.end()`する。CLAUDE.md不変条件5（ThreadLocal/CoroutineContext
+ * 経由の暗黙コンテキスト禁止）に抵触しないよう、`Span`は常に引数として明示的に受け渡し、
+ * `Span.current()`/`Context.current()`のような暗黙参照や`span.makeCurrent()`は使わない
+ * （OpenTelemetry公式もsuspend関数内での`makeCurrent()`はスレッド切替で破綻するため非推奨としている）。
  */
 private class PhaseTimings(
     private val clock: Clock,
+    private val tracer: Tracer,
 ) {
     suspend fun <T> time(
         phase: String,
@@ -520,9 +568,39 @@ private class PhaseTimings(
     ): T {
         val start = clock.now()
         val result = block()
+        logDuration(phase, start)
+        return result
+    }
+
+    @Suppress("TooGenericExceptionCaught")
+    suspend fun <T> time(
+        phase: String,
+        parentSpan: Span,
+        block: suspend (Span) -> T,
+    ): T {
+        val span = tracer.spanBuilder(phase).setParent(Context.root().with(parentSpan)).startSpan()
+        val start = clock.now()
+        return try {
+            val result = block(span)
+            span.setStatus(StatusCode.OK)
+            result
+        } catch (e: Throwable) {
+            // Spanのライフサイクル管理のため、送出元を問わず全ての例外を記録してからそのまま再送出する。
+            span.recordException(e)
+            span.setStatus(StatusCode.ERROR)
+            throw e
+        } finally {
+            logDuration(phase, start)
+            span.end()
+        }
+    }
+
+    private fun logDuration(
+        phase: String,
+        start: Instant,
+    ) {
         val durationMs = Duration.between(start, clock.now()).toMillis()
         logger.debug("phase={} durationMs={}", phase, durationMs)
-        return result
     }
 
     private companion object {

@@ -21,6 +21,7 @@ import apap.execution.attempt.AttemptResult
 import apap.execution.circuitbreaker.CircuitBreaker
 import apap.execution.structuredoutput.StructuredOutputConfig
 import apap.execution.structuredoutput.StructuredOutputCorrectionBudget
+import io.opentelemetry.api.trace.Span
 import java.time.Duration
 
 /**
@@ -46,12 +47,13 @@ class FallbackEngine(
     private val idGenerator: IdGenerator,
     private val structuredOutputConfig: StructuredOutputConfig = StructuredOutputConfig(),
 ) {
-    @Suppress("LoopWithTooManyJumpStatements")
+    @Suppress("LoopWithTooManyJumpStatements", "LongParameterList")
     suspend fun executeWithChain(
         chain: FallbackChain,
         initialPrompt: ProcessedPrompt,
         req: CanonicalRequest,
         ctx: ExecutionContext,
+        parentSpan: Span,
     ): AttemptResult {
         val correctionBudget = StructuredOutputCorrectionBudget(structuredOutputConfig)
         var lastFailure: AttemptResult.Failure? = null
@@ -64,7 +66,7 @@ class FallbackEngine(
             if (circuitBreaker.state(cbKey) == CbState.OPEN) continue
 
             val prompt = contextManager.refit(initialPrompt, candidate.modelId)
-            val result = attemptExecutor.execute(candidate, prompt, req, ctx, correctionBudget)
+            val result = attemptExecutor.execute(candidate, prompt, req, ctx, correctionBudget, parentSpan)
             if (result is AttemptResult.Success) {
                 return result.copy(attempts = totalAttempts + result.attempts, fallbacks = fallbackCount)
             }

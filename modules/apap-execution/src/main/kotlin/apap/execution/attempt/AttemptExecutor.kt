@@ -29,6 +29,12 @@ import apap.execution.retry.RetryConfig
 import apap.execution.retry.RetryStrategy
 import apap.execution.structuredoutput.StructuredOutputCorrectionBudget
 import apap.provider.AdapterRegistry
+import io.opentelemetry.api.OpenTelemetry
+import io.opentelemetry.api.common.AttributeKey
+import io.opentelemetry.api.trace.Span
+import io.opentelemetry.api.trace.StatusCode
+import io.opentelemetry.api.trace.Tracer
+import io.opentelemetry.context.Context
 import kotlinx.coroutines.delay
 import java.time.Duration
 
@@ -55,14 +61,16 @@ class AttemptExecutor(
     private val retryConfig: RetryConfig = RetryConfig(),
     private val retryStrategy: RetryStrategy = ExponentialBackoffJitterStrategy(retryConfig),
     private val rateLimiterMaxWait: Duration = Duration.ofSeconds(RATE_LIMITER_MAX_WAIT_SECONDS),
+    private val tracer: Tracer = OpenTelemetry.noop().getTracer(TRACER_NAME),
 ) {
-    @Suppress("NestedBlockDepth", "ReturnCount")
+    @Suppress("NestedBlockDepth", "ReturnCount", "LongParameterList")
     suspend fun execute(
         candidate: Candidate,
         initialPrompt: ProcessedPrompt,
         req: CanonicalRequest,
         ctx: ExecutionContext,
         correctionBudget: StructuredOutputCorrectionBudget,
+        parentSpan: Span,
     ): AttemptResult {
         val cbKey = CbKey(candidate.providerId, candidate.modelId)
         var prompt = initialPrompt
@@ -73,7 +81,10 @@ class AttemptExecutor(
                 return AttemptResult.Failure(timeoutExhaustedError(), attempt - 1)
             }
 
-            when (val outcome = attemptOnce(candidate, cbKey, prompt, req, ctx, remainingBudget)) {
+            when (
+                val outcome =
+                    attemptOnceTraced(candidate, cbKey, prompt, req, ctx, remainingBudget, attempt, parentSpan)
+            ) {
                 is AttemptOutcome.Success ->
                     return AttemptResult.Success(outcome.response, prompt, candidate, attempts = attempt)
                 is AttemptOutcome.Failed -> {
@@ -94,6 +105,47 @@ class AttemptExecutor(
                     attempt += 1
                 }
             }
+        }
+    }
+
+    /**
+     * 02_システム仕様.md 2.19 Span構成の`attempt[n]`（adapter呼出毎）。CLAUDE.md不変条件5に
+     * 従いSpanは常に引数（`parentSpan`）で明示的に受け渡し、`Span.current()`/`makeCurrent()`は
+     * 使わない（[apap.execution.ExecutionEngine]内`PhaseTimings`のKDoc参照）。
+     */
+    @Suppress("LongParameterList", "TooGenericExceptionCaught")
+    private suspend fun attemptOnceTraced(
+        candidate: Candidate,
+        cbKey: CbKey,
+        prompt: ProcessedPrompt,
+        req: CanonicalRequest,
+        ctx: ExecutionContext,
+        remainingBudget: Duration,
+        attempt: Int,
+        parentSpan: Span,
+    ): AttemptOutcome {
+        val span =
+            tracer
+                .spanBuilder("attempt[$attempt]")
+                .setParent(Context.root().with(parentSpan))
+                .setAttribute(ATTR_PROVIDER, candidate.providerId.value)
+                .setAttribute(ATTR_MODEL, candidate.modelId.value)
+                .setAttribute(ATTR_ATTEMPT, attempt.toLong())
+                .startSpan()
+        return try {
+            val outcome = attemptOnce(candidate, cbKey, prompt, req, ctx, remainingBudget)
+            when (outcome) {
+                is AttemptOutcome.Success -> span.setStatus(StatusCode.OK)
+                is AttemptOutcome.Failed -> span.setStatus(StatusCode.ERROR, outcome.error.message)
+            }
+            outcome
+        } catch (e: Throwable) {
+            // Spanのライフサイクル管理のため、送出元を問わず全ての例外を記録してからそのまま再送出する。
+            span.recordException(e)
+            span.setStatus(StatusCode.ERROR)
+            throw e
+        } finally {
+            span.end()
         }
     }
 
@@ -236,5 +288,9 @@ class AttemptExecutor(
 
     private companion object {
         const val RATE_LIMITER_MAX_WAIT_SECONDS = 5L
+        const val TRACER_NAME = "apap-execution"
+        val ATTR_PROVIDER: AttributeKey<String> = AttributeKey.stringKey("provider")
+        val ATTR_MODEL: AttributeKey<String> = AttributeKey.stringKey("model")
+        val ATTR_ATTEMPT: AttributeKey<Long> = AttributeKey.longKey("attempt")
     }
 }
