@@ -60,6 +60,14 @@ import apap.testkit.inmemory.InMemoryQuotaPolicyRepository
 import apap.testkit.inmemory.InMemoryQuotaSnapshotRepository
 import apap.testkit.inmemory.InMemoryTenantEntitlementRepository
 import apap.testkit.inmemory.InMemoryUsageRepository
+import io.opentelemetry.api.OpenTelemetry
+import io.opentelemetry.api.common.AttributeKey
+import io.opentelemetry.api.trace.Tracer
+import io.opentelemetry.sdk.OpenTelemetrySdk
+import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter
+import io.opentelemetry.sdk.trace.SdkTracerProvider
+import io.opentelemetry.sdk.trace.data.StatusData
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -106,12 +114,13 @@ class CapabilitySmokeTest {
         val ids = InMemoryIdGenerator()
     }
 
-    @Suppress("LongMethod")
+    @Suppress("LongMethod", "LongParameterList")
     private fun buildEngine(
         harness: Harness,
         capabilityId: CapabilityId,
         adapterConfig: MockAdapterConfig,
         priceBook: InMemoryPriceBookRepository,
+        tracer: Tracer = OpenTelemetry.noop().getTracer("test"),
     ): ExecutionEngine {
         harness.providerRepository.save(
             Provider(
@@ -193,6 +202,7 @@ class CapabilitySmokeTest {
             harness.ids,
             harness.events,
             harness.events,
+            tracer,
         ).build()
     }
 
@@ -226,6 +236,65 @@ class CapabilitySmokeTest {
             val turns = harness.conversationRepository.findTurns(conversationId, 1..Int.MAX_VALUE)
             assertEquals(2, turns.size)
             assertEquals(listOf(TurnRole.USER, TurnRole.ASSISTANT), turns.map { it.role })
+        }
+
+    /**
+     * 02_システム仕様.md 2.19 Span構成（gateway → prompt → routing → attempt[n] → mapping）が
+     * composer配線を通じて実際にエクスポートされることを、実OpenTelemetry SDK
+     * （[InMemorySpanExporter]、テスト専用。本体はAPIのみに依存、CLAUDE.md不変条件6）で検証する。
+     */
+    @Test
+    fun `chat capability exports the expected span hierarchy via a real Tracer`() =
+        runBlocking {
+            val capabilityId = CapabilityId("chat")
+            val harness = Harness()
+            val adapterConfig = MockAdapterConfig(supportedCapabilities = setOf(capabilityId))
+            val spanExporter = InMemorySpanExporter.create()
+            val tracerProvider =
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)).build()
+            val tracer =
+                OpenTelemetrySdk
+                    .builder()
+                    .setTracerProvider(tracerProvider)
+                    .build()
+                    .getTracer("test")
+            val engine = buildEngine(harness, capabilityId, adapterConfig, priceBookRepository(modelId), tracer)
+
+            val request =
+                CanonicalRequest(
+                    requestId = RequestId("01ARZ3NDEKTSV4RRFFQ69G5FE0"),
+                    tenantId = tenantId,
+                    principal = "user-1",
+                    capabilityId = capabilityId,
+                    input = listOf(ContentPart.Text("hello")),
+                    timeoutBudget = Duration.ofSeconds(30),
+                    traceId = "trace-1",
+                )
+            engine.execute(request)
+
+            val spans = spanExporter.finishedSpanItems
+            val spanNames = spans.map { it.name }.toSet()
+            val expectedSpanNames =
+                setOf(
+                    "apap.execute",
+                    "prompt",
+                    "cache-lookup",
+                    "routing",
+                    "context",
+                    "token-estimate",
+                    "execution",
+                    "mapping",
+                    "attempt[1]",
+                )
+            assertEquals(expectedSpanNames, spanNames)
+            assertTrue(spans.all { it.status.statusCode == StatusData.ok().statusCode })
+
+            val rootSpan = spans.single { it.name == "apap.execute" }
+            val executionSpan = spans.single { it.name == "execution" }
+            val attemptSpan = spans.single { it.name == "attempt[1]" }
+            assertEquals(rootSpan.spanId, executionSpan.parentSpanId)
+            assertEquals(executionSpan.spanId, attemptSpan.parentSpanId)
+            assertEquals(providerId.value, attemptSpan.attributes.get(AttributeKey.stringKey("provider")))
         }
 
     @Suppress("LongMethod")

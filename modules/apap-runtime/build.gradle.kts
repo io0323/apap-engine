@@ -19,6 +19,11 @@ dependencies {
     // ResilientQueryEmbedder（ADR-0023）が縮退時にWARNログを出すために使う
     // （CLAUDE.md不変条件6でSLF4J APIは許可）。
     implementation(libs.findLibrary("slf4j-api").get())
+    // CLAUDE.md不変条件6: apap-executionのTracerを埋込側から注入できるようDefaultExecutionEngine/
+    // AttemptExecutorへ配線する（02_システム仕様.md 2.19 Span構成）。
+    implementation(libs.findLibrary("opentelemetry-api").get())
     testImplementation(project(":modules:apap-testkit"))
     testImplementation(project(":adapters:adapter-mock"))
+    testImplementation(libs.findLibrary("opentelemetry-sdk").get())
+    testImplementation(libs.findLibrary("opentelemetry-sdk-testing").get())
 }

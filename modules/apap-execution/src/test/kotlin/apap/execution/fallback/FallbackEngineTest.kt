@@ -44,6 +44,7 @@ import apap.testkit.inmemory.InMemoryDomainEventPublisher
 import apap.testkit.inmemory.InMemoryIdGenerator
 import apap.testkit.inmemory.InMemoryModelRepository
 import apap.testkit.inmemory.InMemoryProviderRepository
+import io.opentelemetry.api.trace.Span
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -172,6 +173,7 @@ class FallbackEngineTest {
             ProcessedPrompt(testCanonicalRequest().input),
             testCanonicalRequest(),
             ctx(timeoutBudget),
+            Span.getInvalid(),
         )
 
     @Test
