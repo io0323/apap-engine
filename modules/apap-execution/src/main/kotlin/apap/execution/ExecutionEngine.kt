@@ -125,24 +125,38 @@ class DefaultExecutionEngine(
      * 照会自体を行わない）。Prompt処理直後、Routing/Quota予約より前にuser turnを記録する
      * （[recordUserTurn]、Provider呼出が失敗しても入力を失わない、非Streaming版と同じ判断）。
      */
+    @Suppress("TooGenericExceptionCaught")
     override fun executeStream(request: CanonicalRequest): Flow<StreamChunk> =
         flow {
             publish(requestReceived(request))
             val idempotencyKey = compositeIdempotencyKey(request)
             idempotencyGuard.claim(idempotencyKey)
+            // 02_システム仕様.md 2.19 Span構成のルートSpan。非Streaming版(executeClaimed)と同じ
+            // rootSpanパターンだが、Flowはcollect時まで遅延評価されるため、span.end()は
+            // emitAll完了後(finally)に行う必要がある——同期メソッドのtry/finallyと構造は同じ。
+            val rootSpan = tracer.spanBuilder("apap.execute").setSpanKind(SpanKind.SERVER).startSpan()
             try {
-                emitAll(executeStreamClaimed(request))
+                emitAll(executeStreamClaimed(request, rootSpan))
+                rootSpan.setStatus(StatusCode.OK)
+            } catch (e: Throwable) {
+                rootSpan.recordException(e)
+                rootSpan.setStatus(StatusCode.ERROR)
+                throw e
             } finally {
+                rootSpan.end()
                 idempotencyGuard.release(idempotencyKey)
             }
         }
 
-    private suspend fun executeStreamClaimed(request: CanonicalRequest): Flow<StreamChunk> {
-        val prompt = phases.time("prompt") { promptEngine.process(request) }
+    private suspend fun executeStreamClaimed(
+        request: CanonicalRequest,
+        rootSpan: Span,
+    ): Flow<StreamChunk> {
+        val prompt = phases.time("prompt", rootSpan) { promptEngine.process(request) }
         recordUserTurn(request)
 
         val decision =
-            phases.time("routing") {
+            phases.time("routing", rootSpan) {
                 routingEngine.route(
                     RoutingRequest(
                         request.capabilityId,
@@ -157,9 +171,9 @@ class DefaultExecutionEngine(
             }
         val primaryCandidate = decision.chain.candidates.first()
         val contextualPrompt =
-            phases.time("context") { buildContextualPrompt(request, prompt, primaryCandidate.modelId) }
+            phases.time("context", rootSpan) { buildContextualPrompt(request, prompt, primaryCandidate.modelId) }
         val estimatedTokens =
-            phases.time("token-estimate") {
+            phases.time("token-estimate", rootSpan) {
                 tokenEstimator.estimate(primaryCandidate, primaryCandidate.modelId, contextualPrompt)
             }
         val estimatedCost =
@@ -179,7 +193,7 @@ class DefaultExecutionEngine(
             ),
         )
 
-        return streamingRequestExecutor.execute(decision.chain, contextualPrompt, request, ctx, reservation)
+        return streamingRequestExecutor.execute(decision.chain, contextualPrompt, request, ctx, reservation, rootSpan)
     }
 
     /**
@@ -549,10 +563,7 @@ class DefaultExecutionEngine(
  * 02_システム仕様.md 2.8の各フェーズ所要時間の計測点、および2.19 Span計装点。`Clock`経由で
  * 計測するためテストでも決定的。
  *
- * [time]の2引数版（`parentSpan`なし）はSpanを作らずログのみ行う既存挙動を保つ
- * （`executeStreamClaimed`のStreaming経路向け。Streaming/Fallback ChainのSpan計装は
- * `StreamingRequestExecutor`側の対応が必要な別タスクとして残す）。3引数版
- * （`parentSpan`あり、非Streaming経路が使う）はOpenTelemetry APIで子Spanを作り、成功/失敗を
+ * `Span`は常にOpenTelemetry APIで子Spanを作り、成功/失敗を
  * `StatusCode`へ反映して`span.end()`する。CLAUDE.md不変条件5（ThreadLocal/CoroutineContext
  * 経由の暗黙コンテキスト禁止）に抵触しないよう、`Span`は常に引数として明示的に受け渡し、
  * `Span.current()`/`Context.current()`のような暗黙参照や`span.makeCurrent()`は使わない
@@ -562,16 +573,6 @@ private class PhaseTimings(
     private val clock: Clock,
     private val tracer: Tracer,
 ) {
-    suspend fun <T> time(
-        phase: String,
-        block: suspend () -> T,
-    ): T {
-        val start = clock.now()
-        val result = block()
-        logDuration(phase, start)
-        return result
-    }
-
     @Suppress("TooGenericExceptionCaught")
     suspend fun <T> time(
         phase: String,

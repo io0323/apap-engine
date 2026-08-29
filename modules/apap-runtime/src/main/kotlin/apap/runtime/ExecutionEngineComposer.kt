@@ -267,6 +267,7 @@ class ExecutionEngineComposer(
                 clock,
                 eventPublisher,
                 idGenerator,
+                tracer,
             )
 
         return DefaultExecutionEngine(
