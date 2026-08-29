@@ -12,4 +12,6 @@ dependencies {
     // だったため、apap-cacheが本SPIの実利用第一号になる）。
     implementation(libs.findLibrary("jackson-databind").get())
     testImplementation(project(":modules:apap-testkit"))
+    // TokenBucketRateLimiterTestのacquire()有界待機を仮想時間で決定的にテストするために使う。
+    testImplementation(libs.findLibrary("kotlinx-coroutines-test").get())
 }

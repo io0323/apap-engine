@@ -25,4 +25,6 @@ dependencies {
     testImplementation(libs.findLibrary("opentelemetry-sdk-testing").get())
     testImplementation(project(":adapters:adapter-mock"))
     testImplementation(libs.findLibrary("konsist").get())
+    // StreamingEngineTestのbackpressureテストをrunCurrent()で決定的に駆動するために使う。
+    testImplementation(libs.findLibrary("kotlinx-coroutines-test").get())
 }

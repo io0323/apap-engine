@@ -38,6 +38,9 @@ junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher
 konsist = { module = "com.lemonappdev:konsist", version.ref = "konsist-lib" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+# CLAUDE.md「時刻・ID」規約: delay()を含むsuspend関数のテストはrunTest/TestCoroutineSchedulerで
+# 仮想時間を使い、実時間sleepに依存しないこと（ADR-0024後続、TokenBucketRateLimiterTest flaky対応）。
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 json-schema-validator = { module = "com.networknt:json-schema-validator", version.ref = "json-schema-validator" }
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
 opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version.ref = "opentelemetry" }
