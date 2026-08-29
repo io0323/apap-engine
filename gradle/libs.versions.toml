@@ -31,6 +31,17 @@ jackson = "2.22.1"
 # 依存とする。opentelemetry-sdk/opentelemetry-sdk-testingはapap-observability自身のテストでのみ
 # （実SDKに対してMeter/Tracer呼出が正しく機能することを検証するため）testImplementationとして使う。
 opentelemetry = "1.64.0"
+# ADR-0025: apap-infrastructureのJDBC Repository実装が対象とするRDBMS/マイグレーションツール。
+# バージョンは埋込先prompt-engine（別リポジトリ、gradle/libs.versions.tomlのflywayエントリ）の
+# 実宣言値と揃える（ADR-0017と同じ「実ホストを確認してから決める」方式）。
+flyway = "13.3.0"
+# prompt-engine側はSpring Boot BOM管理下でバージョン省略しているため、apap-infrastructure
+# （Spring Boot非依存、CLAUDE.md不変条件6）では明示的に固定する。2026-08-29時点の最新安定版。
+postgresql = "42.7.9"
+# ADR-0025: 分散CircuitBreakerStateStore/RateLimitCounterStore/CacheStore実装が使うRedisクライアント。
+# prompt-engine側のRedisPromptCache（ADR-0033決定d）と同じ技術。バージョンはpostgresqlと同様、
+# Spring Boot BOM非依存のため明示固定（2026-08-29時点の最新安定版）。
+lettuce = "7.6.0.RELEASE"
 
 [libraries]
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
@@ -46,6 +57,10 @@ jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", ver
 opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version.ref = "opentelemetry" }
 opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version.ref = "opentelemetry" }
 opentelemetry-sdk-testing = { module = "io.opentelemetry:opentelemetry-sdk-testing", version.ref = "opentelemetry" }
+flyway-core = { module = "org.flywaydb:flyway-core", version.ref = "flyway" }
+flyway-postgresql = { module = "org.flywaydb:flyway-database-postgresql", version.ref = "flyway" }
+postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
+lettuce-core = { module = "io.lettuce:lettuce-core", version.ref = "lettuce" }
 
 # build-logic（Convention Plugin）が implementation として使う、プラグイン本体の座標
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
