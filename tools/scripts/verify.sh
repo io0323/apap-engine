@@ -8,6 +8,23 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 GRADLEW="./gradlew"
 
+# build-logic/src/main/kotlin/apap.kotlin-common.gradle.kts の jvmToolchain(21) は
+# 各モジュールのコンパイルには自動適用されるが、build-logic自身のスクリプトコンパイル
+# （compilePluginsBlocks等）はGradleデーモンを起動したJVMでそのまま動く。JDK21が
+# インストールされておらず17等にフォールバックしていると、Kotlinコンパイラデーモンの
+# 引数解析エラーやkotlin-dslアクセサ生成の不整合として現れ、原因がわかりにくいため
+# ここで早期に検出する（ADR-0024）。
+JAVA_BIN="java"
+if [ -n "${JAVA_HOME:-}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
+    JAVA_BIN="${JAVA_HOME}/bin/java"
+fi
+JAVA_VERSION_LINE="$("$JAVA_BIN" -version 2>&1 | head -1)"
+if ! echo "$JAVA_VERSION_LINE" | grep -q '"21'; then
+    echo "エラー: JDK 21が必要です（CLAUDE.md / jvmToolchain(21)）。検出されたバージョン: ${JAVA_VERSION_LINE}" >&2
+    echo "JAVA_HOMEをJDK21に向けてから再実行してください（例: JAVA_HOME=\$(/usr/libexec/java_home -v 21)）。" >&2
+    exit 1
+fi
+
 echo "==> [1/5] build (compile + test + detekt + ktlint)"
 "$GRADLEW" build
 
