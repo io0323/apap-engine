@@ -32,18 +32,20 @@ private const val MILLIS_PER_SECOND = 1000.0
  * [apap.observability.audit.AuditEngine]と異なり非同期化しない（同期ハンドラ内で直接呼ぶ）。
  *
  * **既知の未カバー範囲**（`docs/traceability/requirements-matrix.md` NFR-OBS-002/FR-OBS-002参照）:
- * - `apap_cache_events_total`: [CacheHit]/[CacheStored]の型自体は存在しハンドラも実装済みだが、
- *   現時点でどちらも本番コードから一度もpublishされていない（`DefaultCacheEngine`/`ExecutionEngine`が
- *   未配線）。Cache miss相当のシグナルも存在しない。Cache層の配線は別タスク。
  * - `apap_overhead_duration_seconds`: phase別（gateway/prompt/routing/mapping）の所要時間はDomain
  *   Eventとして発火されておらず（`PhaseTimings`はログのみ）、Event Bus購読では導出不能。
  * - `apap_provider_health`: `ProviderHealthChanged`を発火するHealth Store自体が未実装
  *   （FR-PRV-006、本タスクの範囲外）。
- * - `apap_rate_limit_events_total{action="wait"}`: `RateLimitExceeded`はreject時のみ発火され、
- *   `AcquireResult.Acquired.waitedMillis`（wait成功）はEvent化されていない。
  *
- * 上記4件は`MetricsRecorder`のメソッド自体は用意済み（[apap.domain.port.MetricsRecorder]参照）だが、
+ * 上記2件は`MetricsRecorder`のメソッド自体は用意済み（[apap.domain.port.MetricsRecorder]参照）だが、
  * 呼び出し元が存在しない。CapabilitySmokeTestと同じ理由で、存在を偽装せずここに明記する。
+ * `apap_cache_events_total`（[DefaultCacheEngine][apap.cache.DefaultCacheEngine]が[CacheHit]/
+ * [CacheStored]を発火）はP8で配線済み。`apap_rate_limit_events_total{action="wait"}`は、
+ * `TokenBucketRateLimiter`（apap-cache）が`AcquireResult.Acquired.waitedMillis`を使い
+ * `MetricsRecorder`へ直接記録する（Event Bus経由ではない——14章に無いイベントを新設すると
+ * `DomainEventCoverageTest`のクローズドセット制約に反するため、ここではEvent Bus越しの
+ * `MetricsEngine`購読ではなく直接呼出しとした。要件充足に影響しない実装判断のためADR化せず
+ * ここに根拠を記す）。
  */
 class MetricsEngine(
     eventSubscriber: DomainEventSubscriber,

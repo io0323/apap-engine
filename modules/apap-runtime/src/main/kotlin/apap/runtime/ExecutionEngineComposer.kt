@@ -210,6 +210,8 @@ class ExecutionEngineComposer(
                 cacheConfig,
                 aliasRepository,
                 clock,
+                eventPublisher,
+                idGenerator,
             )
         eventSubscriber.subscribe { defaultCacheEngine.apply(it) }
         val cacheEngine: CacheEngine = defaultCacheEngine

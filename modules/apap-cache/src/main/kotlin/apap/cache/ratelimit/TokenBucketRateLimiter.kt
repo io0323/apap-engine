@@ -3,9 +3,13 @@ package apap.cache.ratelimit
 import apap.domain.event.DomainEvent
 import apap.domain.event.EventMetadata
 import apap.domain.event.RateLimitExceeded
+import apap.domain.model.vo.ProviderId
+import apap.domain.model.vo.RateLimitAction
+import apap.domain.model.vo.TenantId
 import apap.domain.port.Clock
 import apap.domain.port.DomainEventPublisher
 import apap.domain.port.IdGenerator
+import apap.domain.port.MetricsRecorder
 import kotlinx.coroutines.delay
 import java.time.Duration
 import java.time.Instant
@@ -45,6 +49,11 @@ class TokenBucketRateLimiter(
     private val eventPublisher: DomainEventPublisher,
     private val idGenerator: IdGenerator,
     private val config: RateLimiterConfig = RateLimiterConfig(),
+    // 02_システム仕様.md 2.19 apap_rate_limit_events_total{action="wait"}。14章に定義の無い
+    // イベントを新設するとDomainEventCoverageTestのクローズドセット制約に反するため、Event Bus
+    // 経由ではなくMetricsRecorderへ直接記録する（要件充足に影響しない実装判断のためADR化せず
+    // ここに根拠を記す）。宿主が未注入ならnullのまま記録をスキップする。
+    private val metricsRecorder: MetricsRecorder? = null,
 ) : RateLimiter {
     private data class Bucket(
         var tokens: Double,
@@ -105,7 +114,10 @@ class TokenBucketRateLimiter(
 
         // The bucket may have been drained by a concurrent acquirer while we waited; re-check
         // rather than assume success (bounded wait, not a guarantee).
-        if (tryAcquire(scope, cost)) return AcquireResult.Acquired(scope, Permit(scope), waitedMillis = waitMillis)
+        if (tryAcquire(scope, cost)) {
+            metricsRecorder?.recordRateLimitEvent(scopeLabel(scope).first, RateLimitAction.WAIT)
+            return AcquireResult.Acquired(scope, Permit(scope), waitedMillis = waitMillis)
+        }
         return reject(scope, traceId, waitMillis, maxWait)
     }
 
@@ -151,26 +163,34 @@ class TokenBucketRateLimiter(
         scope: RateLimitScope,
         traceId: String,
     ): DomainEvent {
-        val (scopeLabel, tenantId, providerId) =
-            when (scope) {
-                is RateLimitScope.TenantScope -> Triple("tenant", scope.tenantId, null)
-                is RateLimitScope.ProviderScope -> Triple("provider", null, scope.providerId)
-            }
+        val (scopeLabel, tenantId, providerId) = scopeLabel(scope)
         return RateLimitExceeded(
-            meta =
-                EventMetadata(
-                    eventId = idGenerator.newId(),
-                    occurredAt = clock.now(),
-                    traceId = traceId,
-                    tenantId = tenantId,
-                    aggregateId = scopeLabel,
-                    version = 0,
-                ),
+            meta = eventMetadata(traceId, tenantId, scopeLabel),
             scope = scopeLabel,
             tenantId = tenantId,
             providerId = providerId,
         )
     }
+
+    private fun scopeLabel(scope: RateLimitScope): Triple<String, TenantId?, ProviderId?> =
+        when (scope) {
+            is RateLimitScope.TenantScope -> Triple("tenant", scope.tenantId, null)
+            is RateLimitScope.ProviderScope -> Triple("provider", null, scope.providerId)
+        }
+
+    private fun eventMetadata(
+        traceId: String,
+        tenantId: TenantId?,
+        scopeLabel: String,
+    ): EventMetadata =
+        EventMetadata(
+            eventId = idGenerator.newId(),
+            occurredAt = clock.now(),
+            traceId = traceId,
+            tenantId = tenantId,
+            aggregateId = scopeLabel,
+            version = 0,
+        )
 
     private companion object {
         const val MILLIS_PER_SECOND = 1000.0

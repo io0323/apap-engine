@@ -2,10 +2,12 @@ package apap.cache.ratelimit
 
 import apap.domain.event.RateLimitExceeded
 import apap.domain.model.vo.ProviderId
+import apap.domain.model.vo.RateLimitAction
 import apap.domain.model.vo.TenantId
 import apap.testkit.inmemory.InMemoryClock
 import apap.testkit.inmemory.InMemoryDomainEventPublisher
 import apap.testkit.inmemory.InMemoryIdGenerator
+import apap.testkit.inmemory.InMemoryMetricsRecorder
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -25,6 +27,7 @@ class TokenBucketRateLimiterTest {
     private val clock = InMemoryClock(Instant.parse("2026-01-01T00:00:00Z"))
     private val events = InMemoryDomainEventPublisher()
     private val ids = InMemoryIdGenerator()
+    private val metrics = InMemoryMetricsRecorder()
     private val scope = RateLimitScope.TenantScope(TenantId("01ARZ3NDEKTSV4RRFFQ69G5FA0"))
 
     @Test
@@ -57,7 +60,7 @@ class TokenBucketRateLimiterTest {
         runTest {
             // capacity=1, refill 20 tokens/sec -> the 2nd token needs ~50ms inside acquire()'s delay().
             val config = RateLimiterConfig(defaultCapacity = 1, defaultRefillPerSecond = 20.0)
-            val limiter = TokenBucketRateLimiter(clock, events, ids, config)
+            val limiter = TokenBucketRateLimiter(clock, events, ids, config, metrics)
             limiter.acquire(scope, "trace-1", Duration.ZERO)
 
             // Bucket refill is driven by the injected Clock, not by delay()'s (virtual, under runTest)
@@ -73,11 +76,15 @@ class TokenBucketRateLimiterTest {
             advanceUntilIdle()
             val result = deferred.await()
 
-            // The wait succeeded: no RateLimitExceeded should have been published, and the outcome
-            // carries the wait duration it actually took (not reconstructed from a log string).
-            assertTrue(events.publishedEvents.isEmpty())
+            // The wait succeeded: no RateLimitExceeded should have been published (no Domain Event
+            // exists for a successful wait -- 14章 defines only RateLimitExceeded, and
+            // DomainEventCoverageTest enforces that set as closed), but the MetricsRecorder should
+            // have been called directly with action=WAIT (FR-OBS-002 apap_rate_limit_events_total).
             assertTrue(result is AcquireResult.Acquired)
             assertTrue((result as AcquireResult.Acquired).waitedMillis > 0L)
+            assertTrue(events.publishedEvents.isEmpty())
+            assertEquals(1, metrics.rateLimitEvents.size)
+            assertEquals(RateLimitAction.WAIT, metrics.rateLimitEvents.single().action)
         }
 
     @Test
