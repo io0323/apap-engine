@@ -111,6 +111,19 @@ rm -rf ~/.gradle/caches/*/kotlin-dsl
 
 `gradle.properties` の `org.gradle.caching=true` はこの問題への対処として無効化しない（通常時は問題なく動作するため）。上記の手順で解消しない場合のみ、原因調査を優先し、キャッシュ無効化を恒久対応にしない。
 
+## トラブルシューティング（IDE（Java Language Server）との競合）
+
+症状: ビルドが進まない、Gradleがロック待ちで停止する、IDEを終了してもプロセスが再起動する。
+
+原因: IDEのGradle統合（Java拡張が内蔵するJDT LS / Gradle Buildship、あるいはvscode-gradle等の別拡張）と `./gradlew` が、`~/.gradle` 配下のファイルロックとGradleデーモンを取り合う。JDT LSが孤児プロセスとして残ることもある。
+
+対処:
+
+- ビルドは `GRADLE_USER_HOME` を分離して実行する（例: `~/.gradle-apap`）。
+- 孤児プロセスは `pkill -f "org.eclipse.jdt.ls"` で終了できる。
+- IDE側はJava拡張をワークスペース単位で無効化するか、`java.server.launchMode` を `LightWeight` にする。
+- **IDEの終了を利用者に依頼しない。共存できる問題である。**
+
 ## トラブルシューティング（Konsistの空スコープ）
 
 `Konsist.scopeFromModule(...)` は、ネストしたモジュールパス（本リポジトリの `modules/apap-domain` のような `<parent>/<module>` 形式）に対して**空スコープを返す**ことがある（P1で発見）。空スコープに対する `assertFalse` / `assertTrue` 系の検証は対象0件のため常に成功し、規約違反があっても検出できないまま「テスト成功」と表示される最悪の失敗モードになる。
