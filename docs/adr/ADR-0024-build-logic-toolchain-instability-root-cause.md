@@ -110,11 +110,11 @@ incompatible with Gradle 10"という警告と符合する）。`apap.applicatio
 
 `GRADLE_USER_HOME`の分離だけでは不十分。IDEでプロジェクトを開いたまま確実にビルドしたい場合は、
 git worktreeでIDEが監視していない別ディレクトリにチェックアウトしてそこでビルドする。
+`tools/scripts/verify-in-worktree.sh`が、未コミットの変更・未追跡ファイルを含めて一時worktreeへ
+複製し、そこで`verify.sh`を実行して終了時にworktreeを自動削除するところまでを行う。
 
 ```bash
-git worktree add --detach /tmp/apap-engine-verify <branch-or-commit>
-cd /tmp/apap-engine-verify
-JAVA_HOME=$(/usr/libexec/java_home -v 21) GRADLE_USER_HOME=~/.gradle-apap ./tools/scripts/verify.sh
+./tools/scripts/verify-in-worktree.sh
 ```
 
 ## 影響（Consequences）

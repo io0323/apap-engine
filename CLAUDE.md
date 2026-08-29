@@ -89,6 +89,7 @@ APAPは、AIを利用する全システム（AI Agent / Workflow Engine / Backen
 ./gradlew koverHtmlReport        # カバレッジ
 ./gradlew :gateway:apap-gateway:run   # Gateway起動（任意）
 ./tools/scripts/verify.sh        # 一括検証（コミット前に必ず実行）
+./tools/scripts/verify-in-worktree.sh # IDEでプロジェクトを開いたまま確実に検証したい場合（ADR-0024）
 docker compose -f tools/docker-compose.yaml up -d   # ローカル依存
 ```
 
@@ -108,11 +109,12 @@ docker compose -f tools/docker-compose.yaml up -d   # ローカル依存
 2. **JDK21未導入**: `build-logic/src/main/kotlin/apap.kotlin-common.gradle.kts` の `jvmToolchain(21)` は各モジュールには自動適用されるが、`build-logic` 自身のスクリプトコンパイルはGradleデーモンを起動したJVMでそのまま動くため対象外。JDK21を導入し `JAVA_HOME` をそちらに向けること（`./tools/scripts/verify.sh` は冒頭でJDK21を検証し、なければ即エラーにする）。
 3. **Gradle 9.4.1自身のkotlin-dslアクセサ生成の自己矛盾**: `application` コアプラグイン適用時、Gradle自身が既に整理対象にしている内部API（`ApplicationPluginConvention`・`DefaultArtifactPublicationSet`）を参照するアクセサコードを生成してしまう既知不具合。`gradle.properties` の `systemProp.org.gradle.kotlin.dsl.precompiled.accessors.strict=false` で回避済み（追加設定は不要）。
 
+**IDEを開いたまま確実に検証したい場合は、生の`git worktree`コマンドを都度組み立てず`tools/scripts/verify-in-worktree.sh`を使うこと**（未コミットの変更・未追跡ファイルも含めて一時worktreeへ複製し、そこで`verify.sh`を実行して終了時に自動でworktreeを削除する）。
+
 ```bash
-# IDEを開いたまま確実にビルドしたい場合
-git worktree add --detach /tmp/apap-engine-verify <branch-or-commit>
-cd /tmp/apap-engine-verify
-JAVA_HOME=$(/usr/libexec/java_home -v 21) GRADLE_USER_HOME=~/.gradle-apap ./tools/scripts/verify.sh
+./tools/scripts/verify-in-worktree.sh
+# JAVA_HOME未指定なら /usr/libexec/java_home -v 21 を、GRADLE_USER_HOME未指定なら ~/.gradle-apap を使う。
+# 明示したい場合: JAVA_HOME=$(/usr/libexec/java_home -v 21) GRADLE_USER_HOME=~/.gradle-apap ./tools/scripts/verify-in-worktree.sh
 ```
 
 詳細な調査経緯は `docs/adr/ADR-0024-build-logic-toolchain-instability-root-cause.md` を参照。
@@ -125,7 +127,7 @@ JAVA_HOME=$(/usr/libexec/java_home -v 21) GRADLE_USER_HOME=~/.gradle-apap ./tool
 
 対処:
 
-- 確実に競合を避けたい場合は、git worktreeでIDEが監視していない別ディレクトリにチェックアウトしてビルドする（上記コマンド参照）。
+- **確実に競合を避けたい場合は必ず `./tools/scripts/verify-in-worktree.sh` を使う**（上記コマンド参照）。設定変更やIDE再起動より先にこれを試すこと。
 - 孤児プロセスは `pkill -f "org.eclipse.jdt.ls"` で終了できる（ただしIDE拡張が監視プロセスとして再起動させることがあり、確実な停止策ではない）。
 - `.vscode/settings.json` での `gradle.autoDetect` / `java.import.gradle.enabled` の変更、およびIDEウィンドウのReloadは、既にIDEにインポート済みのプロジェクトに対しては効果がないことを確認済み（本リポジトリではこれらの設定は追加していない）。
 - **IDEの終了を利用者に依頼しない。共存できる問題である。**
