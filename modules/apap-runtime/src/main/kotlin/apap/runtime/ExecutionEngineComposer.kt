@@ -11,6 +11,8 @@ import apap.cache.DefaultCacheabilityPolicy
 import apap.cache.InMemoryCacheStore
 import apap.cache.NormalizedJsonCacheKeyStrategy
 import apap.cache.PassthroughCacheCodec
+import apap.cache.ratelimit.InMemoryRateLimitCounterStore
+import apap.cache.ratelimit.RateLimitCounterStore
 import apap.cache.ratelimit.RateLimiter
 import apap.cache.ratelimit.RateLimiterConfig
 import apap.cache.ratelimit.TokenBucketRateLimiter
@@ -37,6 +39,7 @@ import apap.domain.model.vo.ModelId
 import apap.domain.model.vo.TenantId
 import apap.domain.port.AliasRepository
 import apap.domain.port.BudgetRepository
+import apap.domain.port.CircuitBreakerStateStore
 import apap.domain.port.Clock
 import apap.domain.port.ConversationRepository
 import apap.domain.port.DomainEventPublisher
@@ -154,12 +157,16 @@ class ExecutionEngineComposer(
     private val cacheabilityPolicy: CacheabilityPolicy = DefaultCacheabilityPolicy(),
     private val cacheConfig: CacheConfig = CacheConfig(),
     private val streamingConfig: StreamingConfig = StreamingConfig(),
+    // ADR-0001/ADR-0025: 既定はIn-Memory（単一プロセス埋込利用で十分）。マルチノード運用時は
+    // 埋込ホストが`modules/apap-infrastructure-distributed`のRedis実装をここへ渡す
+    // （`apap-runtime`自体はそのモジュールに依存しない）。
+    private val cbStore: CircuitBreakerStateStore = InMemoryCircuitBreakerStateStore(),
+    private val rateLimitCounterStore: RateLimitCounterStore = InMemoryRateLimitCounterStore(),
 ) {
     @Suppress("LongMethod")
     fun build(): ExecutionEngine {
         // CB状態はRouting（読取専用）とExecution（書込）の双方から同一インスタンスを参照する必要がある
         // （apap.domain.port.CircuitBreakerStateStoreのKDoc参照）。
-        val cbStore = InMemoryCircuitBreakerStateStore()
         val candidateCache = RoutingCandidateCache()
         eventSubscriber.subscribe { candidateCache.apply(it) }
 
@@ -179,7 +186,15 @@ class ExecutionEngineComposer(
         val routingEngine = RoutingEngine(candidateFactory, policyRepository)
 
         val circuitBreaker = CircuitBreaker(cbStore, clock, eventPublisher, idGenerator, circuitBreakerConfig)
-        val rateLimiter: RateLimiter = TokenBucketRateLimiter(clock, eventPublisher, idGenerator, rateLimiterConfig)
+        val rateLimiter: RateLimiter =
+            TokenBucketRateLimiter(
+                clock,
+                eventPublisher,
+                idGenerator,
+                rateLimiterConfig,
+                metricsRecorder = null,
+                store = rateLimitCounterStore,
+            )
         val quotaManager: QuotaManager = DefaultQuotaManager(idGenerator, clock, eventPublisher, quotaManagerConfig)
 
         val promptEngine: PromptEngine = DefaultPromptEngine()
