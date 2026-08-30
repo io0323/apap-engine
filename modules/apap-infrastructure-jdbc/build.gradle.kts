@@ -12,7 +12,10 @@ dependencies {
     implementation(libs.findLibrary("slf4j-api").get())
     implementation(libs.findLibrary("flyway-core").get())
     implementation(libs.findLibrary("flyway-postgresql").get())
-    runtimeOnly(libs.findLibrary("postgresql").get())
+    implementation(libs.findLibrary("postgresql").get())
+    // ADR-0017で確定済みのJSONスタック。JSONB列（routing_decision/usage/cost等）のシリアライズに使う。
+    implementation(libs.findLibrary("jackson-databind").get())
+    implementation(libs.findLibrary("jackson-module-kotlin").get())
+    implementation(libs.findLibrary("jackson-datatype-jsr310").get())
     testImplementation(project(":modules:apap-testkit"))
-    testImplementation(libs.findLibrary("postgresql").get())
 }
