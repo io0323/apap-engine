@@ -1,5 +1,6 @@
 package apap.infrastructure.jdbc
 
+import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
@@ -42,11 +43,14 @@ object JdbcSupport {
     /**
      * ADR-0017: Jacksonに一本化。Kotlin data class（プライマリコンストラクタ/デフォルト値）を正しく
      * 扱うためkotlin-moduleを、`java.time.Instant`等JSR-310型を扱うためJavaTimeModuleを登録する。
+     * `FAIL_ON_UNKNOWN_PROPERTIES`を無効化する理由は[apap.infrastructure.distributed.RedisSupport]
+     * と同じ（apap-domainのVOはgetter専用の計算プロパティを持つことがある）。
      */
     val objectMapper: ObjectMapper =
         ObjectMapper()
             .registerKotlinModule()
             .registerModule(JavaTimeModule())
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
 
     private const val DEFAULT_PORT = 5432
 }
