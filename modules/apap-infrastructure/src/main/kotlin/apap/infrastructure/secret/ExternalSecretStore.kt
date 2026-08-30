@@ -64,7 +64,9 @@ class ExternalSecretStore(
         operation: String,
     ) {
         if (response.statusCode() !in HTTP_OK_RANGE) {
-            throw ExternalSecretStoreException("Secret store $operation failed with HTTP status ${response.statusCode()}")
+            throw ExternalSecretStoreException(
+                "Secret store $operation failed with HTTP status ${response.statusCode()}",
+            )
         }
     }
 

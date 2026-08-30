@@ -24,10 +24,13 @@ class InMemoryPriceBookRepositoryTest {
         period = Period(from, to),
     )
 
+    private val periodFrom = Instant.parse("2026-01-01T00:00:00Z")
+    private val periodTo = Instant.parse("2026-02-01T00:00:00Z")
+
     @Test
     fun `saves and finds a price book by id`() {
         val repo = InMemoryPriceBookRepository()
-        val book = PriceBook("pb1", listOf(entry(Instant.parse("2026-01-01T00:00:00Z"), Instant.parse("2026-02-01T00:00:00Z"))))
+        val book = PriceBook("pb1", listOf(entry(periodFrom, periodTo)))
         repo.save(book)
 
         assertEquals(book, repo.findById("pb1"))
@@ -37,9 +40,7 @@ class InMemoryPriceBookRepositoryTest {
     @Test
     fun `findCurrentEntry returns the entry covering the given instant`() {
         val repo = InMemoryPriceBookRepository()
-        repo.save(
-            PriceBook("pb1", listOf(entry(Instant.parse("2026-01-01T00:00:00Z"), Instant.parse("2026-02-01T00:00:00Z")))),
-        )
+        repo.save(PriceBook("pb1", listOf(entry(periodFrom, periodTo))))
 
         val found = repo.findCurrentEntry(modelId, Instant.parse("2026-01-15T00:00:00Z"))
         assertEquals(modelId, found?.modelId)

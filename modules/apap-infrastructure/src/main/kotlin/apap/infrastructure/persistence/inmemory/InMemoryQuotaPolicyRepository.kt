@@ -9,7 +9,8 @@ import java.util.concurrent.ConcurrentHashMap
 class InMemoryQuotaPolicyRepository : QuotaPolicyRepository {
     private val policies = ConcurrentHashMap<String, QuotaPolicy>()
 
-    override fun findByTenant(tenantId: TenantId): List<QuotaPolicy> = policies.values.filter { it.tenantId == tenantId }
+    override fun findByTenant(tenantId: TenantId): List<QuotaPolicy> =
+        policies.values.filter { it.tenantId == tenantId }
 
     override fun save(policy: QuotaPolicy) {
         policies[policy.quotaId] = policy

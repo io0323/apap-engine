@@ -28,7 +28,13 @@ class RedisRateLimitCounterStoreTest {
 
     @Test
     fun `save then find round-trips the bucket state`() {
-        val state = TokenBucketState(tokens = 42.5, lastRefillAt = Instant.parse("2026-01-01T00:00:00Z"), capacity = 60, refillPerSecond = 1.0)
+        val state =
+            TokenBucketState(
+                tokens = 42.5,
+                lastRefillAt = Instant.parse("2026-01-01T00:00:00Z"),
+                capacity = 60,
+                refillPerSecond = 1.0,
+            )
 
         store.save(scope, state)
 

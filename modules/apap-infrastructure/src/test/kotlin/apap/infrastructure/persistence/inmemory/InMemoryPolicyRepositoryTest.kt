@@ -17,7 +17,9 @@ class InMemoryPolicyRepositoryTest {
     fun `findEffective returns PLATFORM policies for any tenant, plus that tenant's own`() {
         val repo = InMemoryPolicyRepository()
         repo.save(RoutingPolicy(policyId = "platform", scope = PolicyScope.PLATFORM, rules = listOf(rule)))
-        repo.save(RoutingPolicy(policyId = "mine", scope = PolicyScope.TENANT, tenantId = tenantId, rules = listOf(rule)))
+        repo.save(
+            RoutingPolicy(policyId = "mine", scope = PolicyScope.TENANT, tenantId = tenantId, rules = listOf(rule)),
+        )
         repo.save(
             RoutingPolicy(
                 policyId = "other",

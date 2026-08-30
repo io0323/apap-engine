@@ -17,7 +17,8 @@ class InMemoryHealthLatencyStatsRepositoryTest {
     fun `snapshot aggregates only outcomes inside the window`() {
         val repo = InMemoryHealthLatencyStatsRepository()
         // Outside the 5-minute window (older than now-5m).
-        repo.recordOutcome(providerId, modelId, success = false, latencyMs = 9999, at = now.minus(Duration.ofMinutes(10)))
+        val outsideWindow = now.minus(Duration.ofMinutes(10))
+        repo.recordOutcome(providerId, modelId, success = false, latencyMs = 9999, at = outsideWindow)
         // Inside the window.
         repo.recordOutcome(providerId, modelId, success = true, latencyMs = 100, at = now)
         repo.recordOutcome(providerId, modelId, success = true, latencyMs = 200, at = now)
