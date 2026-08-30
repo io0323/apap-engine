@@ -57,7 +57,8 @@ class ExternalSecretStore(
     }
 
     private fun send(request: HttpRequest): HttpResponse<String> {
-        return httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+        val handler = HttpResponse.BodyHandlers.ofString()
+        return httpClient.send(request, handler)
     }
 
     private fun requireSuccess(

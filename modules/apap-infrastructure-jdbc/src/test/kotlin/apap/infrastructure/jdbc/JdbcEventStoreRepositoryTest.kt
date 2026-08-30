@@ -13,6 +13,7 @@ import apap.domain.model.vo.ProviderId
 import apap.domain.model.vo.Region
 import apap.domain.model.vo.RegionCodeTable
 import apap.domain.model.vo.SemVer
+import apap.testkit.inmemory.InMemoryClock
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -28,7 +29,8 @@ class JdbcEventStoreRepositoryTest {
 
     @BeforeEach
     fun setUp() {
-        repo = JdbcEventStoreRepository(JdbcTestSupport.freshDataSource())
+        val clock = InMemoryClock(Instant.parse("2026-01-01T00:00:00Z"))
+        repo = JdbcEventStoreRepository(JdbcTestSupport.freshDataSource(), clock)
     }
 
     private fun meta(version: Long) =
@@ -41,9 +43,14 @@ class JdbcEventStoreRepositoryTest {
             version = version,
         )
 
+    private fun registeredEvent(): ProviderRegistered {
+        val version = 1L
+        return ProviderRegistered(meta(version), providerId, "test-provider", "01ARZ3NDEKTSV4RRFFQ69G5FAB")
+    }
+
     @Test
     fun `append then read round-trips events with their concrete type, in version order`() {
-        repo.append(streamId, listOf(ProviderRegistered(meta(1), providerId, "test-provider", "01ARZ3NDEKTSV4RRFFQ69G5FAB")), expectedVersion = 0)
+        repo.append(streamId, listOf(registeredEvent()), expectedVersion = 0)
         repo.append(streamId, listOf(ProviderEnabled(meta(2), providerId, "manual")), expectedVersion = 1)
 
         val events = repo.read(streamId, fromVersion = 1)
@@ -56,7 +63,7 @@ class JdbcEventStoreRepositoryTest {
 
     @Test
     fun `read with fromVersion skips earlier events`() {
-        repo.append(streamId, listOf(ProviderRegistered(meta(1), providerId, "test-provider", "01ARZ3NDEKTSV4RRFFQ69G5FAB")), expectedVersion = 0)
+        repo.append(streamId, listOf(registeredEvent()), expectedVersion = 0)
         repo.append(streamId, listOf(ProviderEnabled(meta(2), providerId, "manual")), expectedVersion = 1)
 
         val events = repo.read(streamId, fromVersion = 2)
@@ -67,7 +74,7 @@ class JdbcEventStoreRepositoryTest {
 
     @Test
     fun `append with a stale expectedVersion throws EventStreamConcurrencyException and appends nothing`() {
-        repo.append(streamId, listOf(ProviderRegistered(meta(1), providerId, "test-provider", "01ARZ3NDEKTSV4RRFFQ69G5FAB")), expectedVersion = 0)
+        repo.append(streamId, listOf(registeredEvent()), expectedVersion = 0)
 
         assertThrows(EventStreamConcurrencyException::class.java) {
             // Stale: the stream is already at version 1, not 0.
@@ -92,7 +99,8 @@ class JdbcEventStoreRepositoryTest {
     @Test
     fun `saveSnapshot overwrites the previous snapshot for the same stream`() {
         repo.saveSnapshot(AggregateSnapshot(streamId, version = 1, state = testProvider()))
-        repo.saveSnapshot(AggregateSnapshot(streamId, version = 5, state = testProvider(status = ProviderStatus.ACTIVE)))
+        val activeProvider = testProvider(status = ProviderStatus.ACTIVE)
+        repo.saveSnapshot(AggregateSnapshot(streamId, version = 5, state = activeProvider))
 
         val loaded = repo.loadSnapshot(streamId, Provider::class)
 

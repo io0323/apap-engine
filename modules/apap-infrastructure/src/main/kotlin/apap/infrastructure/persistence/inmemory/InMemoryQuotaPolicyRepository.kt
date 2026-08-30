@@ -10,7 +10,8 @@ class InMemoryQuotaPolicyRepository : QuotaPolicyRepository {
     private val policies = ConcurrentHashMap<String, QuotaPolicy>()
 
     override fun findByTenant(tenantId: TenantId): List<QuotaPolicy> {
-        return policies.values.filter { it.tenantId == tenantId }
+        val matches = policies.values.filter { it.tenantId == tenantId }
+        return matches
     }
 
     override fun save(policy: QuotaPolicy) {

@@ -10,6 +10,7 @@ import apap.domain.model.vo.TokenCount
 import apap.domain.model.vo.Usage
 import apap.domain.port.UsageRepository
 import java.math.BigDecimal
+import java.sql.ResultSet
 import java.sql.Timestamp
 import javax.sql.DataSource
 
@@ -22,40 +23,45 @@ import javax.sql.DataSource
 class JdbcUsageRepository(
     private val dataSource: DataSource,
 ) : UsageRepository {
+    @Suppress("MagicNumber") // JDBC positional parameter indices, not meaningful as named constants.
     override fun append(record: UsageRecord) {
         dataSource.connection.use { conn ->
-            conn.prepareStatement(
-                """
-                INSERT INTO usage_record (
-                    usage_id, request_id, tenant_id, capability_id, provider_id, model_id,
-                    input_tokens, output_tokens, cost_amount, currency, duration_ms, status, occurred_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """.trimIndent(),
-            ).use { stmt ->
-                stmt.setString(1, record.usageId)
-                stmt.setString(2, record.requestId.value)
-                stmt.setString(3, record.tenantId.value)
-                stmt.setString(4, record.capabilityId.value)
-                stmt.setString(5, record.providerId.value)
-                stmt.setString(6, record.modelId.value)
-                stmt.setInt(7, record.usage.inputTokens.value)
-                stmt.setInt(8, record.usage.outputTokens.value)
-                stmt.setBigDecimal(9, record.cost.amount.amount)
-                stmt.setString(10, record.cost.amount.currency)
-                stmt.setLong(11, record.durationMs)
-                stmt.setString(12, record.status)
-                stmt.setTimestamp(13, Timestamp.from(record.occurredAt))
-                stmt.executeUpdate()
-            }
+            conn
+                .prepareStatement(
+                    """
+                    INSERT INTO usage_record (
+                        usage_id, request_id, tenant_id, capability_id, provider_id, model_id,
+                        input_tokens, output_tokens, cost_amount, currency, duration_ms, status, occurred_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """.trimIndent(),
+                ).use { stmt ->
+                    stmt.setString(1, record.usageId)
+                    stmt.setString(2, record.requestId.value)
+                    stmt.setString(3, record.tenantId.value)
+                    stmt.setString(4, record.capabilityId.value)
+                    stmt.setString(5, record.providerId.value)
+                    stmt.setString(6, record.modelId.value)
+                    stmt.setInt(7, record.usage.inputTokens.value)
+                    stmt.setInt(8, record.usage.outputTokens.value)
+                    stmt.setBigDecimal(9, record.cost.amount.amount)
+                    stmt.setString(10, record.cost.amount.currency)
+                    stmt.setLong(11, record.durationMs)
+                    stmt.setString(12, record.status)
+                    stmt.setTimestamp(13, Timestamp.from(record.occurredAt))
+                    stmt.executeUpdate()
+                }
         }
     }
 
+    // MagicNumber: JDBC positional parameter index (3) for the WHERE-clause bind.
+    // NestedBlockDepth: connection/statement/resultset/while is inherent to raw JDBC.
+    @Suppress("MagicNumber", "NestedBlockDepth")
     override fun aggregate(
         tenantId: TenantId,
         period: Period,
         groupBy: List<String>,
     ): List<UsageAggregate> {
-        val columns = groupBy.map { GROUP_BY_COLUMNS[it] ?: throw IllegalArgumentException("Unsupported groupBy field: $it") }
+        val columns = groupBy.map(::columnFor)
         val selectList = (columns + AGGREGATE_SELECTS).joinToString(", ")
         val groupByClause = if (columns.isEmpty()) "" else "GROUP BY " + columns.joinToString(", ")
         val sql =
@@ -74,23 +80,33 @@ class JdbcUsageRepository(
                 stmt.executeQuery().use { rs ->
                     val results = mutableListOf<UsageAggregate>()
                     while (rs.next()) {
-                        val groupKey = groupBy.associateWith { field -> rs.getString(GROUP_BY_COLUMNS.getValue(field)) }
-                        val inputTokens = rs.getLong("sum_input_tokens")
-                        val outputTokens = rs.getLong("sum_output_tokens")
-                        val requestCount = rs.getLong("request_count")
-                        val currency = rs.getString("any_currency") ?: "USD"
-                        results +=
-                            UsageAggregate(
-                                groupKey = groupKey,
-                                requestCount = requestCount,
-                                totalUsage = Usage.of(TokenCount(inputTokens.toInt()), TokenCount(outputTokens.toInt())),
-                                totalCost = Cost(Money(rs.getBigDecimal("sum_cost") ?: BigDecimal.ZERO, currency)),
-                            )
+                        results += toAggregate(rs, groupBy)
                     }
                     return results
                 }
             }
         }
+    }
+
+    private fun columnFor(field: String): String =
+        GROUP_BY_COLUMNS[field] ?: throw IllegalArgumentException("Unsupported groupBy field: $field")
+
+    private fun toAggregate(
+        rs: ResultSet,
+        groupBy: List<String>,
+    ): UsageAggregate {
+        val groupKey = groupBy.associateWith { field -> rs.getString(GROUP_BY_COLUMNS.getValue(field)) }
+        val inputTokens = rs.getLong("sum_input_tokens")
+        val outputTokens = rs.getLong("sum_output_tokens")
+        val currency = rs.getString("any_currency") ?: "USD"
+        val totalUsage = Usage.of(TokenCount(inputTokens.toInt()), TokenCount(outputTokens.toInt()))
+        val totalCost = Cost(Money(rs.getBigDecimal("sum_cost") ?: BigDecimal.ZERO, currency))
+        return UsageAggregate(
+            groupKey = groupKey,
+            requestCount = rs.getLong("request_count"),
+            totalUsage = totalUsage,
+            totalCost = totalCost,
+        )
     }
 
     private companion object {

@@ -2,11 +2,13 @@ package apap.infrastructure.jdbc
 
 import apap.domain.event.DomainEvent
 import apap.domain.model.AggregateSnapshot
+import apap.domain.port.Clock
 import apap.domain.port.EventStoreRepository
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.postgresql.util.PSQLException
+import java.sql.Connection
+import java.sql.ResultSet
 import java.sql.Timestamp
-import java.time.Instant
 import javax.sql.DataSource
 import kotlin.reflect.KClass
 
@@ -34,8 +36,12 @@ class EventStreamConcurrencyException(
  */
 class JdbcEventStoreRepository(
     private val dataSource: DataSource,
+    private val clock: Clock,
     private val objectMapper: ObjectMapper = JdbcSupport.objectMapper,
 ) : EventStoreRepository {
+    // NestedBlockDepth: try/commit/rollback around prepareStatement.use is inherent to raw JDBC.
+    // TooGenericExceptionCaught: any failure, not only PSQLException, must trigger conn.rollback().
+    @Suppress("NestedBlockDepth", "TooGenericExceptionCaught")
     override fun append(
         streamId: String,
         events: List<DomainEvent>,
@@ -46,21 +52,7 @@ class JdbcEventStoreRepository(
             conn.autoCommit = false
             try {
                 events.forEachIndexed { offset, event ->
-                    val version = expectedVersion + offset + 1
-                    conn.prepareStatement(
-                        """
-                        INSERT INTO event_store (stream_id, version, event_type, payload, occurred_at, trace_id)
-                        VALUES (?, ?, ?, ?::jsonb, ?, ?)
-                        """.trimIndent(),
-                    ).use { stmt ->
-                        stmt.setString(1, streamId)
-                        stmt.setLong(2, version)
-                        stmt.setString(3, event::class.simpleName)
-                        stmt.setString(4, objectMapper.writeValueAsString(event))
-                        stmt.setTimestamp(5, Timestamp.from(event.meta.occurredAt))
-                        stmt.setString(6, event.meta.traceId)
-                        stmt.executeUpdate()
-                    }
+                    insertEvent(conn, streamId, expectedVersion + offset + 1, event)
                 }
                 conn.commit()
             } catch (e: PSQLException) {
@@ -76,26 +68,52 @@ class JdbcEventStoreRepository(
         }
     }
 
+    @Suppress("MagicNumber") // JDBC positional parameter indices, not meaningful as named constants.
+    private fun insertEvent(
+        conn: Connection,
+        streamId: String,
+        version: Long,
+        event: DomainEvent,
+    ) {
+        conn
+            .prepareStatement(
+                """
+                INSERT INTO event_store (stream_id, version, event_type, payload, occurred_at, trace_id)
+                VALUES (?, ?, ?, ?::jsonb, ?, ?)
+                """.trimIndent(),
+            ).use { stmt ->
+                stmt.setString(1, streamId)
+                stmt.setLong(2, version)
+                stmt.setString(3, event::class.simpleName)
+                stmt.setString(4, objectMapper.writeValueAsString(event))
+                stmt.setTimestamp(5, Timestamp.from(event.meta.occurredAt))
+                stmt.setString(6, event.meta.traceId)
+                stmt.executeUpdate()
+            }
+    }
+
     private fun isUniqueViolation(e: PSQLException): Boolean = e.sqlState == POSTGRES_UNIQUE_VIOLATION_SQLSTATE
 
+    @Suppress("NestedBlockDepth") // connection/statement/resultset/while is inherent to raw JDBC row iteration.
     override fun read(
         streamId: String,
         fromVersion: Long,
     ): List<DomainEvent> {
         dataSource.connection.use { conn ->
-            conn.prepareStatement(
-                "SELECT event_type, payload FROM event_store WHERE stream_id = ? AND version >= ? ORDER BY version ASC",
-            ).use { stmt ->
-                stmt.setString(1, streamId)
-                stmt.setLong(2, fromVersion.coerceAtLeast(1))
-                stmt.executeQuery().use { rs ->
-                    val events = mutableListOf<DomainEvent>()
-                    while (rs.next()) {
-                        events += deserializeEvent(rs.getString("event_type"), rs.getString("payload"))
+            conn
+                .prepareStatement(
+                    "SELECT event_type, payload FROM event_store WHERE stream_id = ? AND version >= ? ORDER BY version ASC",
+                ).use { stmt ->
+                    stmt.setString(1, streamId)
+                    stmt.setLong(2, fromVersion.coerceAtLeast(1))
+                    stmt.executeQuery().use { rs ->
+                        val events = mutableListOf<DomainEvent>()
+                        while (rs.next()) {
+                            events += deserializeEvent(rs.getString("event_type"), rs.getString("payload"))
+                        }
+                        return events
                     }
-                    return events
                 }
-            }
         }
     }
 
@@ -108,6 +126,7 @@ class JdbcEventStoreRepository(
         return objectMapper.readValue(payload, eventClass)
     }
 
+    @Suppress("NestedBlockDepth") // connection/statement/resultset is inherent to raw JDBC.
     override fun latestVersion(streamId: String): Long {
         dataSource.connection.use { conn ->
             conn.prepareStatement("SELECT MAX(version) FROM event_store WHERE stream_id = ?").use { stmt ->
@@ -119,47 +138,59 @@ class JdbcEventStoreRepository(
         }
     }
 
+    @Suppress("MagicNumber") // JDBC positional parameter indices, not meaningful as named constants.
     override fun <T : Any> saveSnapshot(snapshot: AggregateSnapshot<T>) {
         dataSource.connection.use { conn ->
-            conn.prepareStatement(
-                """
-                INSERT INTO event_store_snapshot (stream_id, version, state_type, state, saved_at)
-                VALUES (?, ?, ?, ?::jsonb, ?)
-                ON CONFLICT (stream_id) DO UPDATE SET
-                    version = EXCLUDED.version, state_type = EXCLUDED.state_type,
-                    state = EXCLUDED.state, saved_at = EXCLUDED.saved_at
-                """.trimIndent(),
-            ).use { stmt ->
-                stmt.setString(1, snapshot.streamId)
-                stmt.setLong(2, snapshot.version)
-                stmt.setString(3, snapshot.state::class.java.name)
-                stmt.setString(4, objectMapper.writeValueAsString(snapshot.state))
-                stmt.setTimestamp(5, Timestamp.from(Instant.now()))
-                stmt.executeUpdate()
-            }
+            conn
+                .prepareStatement(
+                    """
+                    INSERT INTO event_store_snapshot (stream_id, version, state_type, state, saved_at)
+                    VALUES (?, ?, ?, ?::jsonb, ?)
+                    ON CONFLICT (stream_id) DO UPDATE SET
+                        version = EXCLUDED.version, state_type = EXCLUDED.state_type,
+                        state = EXCLUDED.state, saved_at = EXCLUDED.saved_at
+                    """.trimIndent(),
+                ).use { stmt ->
+                    stmt.setString(1, snapshot.streamId)
+                    stmt.setLong(2, snapshot.version)
+                    stmt.setString(3, snapshot.state::class.java.name)
+                    stmt.setString(4, objectMapper.writeValueAsString(snapshot.state))
+                    stmt.setTimestamp(5, Timestamp.from(clock.now()))
+                    stmt.executeUpdate()
+                }
         }
     }
 
+    @Suppress("NestedBlockDepth") // connection/statement/resultset is inherent to raw JDBC.
     override fun <T : Any> loadSnapshot(
         streamId: String,
         stateType: KClass<T>,
     ): AggregateSnapshot<T>? {
         dataSource.connection.use { conn ->
-            conn.prepareStatement(
-                "SELECT version, state_type, state FROM event_store_snapshot WHERE stream_id = ?",
-            ).use { stmt ->
-                stmt.setString(1, streamId)
-                stmt.executeQuery().use { rs ->
-                    if (!rs.next()) return null
-                    val storedType = rs.getString("state_type")
-                    require(storedType == stateType.java.name) {
-                        "Stored snapshot for stream $streamId has state_type=$storedType, requested ${stateType.java.name}"
+            conn
+                .prepareStatement(
+                    "SELECT version, state_type, state FROM event_store_snapshot WHERE stream_id = ?",
+                ).use { stmt ->
+                    stmt.setString(1, streamId)
+                    stmt.executeQuery().use { rs ->
+                        if (!rs.next()) return null
+                        return toSnapshot(rs, streamId, stateType)
                     }
-                    val state = objectMapper.readValue(rs.getString("state"), stateType.java)
-                    return AggregateSnapshot(streamId, rs.getLong("version"), state)
                 }
-            }
         }
+    }
+
+    private fun <T : Any> toSnapshot(
+        rs: ResultSet,
+        streamId: String,
+        stateType: KClass<T>,
+    ): AggregateSnapshot<T> {
+        val storedType = rs.getString("state_type")
+        require(storedType == stateType.java.name) {
+            "Stored snapshot for stream $streamId has state_type=$storedType, requested ${stateType.java.name}"
+        }
+        val state = objectMapper.readValue(rs.getString("state"), stateType.java)
+        return AggregateSnapshot(streamId, rs.getLong("version"), state)
     }
 
     private companion object {

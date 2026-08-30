@@ -25,44 +25,47 @@ class JdbcAuditRepository(
     private val dataSource: DataSource,
     private val objectMapper: ObjectMapper = JdbcSupport.objectMapper,
 ) : AuditRepository {
+    @Suppress("MagicNumber") // JDBC positional parameter indices, not meaningful as named constants.
     override fun append(record: AuditRecord) {
         dataSource.connection.use { conn ->
-            conn.prepareStatement(
-                """
-                INSERT INTO audit_record (
-                    audit_id, request_id, trace_id, tenant_id, principal, capability_id, model_alias,
-                    provider_id, model_id, routing_decision, request_digest, response_digest, request_body,
-                    status, error_code, usage, cost, duration_ms, retries, fallbacks, conversation_id, occurred_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?)
-                """.trimIndent(),
-            ).use { stmt ->
-                stmt.setString(1, record.auditId)
-                stmt.setString(2, record.requestId.value)
-                stmt.setString(3, record.traceId)
-                stmt.setString(4, record.tenantId.value)
-                stmt.setString(5, record.principal)
-                stmt.setString(6, record.capabilityId)
-                stmt.setString(7, record.modelAlias)
-                stmt.setString(8, record.providerId?.value)
-                stmt.setString(9, record.modelId?.value)
-                stmt.setString(10, objectMapper.writeValueAsString(record.routingDecision))
-                stmt.setString(11, record.requestDigest)
-                stmt.setString(12, record.responseDigest)
-                stmt.setString(13, record.requestBody)
-                stmt.setString(14, record.status)
-                stmt.setString(15, record.errorCode?.name)
-                stmt.setString(16, objectMapper.writeValueAsString(record.usage))
-                stmt.setString(17, objectMapper.writeValueAsString(record.cost))
-                stmt.setLong(18, record.durationMs)
-                stmt.setInt(19, record.retries)
-                stmt.setInt(20, record.fallbacks)
-                stmt.setString(21, record.conversationId?.value)
-                stmt.setTimestamp(22, Timestamp.from(record.occurredAt))
-                stmt.executeUpdate()
-            }
+            conn
+                .prepareStatement(
+                    """
+                    INSERT INTO audit_record (
+                        audit_id, request_id, trace_id, tenant_id, principal, capability_id, model_alias,
+                        provider_id, model_id, routing_decision, request_digest, response_digest, request_body,
+                        status, error_code, usage, cost, duration_ms, retries, fallbacks, conversation_id, occurred_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?)
+                    """.trimIndent(),
+                ).use { stmt ->
+                    stmt.setString(1, record.auditId)
+                    stmt.setString(2, record.requestId.value)
+                    stmt.setString(3, record.traceId)
+                    stmt.setString(4, record.tenantId.value)
+                    stmt.setString(5, record.principal)
+                    stmt.setString(6, record.capabilityId)
+                    stmt.setString(7, record.modelAlias)
+                    stmt.setString(8, record.providerId?.value)
+                    stmt.setString(9, record.modelId?.value)
+                    stmt.setString(10, objectMapper.writeValueAsString(record.routingDecision))
+                    stmt.setString(11, record.requestDigest)
+                    stmt.setString(12, record.responseDigest)
+                    stmt.setString(13, record.requestBody)
+                    stmt.setString(14, record.status)
+                    stmt.setString(15, record.errorCode?.name)
+                    stmt.setString(16, objectMapper.writeValueAsString(record.usage))
+                    stmt.setString(17, objectMapper.writeValueAsString(record.cost))
+                    stmt.setLong(18, record.durationMs)
+                    stmt.setInt(19, record.retries)
+                    stmt.setInt(20, record.fallbacks)
+                    stmt.setString(21, record.conversationId?.value)
+                    stmt.setTimestamp(22, Timestamp.from(record.occurredAt))
+                    stmt.executeUpdate()
+                }
         }
     }
 
+    @Suppress("NestedBlockDepth") // connection/statement/resultset/while is inherent to raw JDBC.
     override fun search(criteria: AuditSearchCriteria): List<AuditRecord> {
         val (whereClause, params) = buildWhere(criteria)
         val sql = "SELECT * FROM audit_record $whereClause ORDER BY occurred_at DESC"
