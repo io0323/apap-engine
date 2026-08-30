@@ -12,8 +12,6 @@ import apap.domain.port.IdGenerator
 import apap.domain.port.MetricsRecorder
 import kotlinx.coroutines.delay
 import java.time.Duration
-import java.time.Instant
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.ceil
 import kotlin.math.min
 
@@ -41,8 +39,14 @@ data class RateLimiterConfig(
 }
 
 /**
- * ADR-0001: Rate Limiterのカウンタ実装はapap-cacheの責務、RDBMSに置かない。単一プロセス埋込利用
- * では本in-memory実装が既定（分散KVS実装はP8想定）。
+ * ADR-0001: Rate Limiterのカウンタ実装はapap-cacheの責務、RDBMSに置かない。[store]の既定は
+ * [InMemoryRateLimitCounterStore]（単一プロセス埋込利用ではこれで十分）、マルチノード運用時は
+ * 分散KVS実装（`modules/apap-infrastructure-distributed`）に差し替える。
+ *
+ * [store]へのfind→更新→saveは[tryAcquire]/[estimateWaitMillis]内で`@Synchronized`により
+ * プロセス内アトミック性を保つ（複数ノードにまたがる真のアトミック性は保証しない——`acquire()`の
+ * 既存コメントの通りbounded waitは元々「保証ではなくベストエフォート」という前提であり、
+ * 分散Store差替はこの前提を変えない。要件充足に影響しない実装判断のためADR化せずここに根拠を記す）。
  */
 class TokenBucketRateLimiter(
     private val clock: Clock,
@@ -54,16 +58,8 @@ class TokenBucketRateLimiter(
     // 経由ではなくMetricsRecorderへ直接記録する（要件充足に影響しない実装判断のためADR化せず
     // ここに根拠を記す）。宿主が未注入ならnullのまま記録をスキップする。
     private val metricsRecorder: MetricsRecorder? = null,
+    private val store: RateLimitCounterStore = InMemoryRateLimitCounterStore(),
 ) : RateLimiter {
-    private data class Bucket(
-        var tokens: Double,
-        var lastRefillAt: Instant,
-        val capacity: Int,
-        val refillPerSecond: Double,
-    )
-
-    private val buckets = ConcurrentHashMap<RateLimitScope, Bucket>()
-
     override fun configure(
         scope: RateLimitScope,
         capacity: Int,
@@ -71,7 +67,7 @@ class TokenBucketRateLimiter(
     ) {
         require(capacity > 0) { "capacity must be positive: $capacity" }
         require(refillPerSecond > 0.0) { "refillPerSecond must be positive: $refillPerSecond" }
-        buckets[scope] = Bucket(capacity.toDouble(), clock.now(), capacity, refillPerSecond)
+        store.save(scope, TokenBucketState(capacity.toDouble(), clock.now(), capacity, refillPerSecond))
     }
 
     @Synchronized
@@ -80,20 +76,19 @@ class TokenBucketRateLimiter(
         cost: Int,
     ): Boolean {
         require(cost > 0) { "cost must be positive: $cost" }
-        val bucket =
-            buckets.computeIfAbsent(scope) {
-                Bucket(
-                    config.defaultCapacity.toDouble(),
-                    clock.now(),
-                    config.defaultCapacity,
-                    config.defaultRefillPerSecond,
-                )
-            }
-        refill(bucket)
+        val bucket = refill(currentBucket(scope))
         if (bucket.tokens < cost) return false
-        bucket.tokens -= cost
+        store.save(scope, bucket.copy(tokens = bucket.tokens - cost))
         return true
     }
+
+    private fun currentBucket(scope: RateLimitScope): TokenBucketState =
+        store.find(scope) ?: TokenBucketState(
+            config.defaultCapacity.toDouble(),
+            clock.now(),
+            config.defaultCapacity,
+            config.defaultRefillPerSecond,
+        )
 
     @Suppress("ReturnCount")
     override suspend fun acquire(
@@ -136,27 +131,20 @@ class TokenBucketRateLimiter(
         scope: RateLimitScope,
         cost: Int,
     ): Long {
-        val bucket =
-            buckets.computeIfAbsent(scope) {
-                Bucket(
-                    config.defaultCapacity.toDouble(),
-                    clock.now(),
-                    config.defaultCapacity,
-                    config.defaultRefillPerSecond,
-                )
-            }
-        refill(bucket)
+        val bucket = refill(currentBucket(scope))
+        store.save(scope, bucket)
         val deficit = cost - bucket.tokens
         if (deficit <= 0.0) return 0L
         return ceil(deficit / bucket.refillPerSecond * MILLIS_PER_SECOND).toLong()
     }
 
-    private fun refill(bucket: Bucket) {
+    /** 純関数として新しい[TokenBucketState]を返す（永続化は呼び出し側の責務）。 */
+    private fun refill(bucket: TokenBucketState): TokenBucketState {
         val now = clock.now()
         val elapsedSeconds = Duration.between(bucket.lastRefillAt, now).toMillis() / MILLIS_PER_SECOND
-        if (elapsedSeconds <= 0.0) return
-        bucket.tokens = min(bucket.capacity.toDouble(), bucket.tokens + elapsedSeconds * bucket.refillPerSecond)
-        bucket.lastRefillAt = now
+        if (elapsedSeconds <= 0.0) return bucket
+        val refilledTokens = min(bucket.capacity.toDouble(), bucket.tokens + elapsedSeconds * bucket.refillPerSecond)
+        return bucket.copy(tokens = refilledTokens, lastRefillAt = now)
     }
 
     private fun rateLimitExceededEvent(
