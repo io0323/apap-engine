@@ -22,10 +22,12 @@ class PluginSignatureVerifier(
     ): Boolean {
         val signatureBytes = runCatching { Base64.getDecoder().decode(base64Signature) }.getOrNull() ?: return false
         return runCatching {
-            Signature.getInstance(algorithm).apply {
-                initVerify(trustedPublicKey)
-                update(artifactBytes)
-            }.verify(signatureBytes)
+            Signature
+                .getInstance(algorithm)
+                .apply {
+                    initVerify(trustedPublicKey)
+                    update(artifactBytes)
+                }.verify(signatureBytes)
         }.getOrDefault(false)
     }
 

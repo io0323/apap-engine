@@ -53,10 +53,12 @@ class PluginManagerTest {
 
     private fun sign(bytes: ByteArray): String {
         val signature =
-            Signature.getInstance("SHA256withRSA").apply {
-                initSign(privateKey)
-                update(bytes)
-            }.sign()
+            Signature
+                .getInstance("SHA256withRSA")
+                .apply {
+                    initSign(privateKey)
+                    update(bytes)
+                }.sign()
         return Base64.getEncoder().encodeToString(signature)
     }
 

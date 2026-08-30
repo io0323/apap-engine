@@ -76,12 +76,17 @@ class PluginManager(
      */
     fun scan(pluginsDir: Path): List<PluginRegistration> {
         if (!Files.isDirectory(pluginsDir)) return emptyList()
-        return Files.list(pluginsDir).use { stream ->
-            stream.filter { it.isDirectory() }.sorted().toList()
-        }.map(::loadOne)
+        return Files
+            .list(pluginsDir)
+            .use { stream ->
+                stream.filter { it.isDirectory() }.sorted().toList()
+            }.map(::loadOne)
     }
 
-    fun getAdapter(pluginId: String): ProviderAdapter = loaded[pluginId]?.adapter ?: throw PluginNotFoundException(pluginId)
+    fun getAdapter(pluginId: String): ProviderAdapter {
+        val plugin = loaded[pluginId] ?: throw PluginNotFoundException(pluginId)
+        return plugin.adapter
+    }
 
     fun registration(pluginId: String): PluginRegistration? = loaded[pluginId]?.registration ?: quarantined[pluginId]
 
@@ -102,6 +107,7 @@ class PluginManager(
         )
     }
 
+    @Suppress("ReturnCount") // guard-clause style (scan/verify/quarantine chain from 10_アクティビティ図.md).
     private fun loadOne(pluginDir: Path): PluginRegistration {
         val pluginLabel = pluginDir.name
         val manifest =
@@ -111,7 +117,9 @@ class PluginManager(
                 }
         val jarBytes =
             runCatching { Files.readAllBytes(pluginDir.resolve(JAR_FILE_NAME)) }
-                .getOrElse { e -> return quarantine(manifest.pluginId, manifest, "plugin.jar unreadable: ${e.message}") }
+                .getOrElse { e ->
+                    return quarantine(manifest.pluginId, manifest, "plugin.jar unreadable: ${e.message}")
+                }
 
         if (!manifest.spiVersionRange.contains(currentSpiVersion)) {
             return quarantine(
