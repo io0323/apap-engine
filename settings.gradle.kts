@@ -36,6 +36,8 @@ include(
     "modules:apap-cost",
     "modules:apap-observability",
     "modules:apap-infrastructure",
+    "modules:apap-infrastructure-jdbc",
+    "modules:apap-infrastructure-distributed",
     "modules:apap-runtime",
     "modules:apap-testkit",
     "gateway:apap-gateway",

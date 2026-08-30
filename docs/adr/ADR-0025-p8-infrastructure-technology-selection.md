@@ -59,10 +59,32 @@ DIコンテナ・アプリフレームワークを持ち込まない素のクラ
 CLAUDE.md「ADR化するか否かの判断基準」によりこれ以上のADR細分化はせず、該当実装クラスのKDocに
 根拠を記す。
 
+### 4. モジュール分割: JDBC/分散KVS実装をapap-runtimeの必須依存から外す
+
+`modules/apap-runtime/build.gradle.kts`は既存の`modules/apap-infrastructure`（EventBus実装の置き場）
+へ`implementation`依存している。`apap-runtime`は埋込用ファサードであり、`prompt-engine`をはじめとする
+全ての埋込先が`apap-runtime`を依存するだけでFlyway/PostgreSQL JDBCドライバ/Lettuceを
+無条件にtransitive依存することになってしまう。ADR-0001が「単一プロセス・埋込利用ではIn-Memory実装
+（既定）で十分、分散KVS/JDBC実装はマルチノード運用時に切替える」としている決定と矛盾する。
+
+上記1〜2で選定したJDBC/分散KVS実装は、既存の`modules/apap-infrastructure`には置かず、
+新規モジュール`modules/apap-infrastructure-jdbc`・`modules/apap-infrastructure-distributed`
+に分離する。`apap-runtime`はこの2モジュールに一切依存しない。既存の`modules/apap-infrastructure`
+（EventBus、および本ADRで新規追加するIn-Memory Repository/SecretStore実装）は重量級の外部依存を
+持たないため、`apap-runtime`の既存依存はそのまま維持する。
+
+分散/JDBC実装を使いたい埋込ホストは、自身のビルドで`apap-infrastructure-jdbc`/
+`apap-infrastructure-distributed`を明示的に依存追加し、そこで構築した具体的な実装インスタンスを
+`ExecutionEngineComposer`等の既存のPort差替コンストラクタ引数（`cacheStore`・`cbStore`等、
+既にIn-Memory既定値を持つ設計になっている）へ渡す。コア側のコード変更は不要。
+
 ## 影響（Consequences）
 
 - **制約**: JDBC実装はPostgreSQL固有のSQL構文（`JSON`型、`ON CONFLICT`等）を使ってよいが、
   Portインターフェース（`apap-domain`）自体はPostgreSQL固有の型を露出しない。
+  `apap-infrastructure-jdbc`/`apap-infrastructure-distributed`に`apap-runtime`から
+  `implementation`依存を追加してはならない（上記4参照）。新規に重量級の外部ライブラリ依存を
+  追加する実装は、既存の`apap-infrastructure`ではなく用途に応じてこの2モジュールいずれかへ置くこと。
 - **見直す条件**: (1) 実際の埋込先prompt-engine側がPostgreSQL/Redis以外へ移行した場合、
   (2) apap-runtimeを別ホストへ埋め込む計画が具体化し、そのホストが異なるRDBMS/KVSを要求する場合。
   Port経由の抽象化を維持しているため、見直しは実装追加で対応可能（既存実装の破棄は不要）。
