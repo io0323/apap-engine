@@ -92,24 +92,43 @@ APAPは、AIを利用する全システム（AI Agent / Workflow Engine / Backen
 docker compose -f tools/docker-compose.yaml up -d   # ローカル依存
 ```
 
-## トラブルシューティング（Gradleビルドキャッシュ）
+## トラブルシューティング（`build-logic`のビルド不安定性）
 
-`build-logic`（Convention Plugin群のincludeBuild）を編集した直後や、依存関係のバージョンを変更した直後に、以下のようなエラーで `./gradlew build` が失敗することがある。
+`./gradlew build` が `:build-logic:compilePluginsBlocks` や `:build-logic:compileKotlin` で、以下のように再現性の乏しいエラーで断続的に失敗することがある。
 
-- `:build-logic:compilePluginsBlocks` が `Unable to parse script-resolver-environment argument implicit-imports=...` で失敗する
-- `:build-logic:compilePluginsBlocks` が `Source file or directory not found: .../kotlin-dsl-external-plugin-spec-builders/.../PluginSpecBuilders.kt` で失敗する
-- `:build-logic:compileKotlin` が、存在しないはずの `Unresolved reference` を大量に出す
+- `Unable to parse script-resolver-environment argument implicit-imports=...`
+- `Source file or directory not found: .../kotlin-dsl-external-plugin-spec-builders/.../PluginSpecBuilders.kt`
+- `Cannot access input property 'sources' ... Failed to normalize content of ...`
+- `Unresolved reference 'jvmToolchain'` 等、存在しないはずの `Unresolved reference` を大量に出す
+- `Unresolved reference 'ApplicationPluginConvention'` / `'DefaultArtifactPublicationSet'`
 
-これらは実装のバグではなく、Gradleのローカルビルドキャッシュ（`~/.gradle/caches/*/kotlin-dsl` 配下）が `build-logic` のprecompiled script plugin生成物について古い/矛盾した状態を返す既知の問題（Gradle 9.4.1で確認済み）。**同じ変更を2回試すより先に**、以下を試すこと。
+**これらはmacOSのファイル監視やGradleキャッシュ破損の問題ではない（ADR-0024で反証済み）。** 実際の原因は次の3つの複合で、状況によってどの症状が出るかが変わる。
+
+1. **（最頻出）IDE（`redhat.java`拡張の内蔵Gradleインポート）とのビルド出力競合**: IDEがこのプロジェクトディレクトリを対象にバックグラウンドでGradleビルドを継続的に実行しており、CLIビルドと同じ `build-logic/build/` 等の生成物ディレクトリへ同時に書き込む。`GRADLE_USER_HOME` の分離ではこれを防げない（キャッシュ・デーモンのロックは分離されるが、`<module>/build/` はプロジェクトツリー内で共有されるため）。`.vscode/settings.json` での設定変更やIDEウィンドウのReloadでも、既にIDEにインポート済みのプロジェクトには効かないことを確認している。**確実な回避策は、git worktreeでIDEが監視していない別ディレクトリにチェックアウトしてそこでビルドすること**（下記コマンド参照）。
+2. **JDK21未導入**: `build-logic/src/main/kotlin/apap.kotlin-common.gradle.kts` の `jvmToolchain(21)` は各モジュールには自動適用されるが、`build-logic` 自身のスクリプトコンパイルはGradleデーモンを起動したJVMでそのまま動くため対象外。JDK21を導入し `JAVA_HOME` をそちらに向けること（`./tools/scripts/verify.sh` は冒頭でJDK21を検証し、なければ即エラーにする）。
+3. **Gradle 9.4.1自身のkotlin-dslアクセサ生成の自己矛盾**: `application` コアプラグイン適用時、Gradle自身が既に整理対象にしている内部API（`ApplicationPluginConvention`・`DefaultArtifactPublicationSet`）を参照するアクセサコードを生成してしまう既知不具合。`gradle.properties` の `systemProp.org.gradle.kotlin.dsl.precompiled.accessors.strict=false` で回避済み（追加設定は不要）。
 
 ```bash
-./gradlew --stop
-rm -rf ~/.gradle/caches/*/kotlin-dsl
-./gradlew build --no-build-cache   # まずキャッシュ無効化で成功することを確認
-./gradlew build                    # 通常設定（キャッシュ有効）で再度成功すればOK
+# IDEを開いたまま確実にビルドしたい場合
+git worktree add --detach /tmp/apap-engine-verify <branch-or-commit>
+cd /tmp/apap-engine-verify
+JAVA_HOME=$(/usr/libexec/java_home -v 21) GRADLE_USER_HOME=~/.gradle-apap ./tools/scripts/verify.sh
 ```
 
-`gradle.properties` の `org.gradle.caching=true` はこの問題への対処として無効化しない（通常時は問題なく動作するため）。上記の手順で解消しない場合のみ、原因調査を優先し、キャッシュ無効化を恒久対応にしない。
+詳細な調査経緯は `docs/adr/ADR-0024-build-logic-toolchain-instability-root-cause.md` を参照。
+
+## トラブルシューティング（IDE（Java Language Server）との競合）
+
+症状: `build-logic` のビルドが原因不明の`NoSuchFileException`/`FileNotFoundException`系エラーで断続的に失敗する（上記参照）。
+
+原因: **ロック待ちでの停止ではない。** IDEのGradle統合（`redhat.java` 拡張が内蔵するJDT LS / Gradle Buildship）が、このプロジェクトディレクトリを対象にバックグラウンドビルドを継続的に実行し、CLIビルドと同じビルド出力ディレクトリ（`<module>/build/`）へ同時に書き込むことで、一方が生成したファイルをもう一方が消す/上書きする（ADR-0024）。`GRADLE_USER_HOME` の分離はキャッシュ・デーモンのロック競合は防ぐが、プロジェクトツリー内で共有されるビルド出力ディレクトリの競合は防げない。
+
+対処:
+
+- 確実に競合を避けたい場合は、git worktreeでIDEが監視していない別ディレクトリにチェックアウトしてビルドする（上記コマンド参照）。
+- 孤児プロセスは `pkill -f "org.eclipse.jdt.ls"` で終了できる（ただしIDE拡張が監視プロセスとして再起動させることがあり、確実な停止策ではない）。
+- `.vscode/settings.json` での `gradle.autoDetect` / `java.import.gradle.enabled` の変更、およびIDEウィンドウのReloadは、既にIDEにインポート済みのプロジェクトに対しては効果がないことを確認済み（本リポジトリではこれらの設定は追加していない）。
+- **IDEの終了を利用者に依頼しない。共存できる問題である。**
 
 ## トラブルシューティング（Konsistの空スコープ）
 
