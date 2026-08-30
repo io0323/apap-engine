@@ -56,8 +56,9 @@ class ExternalSecretStore(
             .header(headerName, headerValue)
     }
 
-    private fun send(request: HttpRequest): HttpResponse<String> =
-        httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+    private fun send(request: HttpRequest): HttpResponse<String> {
+        return httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+    }
 
     private fun requireSuccess(
         response: HttpResponse<String>,

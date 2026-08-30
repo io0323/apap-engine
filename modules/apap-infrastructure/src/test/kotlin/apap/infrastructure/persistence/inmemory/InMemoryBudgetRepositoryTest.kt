@@ -44,6 +44,12 @@ class InMemoryBudgetRepositoryTest {
         repo.save(budget("b1", tenantId))
         repo.save(budget("b1", tenantId).consume(Money(BigDecimal("50.00"), "USD")))
 
-        assertTrue(repo.findByTenant(tenantId).single().consumed.amount.compareTo(BigDecimal("50.00")) == 0)
+        val consumedAmount =
+            repo
+                .findByTenant(tenantId)
+                .single()
+                .consumed
+                .amount
+        assertTrue(consumedAmount.compareTo(BigDecimal("50.00")) == 0)
     }
 }

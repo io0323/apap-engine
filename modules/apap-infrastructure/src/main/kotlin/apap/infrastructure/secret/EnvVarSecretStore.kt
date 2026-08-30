@@ -18,8 +18,9 @@ class SecretNotFoundException(
 class EnvVarSecretStore(
     private val env: Map<String, String> = System.getenv(),
 ) : SecretStore {
-    override fun resolve(ref: CredentialRef): CharArray =
-        (env[ref.secretRef] ?: throw SecretNotFoundException(ref.secretRef)).toCharArray()
+    override fun resolve(ref: CredentialRef): CharArray {
+        return (env[ref.secretRef] ?: throw SecretNotFoundException(ref.secretRef)).toCharArray()
+    }
 
     override fun store(
         ref: CredentialRef,
