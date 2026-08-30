@@ -36,16 +36,15 @@ class JdbcUsageRepositoryTest {
                     "INSERT INTO plugin (plugin_id, name, version, spi_version, signature, status) " +
                         "VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAB', 'p', '1.0.0', '1.0', 'sig', 'LOADED')",
                 ).use { it.executeUpdate() }
-            conn
-                .prepareStatement(
-                    "INSERT INTO provider (provider_id, name, adapter_plugin_id, spi_version, auth_type, priority, " +
-                        "status, rate_limit_rpm, rate_limit_tpm, rate_limit_concurrent, regions, created_at, updated_at) " +
-                        "VALUES (?, 'test-provider', '01ARZ3NDEKTSV4RRFFQ69G5FAB', '1.0', 'api_key', 50, 'ACTIVE', " +
-                        "60, 100000, 10, '[]', now(), now())",
-                ).use { stmt ->
-                    stmt.setString(1, providerId.value)
-                    stmt.executeUpdate()
-                }
+            val insertProvider =
+                "INSERT INTO provider (provider_id, name, adapter_plugin_id, spi_version, auth_type, priority, " +
+                    "status, rate_limit_rpm, rate_limit_tpm, rate_limit_concurrent, regions, created_at, updated_at) " +
+                    "VALUES (?, 'test-provider', '01ARZ3NDEKTSV4RRFFQ69G5FAB', '1.0', 'api_key', 50, 'ACTIVE', " +
+                    "60, 100000, 10, '[]', now(), now())"
+            conn.prepareStatement(insertProvider).use { stmt ->
+                stmt.setString(1, providerId.value)
+                stmt.executeUpdate()
+            }
             conn
                 .prepareStatement(
                     "INSERT INTO model (model_id, provider_id, model_name, version, context_window, " +

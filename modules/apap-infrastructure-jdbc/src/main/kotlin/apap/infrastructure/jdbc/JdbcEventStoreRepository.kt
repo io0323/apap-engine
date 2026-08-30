@@ -99,11 +99,13 @@ class JdbcEventStoreRepository(
         streamId: String,
         fromVersion: Long,
     ): List<DomainEvent> {
+        val sql =
+            "SELECT event_type, payload FROM event_store " +
+                "WHERE stream_id = ? AND version >= ? ORDER BY version ASC"
         dataSource.connection.use { conn ->
             conn
-                .prepareStatement(
-                    "SELECT event_type, payload FROM event_store WHERE stream_id = ? AND version >= ? ORDER BY version ASC",
-                ).use { stmt ->
+                .prepareStatement(sql)
+                .use { stmt ->
                     stmt.setString(1, streamId)
                     stmt.setLong(2, fromVersion.coerceAtLeast(1))
                     stmt.executeQuery().use { rs ->
