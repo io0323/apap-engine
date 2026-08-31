@@ -39,13 +39,19 @@ class ClockAndIdGeneratorDirectCallTest {
      * 許可する。リポジトリルートからの相対パスの完全一致で管理し、暗黙の除外は作らない。
      * 2026-08-30時点、apap-testkitの`InMemoryClock`/`InMemoryIdGenerator`はいずれも決定的な
      * フェイク実装であり実際にはこれらのAPIを呼ばない（許可リストへの追加不要）。
-     * 埋込ホスト向けの実Clock/IdGenerator実装が将来この対象に追加された場合はここに明記すること。
+     * P9（apap-runtime埋込ファサード）で追加した[apap.runtime.SystemClock]/
+     * [apap.runtime.UlidIdGenerator]は、`ApapEngineBuilder`の`clock`/`idGenerator`未指定時の
+     * 既定実装（実Clock/実乱数）であり、ここが許可すべき対象そのもの。
      */
     private val allowlist =
         setOf(
             // 実Provider AdapterのSLA適合性（実測レイテンシ）を検証するハーネス。
             // 偽Clockを注入すると実時間の計測にならず検証の意味が失われるため、直接呼び出しを許可する。
             "modules/apap-testkit/src/main/kotlin/apap/testkit/contract/AdapterContractTest.kt",
+            // apap-runtime埋込ファサードの既定Clock実装（未指定時のみ使用される）。
+            "modules/apap-runtime/src/main/kotlin/apap/runtime/SystemClock.kt",
+            // apap-runtime埋込ファサードの既定IdGenerator実装（未指定時のみ使用される）。
+            "modules/apap-runtime/src/main/kotlin/apap/runtime/UlidIdGenerator.kt",
         )
 
     @Test

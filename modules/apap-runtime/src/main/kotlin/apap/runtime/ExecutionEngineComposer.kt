@@ -66,7 +66,9 @@ import apap.execution.circuitbreaker.CircuitBreaker
 import apap.execution.circuitbreaker.CircuitBreakerConfig
 import apap.execution.estimation.TokenEstimator
 import apap.execution.fallback.FallbackEngine
+import apap.execution.retry.ExponentialBackoffJitterStrategy
 import apap.execution.retry.RetryConfig
+import apap.execution.retry.RetryStrategy
 import apap.execution.streaming.StreamingConfig
 import apap.execution.streaming.StreamingEngine
 import apap.execution.streaming.StreamingRequestExecutor
@@ -82,6 +84,10 @@ import apap.routing.CostEstimator
 import apap.routing.RealCostEstimator
 import apap.routing.RoutingCandidateCache
 import apap.routing.RoutingEngine
+import apap.routing.spi.LoadBalancer
+import apap.routing.spi.RoutingStrategy
+import apap.routing.spi.WeightedRoundRobinLoadBalancer
+import apap.routing.spi.WeightedScoreRoutingStrategy
 import io.opentelemetry.api.OpenTelemetry
 import io.opentelemetry.api.trace.Tracer
 
@@ -142,6 +148,11 @@ class ExecutionEngineComposer(
     },
     private val circuitBreakerConfig: CircuitBreakerConfig = CircuitBreakerConfig(),
     private val retryConfig: RetryConfig = RetryConfig(),
+    /** [ApapEngineBuilder]の`retryStrategy`差替点。既定は[AttemptExecutor]自身の既定と同じ。 */
+    private val retryStrategy: RetryStrategy = ExponentialBackoffJitterStrategy(retryConfig),
+    /** [ApapEngineBuilder]の`routingStrategy`差替点。既定は[RoutingEngine]自身の既定と同じ。 */
+    private val routingStrategy: RoutingStrategy = WeightedScoreRoutingStrategy(),
+    private val loadBalancer: LoadBalancer = WeightedRoundRobinLoadBalancer(),
     private val structuredOutputConfig: StructuredOutputConfig = StructuredOutputConfig(),
     private val rateLimiterConfig: RateLimiterConfig = RateLimiterConfig(),
     private val quotaManagerConfig: QuotaManagerConfig = QuotaManagerConfig(),
@@ -196,7 +207,7 @@ class ExecutionEngineComposer(
                 candidateCache,
                 clock,
             )
-        val routingEngine = RoutingEngine(candidateFactory, policyRepository)
+        val routingEngine = RoutingEngine(candidateFactory, policyRepository, routingStrategy, loadBalancer)
 
         val circuitBreaker = CircuitBreaker(cbStore, clock, eventPublisher, idGenerator, circuitBreakerConfig)
         val rateLimiter: RateLimiter =
@@ -265,6 +276,7 @@ class ExecutionEngineComposer(
                 eventPublisher,
                 idGenerator,
                 retryConfig,
+                retryStrategy,
                 tracer = tracer,
             )
         val fallbackEngine =

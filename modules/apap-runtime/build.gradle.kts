@@ -3,13 +3,18 @@ plugins {
 }
 
 dependencies {
-    implementation(project(":modules:apap-domain"))
+    // `api`（`implementation`ではなく）: ApapAdmin（ApapEngine.admin）がProvider/Model/ModelAlias/
+    // RoutingPolicyやRegisterProviderCommand/RegisterModelCommand等をメソッドシグネチャに直接使う。
+    // 埋込ホスト（prompt-engineがapap-runtimeのみに依存してApapAdminを呼ぶ想定、
+    // docs/integration/prompt-engine.md参照）がこれらの型へコンパイル時に到達できる必要があるため。
+    api(project(":modules:apap-domain"))
+    api(project(":modules:apap-provider"))
+    implementation(project(":modules:apap-api"))
     implementation(project(":modules:apap-application"))
     implementation(project(":modules:apap-execution"))
     implementation(project(":modules:apap-routing"))
     implementation(project(":modules:apap-prompt"))
     implementation(project(":modules:apap-context"))
-    implementation(project(":modules:apap-provider"))
     implementation(project(":modules:apap-plugin"))
     implementation(project(":modules:apap-cache"))
     implementation(project(":modules:apap-cost"))

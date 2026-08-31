@@ -62,6 +62,7 @@ class PluginManager(
 ) {
     private data class LoadedPlugin(
         val registration: PluginRegistration,
+        val manifest: PluginManifest,
         val classLoader: URLClassLoader,
         val adapter: ProviderAdapter,
     )
@@ -89,6 +90,12 @@ class PluginManager(
     }
 
     fun registration(pluginId: String): PluginRegistration? = loaded[pluginId]?.registration ?: quarantined[pluginId]
+
+    /** LOADEDなPluginのマニフェスト（[apap.provider.AdapterRegistry]のような橋渡し実装が使う）。 */
+    fun manifest(pluginId: String): PluginManifest? = loaded[pluginId]?.manifest
+
+    /** 現在LOADED状態のPlugin IDの一覧（`close()`時の一括unload等、host側の走査用）。 */
+    fun loadedPluginIds(): Set<String> = loaded.keys.toSet()
 
     /**
      * drain（新規解決の停止）→`adapter.shutdown()`→UNLOADED→[PluginUnloaded]発火→
@@ -163,7 +170,7 @@ class PluginManager(
                 signature = manifest.signature,
                 signatureVerified = true,
             ).load()
-        loaded[manifest.pluginId] = LoadedPlugin(registration, classLoader, adapter)
+        loaded[manifest.pluginId] = LoadedPlugin(registration, manifest, classLoader, adapter)
         quarantined.remove(manifest.pluginId)
         eventPublisher.publish(
             PluginLoaded(eventMetadata(manifest.pluginId), manifest.pluginId, manifest.version.toString()),
