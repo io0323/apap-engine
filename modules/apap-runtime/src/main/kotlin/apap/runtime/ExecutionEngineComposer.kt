@@ -47,6 +47,7 @@ import apap.domain.port.DomainEventSubscriber
 import apap.domain.port.HealthLatencyStatsRepository
 import apap.domain.port.IdGenerator
 import apap.domain.port.MemoryRepository
+import apap.domain.port.MetricsRecorder
 import apap.domain.port.ModelRepository
 import apap.domain.port.PolicyRepository
 import apap.domain.port.PriceBookRepository
@@ -71,6 +72,8 @@ import apap.execution.streaming.StreamingEngine
 import apap.execution.streaming.StreamingRequestExecutor
 import apap.execution.streaming.StreamingTurnRecorder
 import apap.execution.structuredoutput.StructuredOutputConfig
+import apap.observability.metrics.MetricsEngine
+import apap.observability.metrics.OpenTelemetryMetricsRecorder
 import apap.prompt.DefaultPromptEngine
 import apap.prompt.PromptEngine
 import apap.provider.AdapterRegistry
@@ -125,6 +128,15 @@ class ExecutionEngineComposer(
     private val eventPublisher: DomainEventPublisher,
     private val eventSubscriber: DomainEventSubscriber,
     private val tracer: Tracer = OpenTelemetry.noop().getTracer("apap-execution"),
+    /**
+     * 02_システム仕様.md 2.19 Monitoring仕様。既定はOpenTelemetryのnoop Meter（[tracer]と同じ
+     * パターン）。埋込ホストが実SDKのMeterを使う場合は[OpenTelemetryMetricsRecorder]を明示的に渡す。
+     * [build]内で[MetricsEngine]（Event Bus購読）へ配線し、`apap_overhead_duration_seconds`は
+     * [apap.execution.PhaseTimings]から、`apap_rate_limit_events_total{action="wait"}`は
+     * [TokenBucketRateLimiter]から直接呼ばれる（[MetricsEngine]のKDoc参照）。
+     */
+    private val metricsRecorder: MetricsRecorder =
+        OpenTelemetryMetricsRecorder(OpenTelemetry.noop().getMeter("apap-execution")),
     private val quotaPolicyProvider: (TenantId) -> QuotaPolicy? = {
         quotaPolicyRepository.findByTenant(it).firstOrNull()
     },
@@ -169,6 +181,7 @@ class ExecutionEngineComposer(
         // （apap.domain.port.CircuitBreakerStateStoreのKDoc参照）。
         val candidateCache = RoutingCandidateCache()
         eventSubscriber.subscribe { candidateCache.apply(it) }
+        MetricsEngine(eventSubscriber, metricsRecorder, providerRepository)
 
         val candidateFactory =
             CandidateFactory(
@@ -192,7 +205,7 @@ class ExecutionEngineComposer(
                 eventPublisher,
                 idGenerator,
                 rateLimiterConfig,
-                metricsRecorder = null,
+                metricsRecorder = metricsRecorder,
                 store = rateLimitCounterStore,
             )
         val quotaManager: QuotaManager = DefaultQuotaManager(idGenerator, clock, eventPublisher, quotaManagerConfig)
@@ -302,6 +315,7 @@ class ExecutionEngineComposer(
             clock,
             idGenerator,
             eventPublisher,
+            metricsRecorder,
             quotaPolicyProvider,
             tracer = tracer,
         )

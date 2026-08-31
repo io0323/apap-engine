@@ -1,18 +1,31 @@
 package apap.domain.event
 
+import apap.domain.model.execution.BatchItem
 import apap.domain.model.execution.CbState
+import apap.domain.model.modelcatalog.ModelCapability
 import apap.domain.model.modelcatalog.ModelStatus
+import apap.domain.model.provider.Endpoint
 import apap.domain.model.provider.ProviderHealthStatus
+import apap.domain.model.provider.RateLimits
+import apap.domain.model.routing.PolicyEffect
+import apap.domain.model.routing.PolicyRule
+import apap.domain.model.routing.PolicyRuleTarget
+import apap.domain.model.routing.PolicyStatus
 import apap.domain.model.vo.CapabilityId
 import apap.domain.model.vo.CbKey
 import apap.domain.model.vo.ConversationId
 import apap.domain.model.vo.Cost
+import apap.domain.model.vo.CredentialRef
+import apap.domain.model.vo.CredentialState
 import apap.domain.model.vo.ErrorCode
 import apap.domain.model.vo.FinishReason
 import apap.domain.model.vo.ModelId
 import apap.domain.model.vo.Money
 import apap.domain.model.vo.ProviderId
+import apap.domain.model.vo.Region
+import apap.domain.model.vo.RegionCodeTable
 import apap.domain.model.vo.RequestId
+import apap.domain.model.vo.SemVer
 import apap.domain.model.vo.SessionId
 import apap.domain.model.vo.TenantId
 import apap.domain.model.vo.TokenCount
@@ -38,6 +51,7 @@ class DomainEventInstantiationTest {
     private val capabilityId = CapabilityId("chat")
     private val usage = Usage.of(TokenCount(1), TokenCount(1))
     private val cost = Cost(Money(BigDecimal("0.01"), "USD"))
+    private val region = Region.of("us-east-1", RegionCodeTable(setOf("us-east-1")))
 
     private fun meta(aggregateId: String) =
         EventMetadata(
@@ -49,9 +63,24 @@ class DomainEventInstantiationTest {
             version = 1,
         )
 
+    private fun providerRegistered() =
+        ProviderRegistered(
+            meta(providerId.value),
+            providerId,
+            "test-provider",
+            "plugin-1",
+            SemVer(1, 0, 0),
+            emptyList<Endpoint>(),
+            "api_key",
+            listOf(CredentialRef("secret-ref-1", 1, CredentialState.ACTIVE)),
+            RateLimits(60, 60000, 10),
+            50,
+            setOf(region),
+        )
+
     @Test
     fun `every event carries the common metadata via the meta property`() {
-        val event = ProviderRegistered(meta(providerId.value), providerId, "test-provider", "plugin-1")
+        val event = providerRegistered()
         assertEquals(meta(providerId.value).eventId, event.meta.eventId)
         assertEquals(meta(providerId.value).occurredAt, event.meta.occurredAt)
         assertEquals(tenantId, event.meta.tenantId)
@@ -61,8 +90,8 @@ class DomainEventInstantiationTest {
 
     @Test
     fun `all 14_1 provider model plugin events can be constructed`() {
-        ProviderRegistered(meta(providerId.value), providerId, "p", "plugin-1")
-        ProviderValidated(meta(providerId.value), providerId)
+        providerRegistered()
+        ProviderValidated(meta(providerId.value), providerId, 1)
         ProviderEnabled(meta(providerId.value), providerId, "manual")
         ProviderDraining(meta(providerId.value), providerId, "manual")
         ProviderDisabled(meta(providerId.value), providerId, "manual")
@@ -74,12 +103,24 @@ class DomainEventInstantiationTest {
             ProviderHealthStatus.DOWN,
             "3 consecutive failures",
         )
-        ModelRegistered(meta(modelId.value), modelId, providerId, listOf(capabilityId))
+        ModelRegistered(
+            meta(modelId.value),
+            modelId,
+            providerId,
+            listOf(ModelCapability(capabilityId)),
+            "test-model",
+            "1.0",
+            8000,
+            2000,
+            setOf(region),
+            50,
+        )
         ModelStatusChanged(meta(modelId.value), modelId, ModelStatus.TESTING, ModelStatus.ACTIVE)
         ModelDiscovered(meta(providerId.value), providerId, listOf("new-model-x"))
         AliasChanged(
             meta("alias-1"),
             "alias-1",
+            "alias-name",
             listOf(AliasTargetSnapshot(modelId, 100)),
             listOf(AliasTargetSnapshot(modelId, 90)),
         )
@@ -153,9 +194,18 @@ class DomainEventInstantiationTest {
 
     @Test
     fun `all 14_4 security and config events can be constructed`() {
-        CredentialRotated(meta(providerId.value), providerId, 1, 2)
+        CredentialRotated(meta(providerId.value), providerId, 1, 2, "secret-ref-2")
         CredentialValidationFailed(meta(providerId.value), providerId, "invalid signature")
-        PolicyUpdated(meta("policy-1"), "policy-1", "TENANT")
+        PolicyUpdated(
+            meta("policy-1"),
+            "policy-1",
+            "TENANT",
+            tenantId,
+            null,
+            listOf(PolicyRule(PolicyEffect.ALLOW, PolicyRuleTarget())),
+            1,
+            PolicyStatus.ACTIVE,
+        )
         QuotaPolicyUpdated(meta("quota-1"), "quota-1")
         BudgetUpdated(meta("budget-1"), "budget-1")
         AccessDenied(meta(requestId.value), requestId, "PERMISSION_DENIED")
@@ -163,7 +213,7 @@ class DomainEventInstantiationTest {
 
     @Test
     fun `all 14_5 batch and session events can be constructed`() {
-        BatchJobSubmitted(meta("job-1"), "job-1", capabilityId)
+        BatchJobSubmitted(meta("job-1"), "job-1", tenantId, capabilityId, listOf(BatchItem("item-1", 1)))
         BatchJobStarted(meta("job-1"), "job-1")
         BatchItemCompleted(meta("job-1"), "job-1", "item-1", "COMPLETED")
         BatchJobCompleted(meta("job-1"), "job-1", 10, 10)

@@ -1,11 +1,13 @@
 package apap.infrastructure.persistence.inmemory
 
+import apap.domain.event.DomainEvent
 import apap.domain.model.routing.PolicyScope
 import apap.domain.model.routing.PolicyStatus
 import apap.domain.model.routing.RoutingPolicy
 import apap.domain.model.vo.TenantId
 import apap.domain.port.PolicyRepository
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * [PolicyRepository]の本番用In-Memory実装。
@@ -16,6 +18,9 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class InMemoryPolicyRepository : PolicyRepository {
     private val policies = ConcurrentHashMap<String, RoutingPolicy>()
+    private val eventsById = ConcurrentHashMap<String, CopyOnWriteArrayList<DomainEvent>>()
+
+    override fun findById(policyId: String): RoutingPolicy? = policies[policyId]
 
     override fun findEffective(
         tenantId: TenantId?,
@@ -33,5 +38,12 @@ class InMemoryPolicyRepository : PolicyRepository {
 
     override fun save(policy: RoutingPolicy) {
         policies[policy.policyId] = policy
+    }
+
+    override fun saveEvents(
+        policyId: String,
+        events: List<DomainEvent>,
+    ) {
+        eventsById.computeIfAbsent(policyId) { CopyOnWriteArrayList() }.addAll(events)
     }
 }

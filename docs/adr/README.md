@@ -29,6 +29,7 @@ Architecture Decision Record。`docs/design/*.md` は一次情報として編集
 | [ADR-0023](ADR-0023-query-embedder-shares-execution-resilience.md) | QueryEmbedderはメインリクエストと同じCircuit Breaker/Rate Limiterを経由する（ADR-0022のSupersede） | Accepted | 補足（P8着手前レビュー、FR-CTX-004） |
 | [ADR-0024](ADR-0024-build-logic-toolchain-instability-root-cause.md) | `build-logic`のビルド不安定性の根本原因（IDEのバックグラウンドビルド競合・JDK21欠如・Gradle 9.4.1のkotlin-dsl自己矛盾）とツールチェーン対処 | Accepted | 補足（P8着手前トラブルシューティング） |
 | [ADR-0025](ADR-0025-p8-infrastructure-technology-selection.md) | P8 apap-infrastructure/apap-plugin実装の技術選定（PostgreSQL+Flyway+素のJDBC、Redis+Lettuce、Plugin署名検証はjava.security.Signature自前実装） | Accepted | 補足（P8着手前レビュー、ADR-0001/ADR-0002の実装方式選定） |
+| [ADR-0026](ADR-0026-event-sourced-aggregate-reconstruction.md) | Event Sourcing対象Aggregateの再構築方式（apply/fold構造、イベントpayload拡張、スナップショット取得ポリシー） | Accepted | 補足（NFR-DAT-003、ADR-0014が委譲した未決定事項の解消） |
 
 ## 命名規則
 

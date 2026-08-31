@@ -1,14 +1,24 @@
 package apap.domain.event
 
+import apap.domain.model.execution.BatchItem
 import apap.domain.model.vo.CapabilityId
 import apap.domain.model.vo.ConversationId
 import apap.domain.model.vo.SessionId
+import apap.domain.model.vo.TenantId
 
-/** 14_イベント一覧.md 14.5 Batch / Session系。 */
+/**
+ * 14_イベント一覧.md 14.5 Batch / Session系。
+ *
+ * ADR-0026: [BatchJobSubmitted]は元々「通知」目的の設計で、[apap.domain.model.execution.BatchJob]の
+ * フル状態復元に必要な[tenantId]/[items]を持たなかった。イベント名は14章から一切変えず、
+ * 再構築に必要なフィールドのみを追加してある。
+ */
 data class BatchJobSubmitted(
     override val meta: EventMetadata,
     val jobId: String,
+    val tenantId: TenantId,
     val targetCapability: CapabilityId,
+    val items: List<BatchItem>,
 ) : DomainEvent
 
 data class BatchJobStarted(

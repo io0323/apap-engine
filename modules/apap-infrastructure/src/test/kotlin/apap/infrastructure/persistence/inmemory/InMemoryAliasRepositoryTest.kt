@@ -17,7 +17,7 @@ class InMemoryAliasRepositoryTest {
     fun `saves and finds an alias by name`() {
         val repo = InMemoryAliasRepository()
         val alias = ModelAlias(AliasId("01ARZ3NDEKTSV4RRFFQ69G5FA2"), "prod-chat", listOf(AliasTarget(modelId, 100)))
-        repo.save(alias)
+        repo.save(tenantId, alias)
 
         assertEquals(alias, repo.findByName(tenantId, "prod-chat"))
         assertNull(repo.findByName(tenantId, "no-such-alias"))
@@ -34,8 +34,8 @@ class InMemoryAliasRepositoryTest {
                 "other",
                 listOf(AliasTarget(ModelId("01ARZ3NDEKTSV4RRFFQ69G5FA5"), 100)),
             )
-        repo.save(matching)
-        repo.save(other)
+        repo.save(tenantId, matching)
+        repo.save(tenantId, other)
 
         assertEquals(listOf(matching), repo.listByModel(modelId))
     }

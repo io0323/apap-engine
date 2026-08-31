@@ -141,8 +141,8 @@ class DefaultCacheEngineTest {
         val cache = engine()
         val aliasA = ModelAlias(AliasId("01ARZ3NDEKTSV4RRFFQ69G5FA4"), "alias-a", listOf(AliasTarget(modelId, 100)))
         val aliasB = ModelAlias(AliasId("01ARZ3NDEKTSV4RRFFQ69G5FA5"), "alias-b", listOf(AliasTarget(modelId, 100)))
-        aliasRepository.save(aliasA)
-        aliasRepository.save(aliasB)
+        aliasRepository.save(tenantId, aliasA)
+        aliasRepository.save(tenantId, aliasB)
 
         val reqA = request(temperature = 0.0, modelAlias = "alias-a", text = "for alias a")
         val reqB = request(temperature = 0.0, modelAlias = "alias-b", text = "for alias b")
@@ -153,6 +153,7 @@ class DefaultCacheEngineTest {
             AliasChanged(
                 meta = eventMetadata(),
                 aliasId = aliasA.aliasId.value,
+                name = aliasA.name,
                 oldTargets = emptyList(),
                 newTargets = emptyList(),
             ),

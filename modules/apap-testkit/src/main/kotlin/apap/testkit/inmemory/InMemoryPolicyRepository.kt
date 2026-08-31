@@ -1,5 +1,6 @@
 package apap.testkit.inmemory
 
+import apap.domain.event.DomainEvent
 import apap.domain.model.routing.PolicyScope
 import apap.domain.model.routing.PolicyStatus
 import apap.domain.model.routing.RoutingPolicy
@@ -13,6 +14,9 @@ import apap.domain.port.PolicyRepository
  */
 class InMemoryPolicyRepository : PolicyRepository {
     private val policies = mutableMapOf<String, RoutingPolicy>()
+    private val eventsById = mutableMapOf<String, MutableList<DomainEvent>>()
+
+    override fun findById(policyId: String): RoutingPolicy? = policies[policyId]
 
     override fun findEffective(
         tenantId: TenantId?,
@@ -31,4 +35,13 @@ class InMemoryPolicyRepository : PolicyRepository {
     override fun save(policy: RoutingPolicy) {
         policies[policy.policyId] = policy
     }
+
+    override fun saveEvents(
+        policyId: String,
+        events: List<DomainEvent>,
+    ) {
+        eventsById.getOrPut(policyId) { mutableListOf() }.addAll(events)
+    }
+
+    fun eventsFor(policyId: String): List<DomainEvent> = eventsById[policyId].orEmpty()
 }

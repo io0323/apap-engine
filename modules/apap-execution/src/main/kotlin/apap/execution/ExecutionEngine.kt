@@ -38,6 +38,7 @@ import apap.domain.port.Clock
 import apap.domain.port.ConversationRepository
 import apap.domain.port.DomainEventPublisher
 import apap.domain.port.IdGenerator
+import apap.domain.port.MetricsRecorder
 import apap.execution.attempt.AttemptResult
 import apap.execution.estimation.TokenEstimator
 import apap.execution.fallback.FallbackEngine
@@ -101,10 +102,11 @@ class DefaultExecutionEngine(
     private val clock: Clock,
     private val idGenerator: IdGenerator,
     private val eventPublisher: DomainEventPublisher,
+    private val metricsRecorder: MetricsRecorder,
     private val quotaPolicyProvider: (TenantId) -> QuotaPolicy? = { null },
     private val tracer: Tracer = OpenTelemetry.noop().getTracer(TRACER_NAME),
 ) : ExecutionEngine {
-    private val phases = PhaseTimings(clock, tracer)
+    private val phases = PhaseTimings(clock, tracer, metricsRecorder)
 
     override suspend fun execute(request: CanonicalRequest): CanonicalResponse {
         publish(requestReceived(request))
@@ -561,7 +563,12 @@ class DefaultExecutionEngine(
 
 /**
  * 02_システム仕様.md 2.8の各フェーズ所要時間の計測点、および2.19 Span計装点。`Clock`経由で
- * 計測するためテストでも決定的。
+ * 計測するためテストでも決定的。`apap_overhead_duration_seconds{phase}`（2.19表）へも記録する
+ * （ADR未満の実装判断: NFR-PRF-001の付加レイテンシ計測はこの計測点以外に手段が無く、
+ * `MetricsEngine`のEvent Bus購読では導出不能なためここから直接呼ぶ。KDoc根拠は
+ * `MetricsEngine`と同じ）。"gateway"フェーズはGateway自体（P10）が未実装のため計測点が無く、
+ * ここでは"prompt"/"routing"/"context"/"token-estimate"/"cache-lookup"/"execution"/"mapping"の
+ * 実測フェーズ名をそのまま記録する（2.19表の4ラベルはphaseの取りうる値の例示であり閉じた集合ではない）。
  *
  * `Span`は常にOpenTelemetry APIで子Spanを作り、成功/失敗を
  * `StatusCode`へ反映して`span.end()`する。CLAUDE.md不変条件5（ThreadLocal/CoroutineContext
@@ -572,6 +579,7 @@ class DefaultExecutionEngine(
 private class PhaseTimings(
     private val clock: Clock,
     private val tracer: Tracer,
+    private val metricsRecorder: MetricsRecorder,
 ) {
     @Suppress("TooGenericExceptionCaught")
     suspend fun <T> time(
@@ -591,20 +599,22 @@ private class PhaseTimings(
             span.setStatus(StatusCode.ERROR)
             throw e
         } finally {
-            logDuration(phase, start)
+            recordDuration(phase, start)
             span.end()
         }
     }
 
-    private fun logDuration(
+    private fun recordDuration(
         phase: String,
         start: Instant,
     ) {
-        val durationMs = Duration.between(start, clock.now()).toMillis()
-        logger.debug("phase={} durationMs={}", phase, durationMs)
+        val duration = Duration.between(start, clock.now())
+        logger.debug("phase={} durationMs={}", phase, duration.toMillis())
+        metricsRecorder.recordOverheadDuration(phase, duration.toNanos() / NANOS_PER_SECOND)
     }
 
     private companion object {
         val logger = LoggerFactory.getLogger(PhaseTimings::class.java)
+        const val NANOS_PER_SECOND = 1_000_000_000.0
     }
 }

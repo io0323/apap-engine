@@ -45,7 +45,19 @@ class JdbcEventStoreRepositoryTest {
 
     private fun registeredEvent(): ProviderRegistered {
         val version = 1L
-        return ProviderRegistered(meta(version), providerId, "test-provider", "01ARZ3NDEKTSV4RRFFQ69G5FAB")
+        return ProviderRegistered(
+            meta(version),
+            providerId,
+            "test-provider",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+            SemVer(1, 0, 0),
+            emptyList(),
+            "api_key",
+            listOf(CredentialRef("secret-ref-1", 1, CredentialState.ACTIVE)),
+            RateLimits(60, 60000, 10),
+            50,
+            setOf(Region.of("us-east-1", RegionCodeTable(setOf("us-east-1")))),
+        )
     }
 
     @Test
