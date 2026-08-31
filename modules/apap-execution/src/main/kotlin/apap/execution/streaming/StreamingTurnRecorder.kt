@@ -7,6 +7,7 @@ import apap.domain.model.execution.StreamChunkType
 import apap.domain.model.vo.ContentPart
 import apap.domain.model.vo.ConversationId
 import apap.domain.model.vo.ModelId
+import apap.domain.model.vo.TenantId
 import apap.domain.model.vo.Usage
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.onCompletion
@@ -35,24 +36,33 @@ class StreamingTurnRecorder(
 ) {
     fun record(
         conversationId: ConversationId,
+        tenantId: TenantId,
         modelId: ModelId,
         chunks: Flow<StreamChunk>,
     ): Flow<StreamChunk> {
         val accumulator = Accumulator()
         return chunks
             .onEach { chunk -> accumulator.accept(chunk) }
-            .onCompletion { persist(conversationId, modelId, accumulator) }
+            .onCompletion { persist(conversationId, tenantId, modelId, accumulator) }
     }
 
     private fun persist(
         conversationId: ConversationId,
+        tenantId: TenantId,
         modelId: ModelId,
         accumulator: Accumulator,
     ) {
         val contentParts = accumulator.finalContent()
         if (contentParts.isEmpty()) return
         runCatching {
-            conversationManager.appendTurn(conversationId, TurnRole.ASSISTANT, contentParts, modelId, accumulator.usage)
+            conversationManager.appendTurn(
+                conversationId,
+                tenantId,
+                TurnRole.ASSISTANT,
+                contentParts,
+                modelId,
+                accumulator.usage,
+            )
         }.onFailure { e ->
             logger.warn(
                 "failed to persist streaming assistant turn for conversationId={}: {}",

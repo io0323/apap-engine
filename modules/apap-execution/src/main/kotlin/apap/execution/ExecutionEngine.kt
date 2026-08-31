@@ -428,7 +428,7 @@ class DefaultExecutionEngine(
         prompt: ProcessedPrompt,
         modelId: ModelId,
     ): ProcessedPrompt {
-        val conversation = request.conversationId?.let { conversationRepository.findById(it) }
+        val conversation = request.conversationId?.let { conversationRepository.findById(it, request.tenantId) }
         val assembled =
             try {
                 contextManager.build(request, systemPrompt = emptyList(), conversation, modelId)
@@ -451,7 +451,7 @@ class DefaultExecutionEngine(
      */
     private fun recordUserTurn(request: CanonicalRequest) {
         val conversationId = request.conversationId ?: return
-        persistTurn(conversationId, TurnRole.USER, request.input, modelUsed = null, usage = null)
+        persistTurn(conversationId, request.tenantId, TurnRole.USER, request.input, modelUsed = null, usage = null)
     }
 
     /**
@@ -476,7 +476,14 @@ class DefaultExecutionEngine(
             )
             return
         }
-        persistTurn(conversationId, TurnRole.ASSISTANT, contentParts, response.resolvedModel, response.usage)
+        persistTurn(
+            conversationId,
+            request.tenantId,
+            TurnRole.ASSISTANT,
+            contentParts,
+            response.resolvedModel,
+            response.usage,
+        )
     }
 
     private fun assistantTurnContent(response: CanonicalResponse): List<ContentPart> {
@@ -498,15 +505,17 @@ class DefaultExecutionEngine(
      * （要件充足に影響しない実装判断のためADR化せず根拠をここに残す。メトリクス化はP8
      * Observability着手時に改めて検討する）。
      */
+    @Suppress("LongParameterList")
     private fun persistTurn(
         conversationId: ConversationId,
+        tenantId: TenantId,
         role: TurnRole,
         contentParts: List<ContentPart>,
         modelUsed: ModelId?,
         usage: Usage?,
     ) {
         runCatching {
-            conversationManager.appendTurn(conversationId, role, contentParts, modelUsed, usage)
+            conversationManager.appendTurn(conversationId, tenantId, role, contentParts, modelUsed, usage)
         }.onFailure { e ->
             logger.warn(
                 "failed to persist {} turn for conversationId={}: {}",

@@ -4,6 +4,7 @@ import apap.domain.event.DomainEvent
 import apap.domain.model.execution.BatchItem
 import apap.domain.model.execution.BatchJob
 import apap.domain.model.execution.applyBatchJobEvent
+import apap.domain.model.vo.TenantId
 import apap.domain.port.BatchJobRepository
 import apap.domain.port.Clock
 import apap.domain.port.EventStoreRepository
@@ -20,6 +21,9 @@ import javax.sql.DataSource
  * 保持しない（itemId/seq/statusのみ）ため、空オブジェクト`{}`を書き込む。本タスクの範囲では
  * BatchItemの実行内容そのものを要求するFR/NFRは対象外のため、要件充足に影響しない実装判断として
  * ADR化せずここに根拠を記す。
+ *
+ * P8後始末レビュー item3: [findById]は他テナントの`jobId`が供給された場合、存在しない場合と
+ * 区別せずnullを返す（[BatchJobRepository]のKDoc参照）。
  */
 class JdbcBatchJobRepository(
     private val dataSource: DataSource,
@@ -30,7 +34,10 @@ class JdbcBatchJobRepository(
     private val support =
         EventSourcedRepositorySupport(eventStoreRepository, BatchJob::class, ::applyBatchJobEvent, snapshotEveryNEvents)
 
-    override fun findById(jobId: String): BatchJob? = support.reconstruct(jobId)
+    override fun findById(
+        jobId: String,
+        tenantId: TenantId,
+    ): BatchJob? = support.reconstruct(jobId)?.takeIf { it.tenantId == tenantId }
 
     @Suppress("TooGenericExceptionCaught")
     override fun save(job: BatchJob) {

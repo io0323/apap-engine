@@ -171,7 +171,9 @@ class StreamingRequestExecutor(
 
         val normalized = streamingEngine.normalize(adapterStream, ctx)
         val withTurnRecording =
-            req.conversationId?.let { streamingTurnRecorder.record(it, candidate.modelId, normalized) } ?: normalized
+            req.conversationId?.let {
+                streamingTurnRecorder.record(it, req.tenantId, candidate.modelId, normalized)
+            } ?: normalized
         return withOutcomeTracking(withTurnRecording, permit, ctx, candidate, req, reservation)
     }
 

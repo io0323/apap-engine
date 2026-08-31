@@ -47,7 +47,7 @@ class JdbcBatchJobRepositoryTest {
         repo.saveEvents(jobId, listOf(BatchItemCompleted(meta(4), jobId, "item-2", "COMPLETED")))
         repo.saveEvents(jobId, listOf(BatchJobCompleted(meta(5), jobId, 2, 2)))
 
-        val found = repo.findById(jobId)
+        val found = repo.findById(jobId, tenantId)
 
         assertEquals(BatchJobStatus.COMPLETED, found?.status)
         assertEquals(2, found?.progress)
@@ -60,7 +60,7 @@ class JdbcBatchJobRepositoryTest {
         val submitted = BatchJobSubmitted(meta(1), jobId, tenantId, CapabilityId("chat"), items)
         repo.saveEvents(jobId, listOf(submitted))
 
-        repo.save(requireNotNull(repo.findById(jobId)))
+        repo.save(requireNotNull(repo.findById(jobId, tenantId)))
 
         dataSource.connection.use { conn ->
             conn.prepareStatement("SELECT status FROM batch_job WHERE job_id = ?").use { stmt ->
@@ -71,5 +71,20 @@ class JdbcBatchJobRepositoryTest {
                 }
             }
         }
+    }
+
+    /**
+     * P8後始末レビュー item3: 他テナントの`jobId`が供給された場合、存在しない場合と区別せず
+     * nullを返す（[apap.domain.port.BatchJobRepository]のKDoc参照）。
+     */
+    @Test
+    fun `findById returns null for a job that belongs to a different tenant`() {
+        val repo = repo()
+        val otherTenantId = TenantId("01ARZ3NDEKTSV4RRFFQ69G5FA9")
+        val items = listOf(BatchItem("item-1", 1))
+        repo.saveEvents(jobId, listOf(BatchJobSubmitted(meta(1), jobId, tenantId, CapabilityId("chat"), items)))
+
+        assertEquals(null, repo.findById(jobId, otherTenantId))
+        assertEquals(tenantId, repo.findById(jobId, tenantId)?.tenantId)
     }
 }

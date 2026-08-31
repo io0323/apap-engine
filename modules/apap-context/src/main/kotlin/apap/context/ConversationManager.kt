@@ -56,9 +56,10 @@ class ConversationManager(
         return conversation
     }
 
-    @Suppress("ThrowsCount")
+    @Suppress("ThrowsCount", "LongParameterList")
     fun appendTurn(
         conversationId: ConversationId,
+        tenantId: TenantId,
         role: TurnRole,
         contentParts: List<ContentPart>,
         modelUsed: ModelId? = null,
@@ -66,7 +67,7 @@ class ConversationManager(
     ): Turn {
         var lastError: TurnSequenceViolationException? = null
         repeat(maxSeqRetries) {
-            val current = findOrThrow(conversationId)
+            val current = findOrThrow(conversationId, tenantId)
             val turn =
                 Turn(
                     turnId = idGenerator.newId(),
@@ -78,7 +79,7 @@ class ConversationManager(
                     createdAt = clock.now(),
                 )
             try {
-                repository.appendTurn(conversationId, turn)
+                repository.appendTurn(conversationId, tenantId, turn)
                 return turn
             } catch (e: TurnSequenceViolationException) {
                 lastError = e
@@ -90,15 +91,17 @@ class ConversationManager(
 
     fun history(
         conversationId: ConversationId,
+        tenantId: TenantId,
         seqRange: IntRange = 1..Int.MAX_VALUE,
-    ): List<Turn> = repository.findTurns(conversationId, seqRange)
+    ): List<Turn> = repository.findTurns(conversationId, tenantId, seqRange)
 
     fun delete(
         conversationId: ConversationId,
+        tenantId: TenantId,
         traceId: String,
     ) {
-        val conversation = findOrThrow(conversationId)
-        repository.delete(conversationId)
+        val conversation = findOrThrow(conversationId, tenantId)
+        repository.delete(conversationId, tenantId)
         eventPublisher.publish(
             ConversationDeleted(
                 EventMetadata(
@@ -114,8 +117,12 @@ class ConversationManager(
         )
     }
 
-    private fun findOrThrow(conversationId: ConversationId): Conversation =
-        repository.findById(conversationId) ?: throw ConversationNotFoundException(conversationId)
+    private fun findOrThrow(
+        conversationId: ConversationId,
+        tenantId: TenantId,
+    ): Conversation =
+        repository.findById(conversationId, tenantId)
+            ?: throw ConversationNotFoundException(conversationId)
 
     private companion object {
         const val DEFAULT_MAX_SEQ_RETRIES = 8

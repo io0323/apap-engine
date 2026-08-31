@@ -2,6 +2,7 @@ package apap.infrastructure.persistence.inmemory
 
 import apap.domain.event.DomainEvent
 import apap.domain.model.execution.BatchJob
+import apap.domain.model.vo.TenantId
 import apap.domain.port.BatchJobRepository
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -11,7 +12,10 @@ class InMemoryBatchJobRepository : BatchJobRepository {
     private val jobs = ConcurrentHashMap<String, BatchJob>()
     private val eventsById = ConcurrentHashMap<String, CopyOnWriteArrayList<DomainEvent>>()
 
-    override fun findById(jobId: String): BatchJob? = jobs[jobId]
+    override fun findById(
+        jobId: String,
+        tenantId: TenantId,
+    ): BatchJob? = jobs[jobId]?.takeIf { it.tenantId == tenantId }
 
     override fun save(job: BatchJob) {
         jobs[job.jobId] = job

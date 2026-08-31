@@ -338,7 +338,7 @@ class ExecutionEngineComposerTest {
             engine.execute(request("first"))
             engine.execute(request("second"))
 
-            val turns = conversationRepository.findTurns(conversationId, 1..Int.MAX_VALUE)
+            val turns = conversationRepository.findTurns(conversationId, tenantId, 1..Int.MAX_VALUE)
             assertEquals(4, turns.size)
             assertEquals(listOf(1, 2, 3, 4), turns.map { it.seq })
             assertEquals(
@@ -627,7 +627,7 @@ class ExecutionEngineComposerTest {
             val response = engine.execute(request)
 
             assertEquals(healthyProviderId, response.resolvedProvider)
-            val turns = conversationRepository.findTurns(conversationId, 1..Int.MAX_VALUE)
+            val turns = conversationRepository.findTurns(conversationId, tenantId, 1..Int.MAX_VALUE)
             assertEquals(2, turns.size)
             assertEquals(listOf(TurnRole.USER, TurnRole.ASSISTANT), turns.map { it.role })
         }
@@ -723,6 +723,7 @@ class ExecutionEngineComposerTest {
             )
             conversationRepository.appendTurn(
                 conversationId,
+                tenantId,
                 Turn(
                     turnId = "t1",
                     seq = 1,

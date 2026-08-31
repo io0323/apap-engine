@@ -39,13 +39,14 @@ class StreamingTurnRecorderTest {
     private val recorder = StreamingTurnRecorder(conversationManager)
     private val conversationId = ConversationId("01ARZ3NDEKTSV4RRFFQ69G5FA0")
     private val modelId = ModelId("01ARZ3NDEKTSV4RRFFQ69G5FA1")
+    private val tenantId = TenantId("01ARZ3NDEKTSV4RRFFQ69G5FA3")
 
     private fun startConversation() {
         conversationRepository.save(
             Conversation(
                 conversationId = conversationId,
                 sessionId = SessionId("01ARZ3NDEKTSV4RRFFQ69G5FA2"),
-                tenantId = TenantId("01ARZ3NDEKTSV4RRFFQ69G5FA3"),
+                tenantId = tenantId,
             ),
         )
     }
@@ -55,7 +56,7 @@ class StreamingTurnRecorderTest {
 
     private fun collect(chunks: Flow<StreamChunk>): List<StreamChunk> =
         runBlocking {
-            recorder.record(conversationId, modelId, chunks).toList()
+            recorder.record(conversationId, tenantId, modelId, chunks).toList()
         }
 
     @Test
@@ -73,7 +74,7 @@ class StreamingTurnRecorderTest {
         val collected = collect(chunks)
         assertEquals(4, collected.size)
 
-        val turns = conversationRepository.findTurns(conversationId, 1..Int.MAX_VALUE)
+        val turns = conversationRepository.findTurns(conversationId, tenantId, 1..Int.MAX_VALUE)
         assertEquals(1, turns.size)
         val turn = turns.single()
         assertEquals(TurnRole.ASSISTANT, turn.role)
@@ -108,7 +109,7 @@ class StreamingTurnRecorderTest {
 
         collect(chunks)
 
-        val turns = conversationRepository.findTurns(conversationId, 1..Int.MAX_VALUE)
+        val turns = conversationRepository.findTurns(conversationId, tenantId, 1..Int.MAX_VALUE)
         assertEquals(1, turns.size)
         val turn = turns.single()
         assertEquals(TurnRole.ASSISTANT, turn.role)
@@ -135,7 +136,7 @@ class StreamingTurnRecorderTest {
 
         collect(chunks)
 
-        val turns = conversationRepository.findTurns(conversationId, 1..Int.MAX_VALUE)
+        val turns = conversationRepository.findTurns(conversationId, tenantId, 1..Int.MAX_VALUE)
         val content = turns.single().contentParts.single() as ContentPart.Text
         assertTrue(content.text.contains("search"))
         assertTrue(content.text.contains("apap"))
@@ -148,6 +149,6 @@ class StreamingTurnRecorderTest {
 
         collect(chunks)
 
-        assertEquals(0, conversationRepository.findTurns(conversationId, 1..Int.MAX_VALUE).size)
+        assertEquals(0, conversationRepository.findTurns(conversationId, tenantId, 1..Int.MAX_VALUE).size)
     }
 }
