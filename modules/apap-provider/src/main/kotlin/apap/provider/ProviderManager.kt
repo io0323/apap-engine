@@ -84,7 +84,20 @@ class ProviderManager(
         providerRepository.save(provider)
         publish(
             provider.providerId,
-            ProviderRegistered(meta(provider.providerId), provider.providerId, provider.name, provider.adapterPluginId),
+            ProviderRegistered(
+                meta(provider.providerId),
+                provider.providerId,
+                provider.name,
+                provider.adapterPluginId,
+                provider.spiVersion,
+                provider.endpoints,
+                provider.authType,
+                provider.credentialRefs,
+                provider.rateLimits,
+                provider.priority,
+                provider.regions,
+                provider.tags,
+            ),
         )
         return provider
     }
@@ -173,7 +186,10 @@ class ProviderManager(
             }
         val validated = provider.withCredentialRefs(promotedCredentials)
         providerRepository.save(validated)
-        publish(provider.providerId, ProviderValidated(meta(provider.providerId), provider.providerId))
+        publish(
+            provider.providerId,
+            ProviderValidated(meta(provider.providerId), provider.providerId, credentialRef.version),
+        )
         return ValidationOutcome.Passed(validated)
     }
 

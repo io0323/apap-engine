@@ -1,6 +1,9 @@
 package apap.cache
 
 import apap.domain.event.AliasChanged
+import apap.domain.event.CacheHit
+import apap.domain.event.CacheStored
+import apap.domain.event.CacheType
 import apap.domain.event.EventMetadata
 import apap.domain.model.execution.CanonicalRequest
 import apap.domain.model.execution.CanonicalResponse
@@ -22,6 +25,8 @@ import apap.domain.model.vo.TokenCount
 import apap.domain.model.vo.Usage
 import apap.testkit.inmemory.InMemoryAliasRepository
 import apap.testkit.inmemory.InMemoryClock
+import apap.testkit.inmemory.InMemoryDomainEventPublisher
+import apap.testkit.inmemory.InMemoryIdGenerator
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
@@ -34,6 +39,8 @@ import java.time.Instant
 class DefaultCacheEngineTest {
     private val clock = InMemoryClock(Instant.parse("2026-01-01T00:00:00Z"))
     private val aliasRepository = InMemoryAliasRepository()
+    private val events = InMemoryDomainEventPublisher()
+    private val ids = InMemoryIdGenerator()
     private val tenantId = TenantId("01ARZ3NDEKTSV4RRFFQ69G5FA0")
     private val modelId = ModelId("01ARZ3NDEKTSV4RRFFQ69G5FA1")
     private val providerId = ProviderId("01ARZ3NDEKTSV4RRFFQ69G5FA2")
@@ -49,6 +56,8 @@ class DefaultCacheEngineTest {
             config = config,
             aliasRepository = aliasRepository,
             clock = clock,
+            eventPublisher = events,
+            idGenerator = ids,
         )
 
     private fun request(
@@ -132,8 +141,8 @@ class DefaultCacheEngineTest {
         val cache = engine()
         val aliasA = ModelAlias(AliasId("01ARZ3NDEKTSV4RRFFQ69G5FA4"), "alias-a", listOf(AliasTarget(modelId, 100)))
         val aliasB = ModelAlias(AliasId("01ARZ3NDEKTSV4RRFFQ69G5FA5"), "alias-b", listOf(AliasTarget(modelId, 100)))
-        aliasRepository.save(aliasA)
-        aliasRepository.save(aliasB)
+        aliasRepository.save(tenantId, aliasA)
+        aliasRepository.save(tenantId, aliasB)
 
         val reqA = request(temperature = 0.0, modelAlias = "alias-a", text = "for alias a")
         val reqB = request(temperature = 0.0, modelAlias = "alias-b", text = "for alias b")
@@ -144,6 +153,7 @@ class DefaultCacheEngineTest {
             AliasChanged(
                 meta = eventMetadata(),
                 aliasId = aliasA.aliasId.value,
+                name = aliasA.name,
                 oldTargets = emptyList(),
                 newTargets = emptyList(),
             ),
@@ -180,12 +190,36 @@ class DefaultCacheEngineTest {
                 config = CacheConfig(),
                 aliasRepository = aliasRepository,
                 clock = clock,
+                eventPublisher = events,
+                idGenerator = ids,
             )
         val req = request(temperature = 0.0)
         cache.store(req, prompt, response("resp-xyz"))
 
         val hit = cache.lookup(req, prompt)
         assertEquals("resp-xyz", hit?.responseId)
+    }
+
+    @Test
+    fun `store publishes CacheStored and lookup publishes CacheHit with the correct cache type`() {
+        val cache = engine()
+        val idempotentReq = request(capabilityId = chatCapability, temperature = 0.9, idempotencyKey = "idem-1")
+        cache.store(idempotentReq, prompt, response())
+        assertEquals(1, events.publishedEvents.size)
+        assertEquals(CacheType.REQUEST, (events.publishedEvents.single() as CacheStored).cacheType)
+
+        cache.lookup(idempotentReq, prompt)
+        assertEquals(2, events.publishedEvents.size)
+        assertEquals(CacheType.REQUEST, (events.publishedEvents[1] as CacheHit).cacheType)
+
+        val deterministicReq = request(temperature = 0.0, text = "distinct")
+        cache.store(deterministicReq, prompt, response())
+        assertEquals(3, events.publishedEvents.size)
+        assertEquals(CacheType.RESPONSE, (events.publishedEvents[2] as CacheStored).cacheType)
+
+        cache.lookup(deterministicReq, prompt)
+        assertEquals(4, events.publishedEvents.size)
+        assertEquals(CacheType.RESPONSE, (events.publishedEvents[3] as CacheHit).cacheType)
     }
 
     private fun eventMetadata(): EventMetadata =

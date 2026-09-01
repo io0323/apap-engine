@@ -31,6 +31,17 @@ jackson = "2.22.1"
 # 依存とする。opentelemetry-sdk/opentelemetry-sdk-testingはapap-observability自身のテストでのみ
 # （実SDKに対してMeter/Tracer呼出が正しく機能することを検証するため）testImplementationとして使う。
 opentelemetry = "1.64.0"
+# ADR-0025: apap-infrastructureのJDBC Repository実装が対象とするRDBMS/マイグレーションツール。
+# バージョンは埋込先prompt-engine（別リポジトリ、gradle/libs.versions.tomlのflywayエントリ）の
+# 実宣言値と揃える（ADR-0017と同じ「実ホストを確認してから決める」方式）。
+flyway = "13.3.0"
+# prompt-engine側はSpring Boot BOM管理下でバージョン省略しているため、apap-infrastructure
+# （Spring Boot非依存、CLAUDE.md不変条件6）では明示的に固定する。2026-08-29時点の最新安定版。
+postgresql = "42.7.9"
+# ADR-0025: 分散CircuitBreakerStateStore/RateLimitCounterStore/CacheStore実装が使うRedisクライアント。
+# prompt-engine側のRedisPromptCache（ADR-0033決定d）と同じ技術。バージョンはpostgresqlと同様、
+# Spring Boot BOM非依存のため明示固定（2026-08-29時点の最新安定版）。
+lettuce = "7.6.0.RELEASE"
 
 [libraries]
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
@@ -38,11 +49,23 @@ junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher
 konsist = { module = "com.lemonappdev:konsist", version.ref = "konsist-lib" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+# CLAUDE.md「時刻・ID」規約: delay()を含むsuspend関数のテストはrunTest/TestCoroutineSchedulerで
+# 仮想時間を使い、実時間sleepに依存しないこと（ADR-0024後続、TokenBucketRateLimiterTest flaky対応）。
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 json-schema-validator = { module = "com.networknt:json-schema-validator", version.ref = "json-schema-validator" }
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
+# Kotlin data class（プライマリコンストラクタ・デフォルト値・null許容）を正しく(逆)シリアライズする
+# ために必要。prompt-engine側も同じモジュールを使用（ADR-0025と同じ「実ホスト確認」方式）。
+jackson-module-kotlin = { module = "com.fasterxml.jackson.module:jackson-module-kotlin", version.ref = "jackson" }
+# java.time.Instant等のJSR-310型はkotlin-moduleだけでは扱えない（別モジュール、Jackson側の仕様）。
+jackson-datatype-jsr310 = { module = "com.fasterxml.jackson.datatype:jackson-datatype-jsr310", version.ref = "jackson" }
 opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version.ref = "opentelemetry" }
 opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version.ref = "opentelemetry" }
 opentelemetry-sdk-testing = { module = "io.opentelemetry:opentelemetry-sdk-testing", version.ref = "opentelemetry" }
+flyway-core = { module = "org.flywaydb:flyway-core", version.ref = "flyway" }
+flyway-postgresql = { module = "org.flywaydb:flyway-database-postgresql", version.ref = "flyway" }
+postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
+lettuce-core = { module = "io.lettuce:lettuce-core", version.ref = "lettuce" }
 
 # build-logic（Convention Plugin）が implementation として使う、プラグイン本体の座標
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }

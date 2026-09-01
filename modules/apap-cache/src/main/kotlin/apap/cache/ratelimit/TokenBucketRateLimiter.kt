@@ -3,13 +3,15 @@ package apap.cache.ratelimit
 import apap.domain.event.DomainEvent
 import apap.domain.event.EventMetadata
 import apap.domain.event.RateLimitExceeded
+import apap.domain.model.vo.ProviderId
+import apap.domain.model.vo.RateLimitAction
+import apap.domain.model.vo.TenantId
 import apap.domain.port.Clock
 import apap.domain.port.DomainEventPublisher
 import apap.domain.port.IdGenerator
+import apap.domain.port.MetricsRecorder
 import kotlinx.coroutines.delay
 import java.time.Duration
-import java.time.Instant
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.ceil
 import kotlin.math.min
 
@@ -37,24 +39,27 @@ data class RateLimiterConfig(
 }
 
 /**
- * ADR-0001: Rate Limiterのカウンタ実装はapap-cacheの責務、RDBMSに置かない。単一プロセス埋込利用
- * では本in-memory実装が既定（分散KVS実装はP8想定）。
+ * ADR-0001: Rate Limiterのカウンタ実装はapap-cacheの責務、RDBMSに置かない。[store]の既定は
+ * [InMemoryRateLimitCounterStore]（単一プロセス埋込利用ではこれで十分）、マルチノード運用時は
+ * 分散KVS実装（`modules/apap-infrastructure-distributed`）に差し替える。
+ *
+ * [store]へのfind→更新→saveは[tryAcquire]/[estimateWaitMillis]内で`@Synchronized`により
+ * プロセス内アトミック性を保つ（複数ノードにまたがる真のアトミック性は保証しない——`acquire()`の
+ * 既存コメントの通りbounded waitは元々「保証ではなくベストエフォート」という前提であり、
+ * 分散Store差替はこの前提を変えない。要件充足に影響しない実装判断のためADR化せずここに根拠を記す）。
  */
 class TokenBucketRateLimiter(
     private val clock: Clock,
     private val eventPublisher: DomainEventPublisher,
     private val idGenerator: IdGenerator,
     private val config: RateLimiterConfig = RateLimiterConfig(),
+    // 02_システム仕様.md 2.19 apap_rate_limit_events_total{action="wait"}。14章に定義の無い
+    // イベントを新設するとDomainEventCoverageTestのクローズドセット制約に反するため、Event Bus
+    // 経由ではなくMetricsRecorderへ直接記録する（要件充足に影響しない実装判断のためADR化せず
+    // ここに根拠を記す）。宿主が未注入ならnullのまま記録をスキップする。
+    private val metricsRecorder: MetricsRecorder? = null,
+    private val store: RateLimitCounterStore = InMemoryRateLimitCounterStore(),
 ) : RateLimiter {
-    private data class Bucket(
-        var tokens: Double,
-        var lastRefillAt: Instant,
-        val capacity: Int,
-        val refillPerSecond: Double,
-    )
-
-    private val buckets = ConcurrentHashMap<RateLimitScope, Bucket>()
-
     override fun configure(
         scope: RateLimitScope,
         capacity: Int,
@@ -62,7 +67,7 @@ class TokenBucketRateLimiter(
     ) {
         require(capacity > 0) { "capacity must be positive: $capacity" }
         require(refillPerSecond > 0.0) { "refillPerSecond must be positive: $refillPerSecond" }
-        buckets[scope] = Bucket(capacity.toDouble(), clock.now(), capacity, refillPerSecond)
+        store.save(scope, TokenBucketState(capacity.toDouble(), clock.now(), capacity, refillPerSecond))
     }
 
     @Synchronized
@@ -71,20 +76,19 @@ class TokenBucketRateLimiter(
         cost: Int,
     ): Boolean {
         require(cost > 0) { "cost must be positive: $cost" }
-        val bucket =
-            buckets.computeIfAbsent(scope) {
-                Bucket(
-                    config.defaultCapacity.toDouble(),
-                    clock.now(),
-                    config.defaultCapacity,
-                    config.defaultRefillPerSecond,
-                )
-            }
-        refill(bucket)
+        val bucket = refill(currentBucket(scope))
         if (bucket.tokens < cost) return false
-        bucket.tokens -= cost
+        store.save(scope, bucket.copy(tokens = bucket.tokens - cost))
         return true
     }
+
+    private fun currentBucket(scope: RateLimitScope): TokenBucketState =
+        store.find(scope) ?: TokenBucketState(
+            config.defaultCapacity.toDouble(),
+            clock.now(),
+            config.defaultCapacity,
+            config.defaultRefillPerSecond,
+        )
 
     @Suppress("ReturnCount")
     override suspend fun acquire(
@@ -105,7 +109,10 @@ class TokenBucketRateLimiter(
 
         // The bucket may have been drained by a concurrent acquirer while we waited; re-check
         // rather than assume success (bounded wait, not a guarantee).
-        if (tryAcquire(scope, cost)) return AcquireResult.Acquired(scope, Permit(scope), waitedMillis = waitMillis)
+        if (tryAcquire(scope, cost)) {
+            metricsRecorder?.recordRateLimitEvent(scopeLabel(scope).first, RateLimitAction.WAIT)
+            return AcquireResult.Acquired(scope, Permit(scope), waitedMillis = waitMillis)
+        }
         return reject(scope, traceId, waitMillis, maxWait)
     }
 
@@ -124,53 +131,54 @@ class TokenBucketRateLimiter(
         scope: RateLimitScope,
         cost: Int,
     ): Long {
-        val bucket =
-            buckets.computeIfAbsent(scope) {
-                Bucket(
-                    config.defaultCapacity.toDouble(),
-                    clock.now(),
-                    config.defaultCapacity,
-                    config.defaultRefillPerSecond,
-                )
-            }
-        refill(bucket)
+        val bucket = refill(currentBucket(scope))
+        store.save(scope, bucket)
         val deficit = cost - bucket.tokens
         if (deficit <= 0.0) return 0L
         return ceil(deficit / bucket.refillPerSecond * MILLIS_PER_SECOND).toLong()
     }
 
-    private fun refill(bucket: Bucket) {
+    /** 純関数として新しい[TokenBucketState]を返す（永続化は呼び出し側の責務）。 */
+    private fun refill(bucket: TokenBucketState): TokenBucketState {
         val now = clock.now()
         val elapsedSeconds = Duration.between(bucket.lastRefillAt, now).toMillis() / MILLIS_PER_SECOND
-        if (elapsedSeconds <= 0.0) return
-        bucket.tokens = min(bucket.capacity.toDouble(), bucket.tokens + elapsedSeconds * bucket.refillPerSecond)
-        bucket.lastRefillAt = now
+        if (elapsedSeconds <= 0.0) return bucket
+        val refilledTokens = min(bucket.capacity.toDouble(), bucket.tokens + elapsedSeconds * bucket.refillPerSecond)
+        return bucket.copy(tokens = refilledTokens, lastRefillAt = now)
     }
 
     private fun rateLimitExceededEvent(
         scope: RateLimitScope,
         traceId: String,
     ): DomainEvent {
-        val (scopeLabel, tenantId, providerId) =
-            when (scope) {
-                is RateLimitScope.TenantScope -> Triple("tenant", scope.tenantId, null)
-                is RateLimitScope.ProviderScope -> Triple("provider", null, scope.providerId)
-            }
+        val (scopeLabel, tenantId, providerId) = scopeLabel(scope)
         return RateLimitExceeded(
-            meta =
-                EventMetadata(
-                    eventId = idGenerator.newId(),
-                    occurredAt = clock.now(),
-                    traceId = traceId,
-                    tenantId = tenantId,
-                    aggregateId = scopeLabel,
-                    version = 0,
-                ),
+            meta = eventMetadata(traceId, tenantId, scopeLabel),
             scope = scopeLabel,
             tenantId = tenantId,
             providerId = providerId,
         )
     }
+
+    private fun scopeLabel(scope: RateLimitScope): Triple<String, TenantId?, ProviderId?> =
+        when (scope) {
+            is RateLimitScope.TenantScope -> Triple("tenant", scope.tenantId, null)
+            is RateLimitScope.ProviderScope -> Triple("provider", null, scope.providerId)
+        }
+
+    private fun eventMetadata(
+        traceId: String,
+        tenantId: TenantId?,
+        scopeLabel: String,
+    ): EventMetadata =
+        EventMetadata(
+            eventId = idGenerator.newId(),
+            occurredAt = clock.now(),
+            traceId = traceId,
+            tenantId = tenantId,
+            aggregateId = scopeLabel,
+            version = 0,
+        )
 
     private companion object {
         const val MILLIS_PER_SECOND = 1000.0

@@ -16,11 +16,13 @@ import apap.testkit.inmemory.InMemoryClock
 import apap.testkit.inmemory.InMemoryDomainEventPublisher
 import apap.testkit.inmemory.InMemoryIdGenerator
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -30,6 +32,7 @@ import java.time.Duration
 import java.time.Instant
 
 /** 02_システム仕様.md 2.10 / 05_シーケンス設計.md 5.3 / 09_状態遷移図.md 9.6。 */
+@OptIn(ExperimentalCoroutinesApi::class)
 class StreamingEngineTest {
     private val clock = InMemoryClock(Instant.parse("2026-01-01T00:00:00Z"))
     private val events = InMemoryDomainEventPublisher()
@@ -307,7 +310,7 @@ class StreamingEngineTest {
 
     @Test
     fun `backpressure suspends the producer once the buffer capacity is reached`() =
-        runBlocking {
+        runTest {
             // A tiny byte budget forces a small buffer capacity (~1 item).
             val config = StreamingConfig(backpressureBufferBytes = 1)
             val manyChunks =
@@ -327,7 +330,10 @@ class StreamingEngineTest {
                         gate.await()
                     }
                 }
-            delay(300)
+            // Deterministically run the producer to its natural suspension point (blocked on the
+            // full buffer or on gate.await()) with zero elapsed time, instead of guessing a real
+            // wall-clock delay (flaky under load: CLAUDE.md forbids real-time test dependencies).
+            runCurrent()
             val callsWhileConsumerBlocked = stream.calls
             gate.complete(Unit)
             withTimeout(5_000) { job.join() }
@@ -342,7 +348,7 @@ class StreamingEngineTest {
 
     @Test
     fun `byte budget holds across a mix of small and large chunk sizes, not just item count`() =
-        runBlocking {
+        runTest {
             // A fixed-item-count buffer (the pre-fix bug: bytes/256, coerced to >=1) would admit
             // this many items regardless of their actual size. A byte-accumulating gate must not.
             val config = StreamingConfig(backpressureBufferBytes = 200)
@@ -368,7 +374,9 @@ class StreamingEngineTest {
                         if (collected.size == 1) gate.await()
                     }
                 }
-            delay(300)
+            // See the equivalent comment in the backpressure test above: run deterministically to
+            // the producer's natural suspension point instead of guessing a real wall-clock delay.
+            runCurrent()
             val callsWhileBlocked = stream.calls
             gate.complete(Unit)
             withTimeout(5_000) { job.join() }

@@ -1,5 +1,6 @@
 package apap.testkit.inmemory
 
+import apap.domain.event.DomainEvent
 import apap.domain.model.modelcatalog.Model
 import apap.domain.model.vo.CapabilityId
 import apap.domain.model.vo.ModelId
@@ -8,6 +9,7 @@ import apap.domain.port.ModelRepository
 
 class InMemoryModelRepository : ModelRepository {
     private val models = mutableMapOf<ModelId, Model>()
+    private val eventsById = mutableMapOf<ModelId, MutableList<DomainEvent>>()
 
     override fun findById(id: ModelId): Model? = models[id]
 
@@ -22,4 +24,13 @@ class InMemoryModelRepository : ModelRepository {
     override fun save(model: Model) {
         models[model.modelId] = model
     }
+
+    override fun saveEvents(
+        id: ModelId,
+        events: List<DomainEvent>,
+    ) {
+        eventsById.getOrPut(id) { mutableListOf() }.addAll(events)
+    }
+
+    fun eventsFor(id: ModelId): List<DomainEvent> = eventsById[id].orEmpty()
 }

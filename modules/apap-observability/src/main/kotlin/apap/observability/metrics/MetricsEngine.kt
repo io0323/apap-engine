@@ -5,6 +5,7 @@ import apap.domain.event.CacheStored
 import apap.domain.event.CircuitBreakerStateChanged
 import apap.domain.event.DomainEvent
 import apap.domain.event.FallbackExecuted
+import apap.domain.event.ProviderHealthChanged
 import apap.domain.event.RateLimitExceeded
 import apap.domain.event.RequestCompleted
 import apap.domain.event.RequestFailed
@@ -19,6 +20,7 @@ import apap.domain.model.vo.RateLimitAction
 import apap.domain.model.vo.TokenDirection
 import apap.domain.port.DomainEventSubscriber
 import apap.domain.port.MetricsRecorder
+import apap.domain.port.ProviderRepository
 import apap.infrastructure.eventbus.IdempotentEventHandler
 import org.slf4j.LoggerFactory
 
@@ -27,27 +29,28 @@ private const val MILLIS_PER_SECOND = 1000.0
 /**
  * 02_システム仕様.md 2.19 Monitoring仕様。[eventSubscriber]（Event Bus）を購読し、
  * 既に発火済みのDomain Eventから導出可能なメトリクスを[recorder]（[MetricsRecorder]）へ記録する。
+ * `apap.runtime.ExecutionEngineComposer`が本クラスを実際に構築・配線する（配線コード自体は本モジュールの
+ * 責務外のため、apap-domainへの依存を持たないよう[eventSubscriber]/[recorder]/[providerRepository]は
+ * すべて呼び出し側から注入される）。
  *
  * メトリクス記録（OpenTelemetry Counter/Histogram/Gaugeの更新）はインメモリかつ極めて低コストなため、
  * [apap.observability.audit.AuditEngine]と異なり非同期化しない（同期ハンドラ内で直接呼ぶ）。
  *
- * **既知の未カバー範囲**（`docs/traceability/requirements-matrix.md` NFR-OBS-002/FR-OBS-002参照）:
- * - `apap_cache_events_total`: [CacheHit]/[CacheStored]の型自体は存在しハンドラも実装済みだが、
- *   現時点でどちらも本番コードから一度もpublishされていない（`DefaultCacheEngine`/`ExecutionEngine`が
- *   未配線）。Cache miss相当のシグナルも存在しない。Cache層の配線は別タスク。
- * - `apap_overhead_duration_seconds`: phase別（gateway/prompt/routing/mapping）の所要時間はDomain
- *   Eventとして発火されておらず（`PhaseTimings`はログのみ）、Event Bus購読では導出不能。
- * - `apap_provider_health`: `ProviderHealthChanged`を発火するHealth Store自体が未実装
- *   （FR-PRV-006、本タスクの範囲外）。
- * - `apap_rate_limit_events_total{action="wait"}`: `RateLimitExceeded`はreject時のみ発火され、
- *   `AcquireResult.Acquired.waitedMillis`（wait成功）はEvent化されていない。
+ * `apap_overhead_duration_seconds`（phase別所要時間）はDomain Eventとして発火されないため
+ * （`PhaseTimings`が実測点そのもの）、Event Bus購読では導出不能——`apap.execution.PhaseTimings`が
+ * [MetricsRecorder.recordOverheadDuration]を直接呼ぶ。`apap_rate_limit_events_total{action="wait"}`も
+ * 同じ理由（14章に無いイベントを新設すると`DomainEventCoverageTest`のクローズドセット制約に反する）で
+ * `TokenBucketRateLimiter`（apap-cache）が直接呼ぶ。
  *
- * 上記4件は`MetricsRecorder`のメソッド自体は用意済み（[apap.domain.port.MetricsRecorder]参照）だが、
- * 呼び出し元が存在しない。CapabilitySmokeTestと同じ理由で、存在を偽装せずここに明記する。
+ * **既知の未カバー範囲**: `apap_provider_health`は[onProviderHealthChanged]で配線済みだが、
+ * [ProviderHealthChanged]を実際に発火する周期ヘルスチェック機構（Health Store、FR-PRV-006）自体が
+ * 未実装のため、その機構が実装されイベントが届き始めるまでは値が記録されない
+ * （`ProviderHealthAggregator`と同じ既知の未カバー範囲、KDoc/requirements-matrix.md参照）。
  */
 class MetricsEngine(
     eventSubscriber: DomainEventSubscriber,
     private val recorder: MetricsRecorder,
+    private val providerRepository: ProviderRepository,
 ) {
     init {
         eventSubscriber.subscribe(IdempotentEventHandler(::handle))
@@ -66,6 +69,7 @@ class MetricsEngine(
             is RetryExecuted -> onRetryExecuted(event)
             is FallbackExecuted -> onFallbackExecuted(event)
             is CircuitBreakerStateChanged -> onCircuitBreakerStateChanged(event)
+            is ProviderHealthChanged -> onProviderHealthChanged(event)
             is StreamOpened -> event.meta.tenantId?.let(recorder::incrementStreamingConnections)
             is StreamClosed -> event.meta.tenantId?.let(recorder::decrementStreamingConnections)
             is StreamAborted -> event.meta.tenantId?.let(recorder::decrementStreamingConnections)
@@ -126,6 +130,16 @@ class MetricsEngine(
 
     private fun onCircuitBreakerStateChanged(event: CircuitBreakerStateChanged) {
         recorder.recordCircuitBreakerState(event.cbKey.providerId, event.cbKey.modelId, event.to)
+    }
+
+    /**
+     * `apap_provider_health{provider, region}`（2.19表）。[ProviderHealthChanged]自身はregionを
+     * 運ばない（Providerは複数regionにまたがりうるため）ため、[providerRepository]から解決し、
+     * 該当Providerが持つ全regionへ記録する。削除済み等でProviderが見つからない場合は記録しない。
+     */
+    private fun onProviderHealthChanged(event: ProviderHealthChanged) {
+        val provider = providerRepository.findById(event.providerId) ?: return
+        provider.regions.forEach { region -> recorder.recordProviderHealth(event.providerId, region.code, event.to) }
     }
 
     /** [apap.domain.service.routing.Candidate.key]の`"providerId:modelId"`形式を分解する。 */

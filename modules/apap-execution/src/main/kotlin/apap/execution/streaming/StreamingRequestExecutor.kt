@@ -36,6 +36,11 @@ import apap.execution.circuitbreaker.Permit
 import apap.execution.mapping.RequestMapper
 import apap.execution.mapping.ResponseMapper
 import apap.provider.AdapterRegistry
+import io.opentelemetry.api.common.AttributeKey
+import io.opentelemetry.api.trace.Span
+import io.opentelemetry.api.trace.StatusCode
+import io.opentelemetry.api.trace.Tracer
+import io.opentelemetry.context.Context
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
@@ -70,15 +75,17 @@ class StreamingRequestExecutor(
     private val clock: Clock,
     private val eventPublisher: DomainEventPublisher,
     private val idGenerator: IdGenerator,
+    private val tracer: Tracer,
     private val rateLimiterMaxWait: Duration = Duration.ofSeconds(RATE_LIMITER_MAX_WAIT_SECONDS),
 ) {
-    @Suppress("LoopWithTooManyJumpStatements")
+    @Suppress("LoopWithTooManyJumpStatements", "TooGenericExceptionCaught")
     fun execute(
         chain: FallbackChain,
         prompt: ProcessedPrompt,
         req: CanonicalRequest,
         ctx: ExecutionContext,
         reservation: Reservation,
+        parentSpan: Span,
     ): Flow<StreamChunk> =
         flow {
             var lastError: NormalizedError? = null
@@ -86,17 +93,37 @@ class StreamingRequestExecutor(
             for (index in chain.candidates.indices) {
                 val candidate = chain.candidates[index]
                 if (circuitBreaker.state(CbKey(candidate.providerId, candidate.modelId)) == CbState.OPEN) continue
+                // 02_システム仕様.md 2.19 Span構成の`attempt[n]`。非Streaming版（AttemptExecutor）と
+                // 異なり本メソッドはFlowを返す遅延評価のため、Span終了はここ（呼び出し元、emitAll完了後）
+                // で行う必要がある——attemptCandidate内で開閉するとチャンク送出中の実時間を計測できない。
+                val attemptSpan =
+                    tracer
+                        .spanBuilder("attempt[${index + 1}]")
+                        .setParent(Context.root().with(parentSpan))
+                        .setAttribute(ATTR_PROVIDER, candidate.providerId.value)
+                        .setAttribute(ATTR_MODEL, candidate.modelId.value)
+                        .setAttribute(ATTR_ATTEMPT, (index + 1).toLong())
+                        .startSpan()
                 try {
                     emitAll(attemptCandidate(candidate, prompt, req, ctx, reservation))
+                    attemptSpan.setStatus(StatusCode.OK)
                     succeeded = true
                     break
                 } catch (e: StreamAbortedBeforeFirstChunkException) {
+                    attemptSpan.recordException(e)
+                    attemptSpan.setStatus(StatusCode.ERROR, e.normalizedError.message)
                     lastError = e.normalizedError
                     val nextCandidate = chain.candidates.getOrNull(index + 1) ?: break
                     val remaining = ctx.remaining(clock.now())
                     val needed = Duration.ofMillis(nextCandidate.p50LatencyMs.toLong())
                     if (remaining <= needed) break
                     publishFallbackExecuted(req, ctx, candidate, nextCandidate, e.normalizedError)
+                } catch (e: Throwable) {
+                    attemptSpan.recordException(e)
+                    attemptSpan.setStatus(StatusCode.ERROR)
+                    throw e
+                } finally {
+                    attemptSpan.end()
                 }
             }
             if (!succeeded) {
@@ -144,7 +171,9 @@ class StreamingRequestExecutor(
 
         val normalized = streamingEngine.normalize(adapterStream, ctx)
         val withTurnRecording =
-            req.conversationId?.let { streamingTurnRecorder.record(it, candidate.modelId, normalized) } ?: normalized
+            req.conversationId?.let {
+                streamingTurnRecorder.record(it, req.tenantId, candidate.modelId, normalized)
+            } ?: normalized
         return withOutcomeTracking(withTurnRecording, permit, ctx, candidate, req, reservation)
     }
 
@@ -326,5 +355,8 @@ class StreamingRequestExecutor(
 
     private companion object {
         const val RATE_LIMITER_MAX_WAIT_SECONDS = 5L
+        val ATTR_PROVIDER: AttributeKey<String> = AttributeKey.stringKey("provider")
+        val ATTR_MODEL: AttributeKey<String> = AttributeKey.stringKey("model")
+        val ATTR_ATTEMPT: AttributeKey<Long> = AttributeKey.longKey("attempt")
     }
 }

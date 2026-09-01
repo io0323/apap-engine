@@ -1,13 +1,19 @@
 package apap.cache
 
 import apap.domain.event.AliasChanged
+import apap.domain.event.CacheHit
+import apap.domain.event.CacheStored
+import apap.domain.event.CacheType
 import apap.domain.event.DomainEvent
+import apap.domain.event.EventMetadata
 import apap.domain.model.execution.CanonicalRequest
 import apap.domain.model.execution.CanonicalResponse
 import apap.domain.model.execution.ProcessedPrompt
 import apap.domain.model.vo.AliasId
 import apap.domain.port.AliasRepository
 import apap.domain.port.Clock
+import apap.domain.port.DomainEventPublisher
+import apap.domain.port.IdGenerator
 
 /**
  * [CacheEngine]の既定実装。02_システム仕様.md 2.14:
@@ -35,6 +41,8 @@ class DefaultCacheEngine<E>(
     private val config: CacheConfig,
     private val aliasRepository: AliasRepository,
     private val clock: Clock,
+    private val eventPublisher: DomainEventPublisher,
+    private val idGenerator: IdGenerator,
 ) : CacheEngine {
     override fun lookup(
         request: CanonicalRequest,
@@ -46,7 +54,14 @@ class DefaultCacheEngine<E>(
             }
         val responseCacheHit =
             if (cacheabilityPolicy.isCacheable(request)) cacheStore.get(responseCacheKey(request)) else null
-        return (requestCacheHit ?: responseCacheHit)?.let { withCacheMetadata(cacheCodec.decode(it)) }
+        val (hit, cacheType) =
+            when {
+                requestCacheHit != null -> requestCacheHit to CacheType.REQUEST
+                responseCacheHit != null -> responseCacheHit to CacheType.RESPONSE
+                else -> return null
+            }
+        publishCacheEvent(request) { meta -> CacheHit(meta, request.requestId, cacheType) }
+        return withCacheMetadata(cacheCodec.decode(hit))
     }
 
     override fun store(
@@ -59,10 +74,31 @@ class DefaultCacheEngine<E>(
         if (idempotencyKey != null) {
             val requestCacheKey = cacheKeyStrategy.requestCacheKey(request.tenantId, idempotencyKey)
             cacheStore.put(requestCacheKey, encoded, config.requestCacheTtl)
+            publishCacheEvent(request) { meta -> CacheStored(meta, request.requestId, CacheType.REQUEST) }
         }
         if (!cacheabilityPolicy.isCacheable(request)) return
         val responseCacheKey = responseCacheKey(request)
         cacheStore.put(responseCacheKey, encoded, config.responseCacheTtlFor(request.capabilityId))
+        publishCacheEvent(request) { meta -> CacheStored(meta, request.requestId, CacheType.RESPONSE) }
+    }
+
+    /** 14.2: CacheHit/CacheStoredは高頻度のためAudit対象外・メトリクス専用（[apap.observability.metrics.MetricsEngine]参照）。 */
+    private fun publishCacheEvent(
+        request: CanonicalRequest,
+        build: (EventMetadata) -> DomainEvent,
+    ) {
+        eventPublisher.publish(
+            build(
+                EventMetadata(
+                    eventId = idGenerator.newId(),
+                    occurredAt = clock.now(),
+                    traceId = request.traceId,
+                    tenantId = request.tenantId,
+                    aggregateId = request.requestId.value,
+                    version = 0,
+                ),
+            ),
+        )
     }
 
     override fun invalidateByAlias(aliasId: AliasId) {

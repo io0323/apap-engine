@@ -1,0 +1,316 @@
+# prompt-engine連携ガイド（P9）
+
+> このドキュメントは `apap-engine`（本リポジトリ）が提供する埋込用ライブラリ `modules/apap-runtime`
+> （成果物 `apap-runtime`、型 `ApapEngine`/`ApapEngineBuilder`）を、別プロジェクト
+> `prompt-engine`（`/Users/io/projects/GitHub/engine/prompt-engine`、Spring Boot）へ埋め込むための
+> 実務手順を記す。`docs/design/*.md` は編集しない方針のため、設計書に書かれていない実装判断・
+> 現物確認済みの事実はすべてここに書く。
+
+## 0. 前提: prompt-engine側の現状（2026-08-31時点で現物確認済み）
+
+- `promptengine.domain.execution.ExecutionAdapter`（`prompt-engine-domain`）が委譲の唯一の入口。
+  `fun execute(prompt: RenderedPrompt, policy: ExecutionPolicy): RawResponse`
+  （**非suspend**。prompt-engineはまだcoroutinesを一切使っていない——後述4章参照）。
+- 配線点は `promptengine.bootstrap.config.ExecutionConfig.executionAdapter`
+  （`prompt-engine-bootstrap`）の`when (providerProperties.provider)`分岐:
+  `"apap" -> error("... not yet implemented; tracked in Issue #31 and ADR-0031")`。
+  ここへ実アダプタを実装して差し込むのがゴール。
+- ADR-0031（prompt-engine側）で「APAPは独立基盤として別途構築する」方針は既に確定済み。
+  本ドキュメントはその実装編にあたる。
+- Issue #31「APAP統合時にリトライ責務の重複を解消する」が既に追跡中（3章参照）。
+
+## 1. 追加する依存
+
+`prompt-engine`のGradleモジュール構成は「具象クラスのDI結線は`prompt-engine-bootstrap`
+（Composition Root）のみで行う」という規約を既に持つ（同モジュール`build.gradle.kts`の
+コメント）。これに従い、依存は2箇所・2種類のみ追加する（新規外部依存座標としては
+`apap-runtime`と`apap-api`の2つのみ）:
+
+| モジュール | 追加する依存 | 理由 |
+|---|---|---|
+| `prompt-engine-infrastructure` | `implementation(apap-runtime)`, `implementation(apap-api)` | `ApapExecutionAdapter`（`ExecutionAdapter`実装）本体をここに置く（`ExecutionAdapter`のKDoc「実APAP接続は`prompt-engine-infrastructure`」と一致）。`ApapEngine`型（apap-runtime）と`ApapRequest`/`ApapResponse`（apap-api）の両方を参照するため両方必要 |
+| `prompt-engine-bootstrap` | `implementation(apap-runtime)` | `ApapEngineBuilder`で`ApapEngine`シングルトンを構築し`@Bean(destroyMethod = "close")`で公開するのはComposition Rootの責務。`apap-api`型は直接参照しないため不要 |
+
+`apap-runtime`は`api(project(":modules:apap-domain"))`/`api(project(":modules:apap-provider"))`
+としているため（`ApapAdmin`のシグネチャがこれらの型を公開するため）、`apap-domain`/
+`apap-provider`はGradleの推移的依存として自動的に見える。**これらをprompt-engine側の
+`build.gradle.kts`へ明示的に追加してはならない**（依存宣言を「apap-runtime, apap-apiの2つのみ」
+に保つ意図が壊れる）。
+
+## 2. 最小の初期化コード
+
+### 2-a. `prompt-engine-bootstrap`: `ApapEngine`をSpring Beanとして構築する
+
+```kotlin
+package promptengine.bootstrap.config
+
+import apap.runtime.ApapEngine
+import apap.runtime.ApapEngineBuilder
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+
+@Configuration
+class ApapEngineConfig {
+    /**
+     * `destroyMethod = "close"`でSpringのシャットダウンフックに`ApapEngine.close()`
+     * （DRAINING→実行中完遂→Plugin unload）を接続する。
+     * `adapterRegistry`未指定＝Plugin未配置なら`Provider.beginValidation`は失敗する
+     * （`EmptyAdapterRegistry`）。実運用では`pluginDirectory(dir, trustedPublicKey)`か
+     * `adapterRegistry(...)`のいずれかを明示的に渡すこと（現時点でPlugin配布方針は
+     * prompt-engine側で未確定のため、本ガイドでは配線の型だけ示す）。
+     */
+    @Bean(destroyMethod = "close")
+    fun apapEngine(): ApapEngine = ApapEngineBuilder().build()
+}
+```
+
+依存ゼロ構成（`ApapEngineBuilder()`に何も渡さない）でも`build()`自体は成功する
+（`ApapEngineBuilderTest`の`zero-dependency build ...`系テスト参照）。ただしその場合
+Provider未登録のためどの`execute()`呼出も`FR-RTE-001`の候補解決で失敗する。
+本番投入前に`ApapEngine.admin`経由でProvider/Model登録を行う運用手順（Admin API相当）を
+別途prompt-engine側で用意すること（本ガイドの範囲外）。
+
+### 2-b. `AiExecutionPort`パターン: prompt-engine側にPortを立て、APAP実装を注入する
+
+prompt-engineは既に`ExecutionAdapter`という名のPortを持っているため、**新たに
+`AiExecutionPort`を追加する必要はない**。`ExecutionAdapter`自身がそのPortである。
+推奨パターンは「`ExecutionAdapter`の実装として`ApapExecutionAdapter`を書き、
+`ApapEngine`をコンストラクタ注入する」——Ports & Adaptersとして既に正しい形。
+
+```kotlin
+package promptengine.infrastructure.execution
+
+import apap.api.ApapRequest
+import apap.domain.model.vo.CapabilityId
+import apap.domain.model.vo.ContentPart
+import apap.domain.model.vo.TenantId
+import apap.execution.ExecutionFailedException as ApapExecutionFailedException
+import apap.runtime.ApapEngine
+import kotlinx.coroutines.runBlocking
+import promptengine.domain.execution.ExecutionAdapter
+import promptengine.domain.execution.ExecutionErrorType
+import promptengine.domain.execution.ExecutionFailedException
+import promptengine.domain.execution.ExecutionPolicy
+import promptengine.domain.execution.RawResponse
+import promptengine.domain.execution.Usage
+import promptengine.domain.render.RenderedPrompt
+import promptengine.domain.shared.LatencyMs
+import promptengine.domain.shared.SensitiveValue
+import promptengine.domain.shared.TokenCount
+
+class ApapExecutionAdapter(
+    private val apapEngine: ApapEngine,
+    private val tenantId: TenantId,
+    private val capabilityId: CapabilityId = CapabilityId("chat"),
+) : ExecutionAdapter {
+    // ExecutionAdapter.execute は非suspend（0章参照）。ApapEngine.execute は suspend fun のため
+    // runBlocking でブリッジする。呼出元（RetryingExecutionAdapter）もExecutionCoordinatorも
+    // 現時点で非同期を要求しないため、この境界1箇所に閉じ込める。
+    override fun execute(
+        prompt: RenderedPrompt,
+        policy: ExecutionPolicy,
+    ): RawResponse {
+        val startNanos = System.nanoTime()
+        return try {
+            val response =
+                runBlocking {
+                    apapEngine.execute(
+                        ApapRequest(
+                            tenantId = tenantId,
+                            principal = "prompt-engine",
+                            capabilityId = capabilityId,
+                            input = prompt.messages.map { ContentPart.Text(it.content) },
+                            timeoutBudget = java.time.Duration.ofMillis(policy.timeoutMs),
+                        ),
+                    )
+                }
+            RawResponse(
+                content = SensitiveValue.of(response.output.joinToString("") { (it as? ContentPart.Text)?.text.orEmpty() }),
+                usage =
+                    Usage(
+                        TokenCount(response.usage.inputTokens.value),
+                        TokenCount(response.usage.outputTokens.value),
+                    ),
+                latency = LatencyMs((System.nanoTime() - startNanos) / NANOS_PER_MILLI),
+            )
+        } catch (e: ApapExecutionFailedException) {
+            throw ExecutionFailedException(e.error.toExecutionErrorType(), retryCount = 0, cause = e)
+        }
+    }
+
+    private companion object {
+        const val NANOS_PER_MILLI = 1_000_000L
+    }
+}
+```
+
+`ApapRequest.principal`に固定文字列`"prompt-engine"`を置いているのは仮実装であり、
+実際には呼出元ユーザー/セッション識別子を`RenderedPrompt`より上流（`ExecutionPolicy`拡張か、
+`ExecutionAdapter.execute`のシグネチャ変更）から渡す設計が必要になる
+（本ガイドの範囲外、prompt-engine側でVOを増やす判断が要る）。同様に`tenantId`も
+コンストラクタ固定ではなくリクエスト単位で決まるのが自然だが、現在の
+`ExecutionAdapter.execute(prompt, policy)`シグネチャにはテナント識別子を運ぶ場所がない
+——prompt-engine側の設計判断が必要な箇所として明記する。
+
+### 2-c. `ExecutionErrorType`マッピング
+
+APAPの`NormalizedError.category`（`AdapterErrorCategory`）→prompt-engineの
+`ExecutionErrorType`の対応表（本ガイドの推奨、Issue #31の解消判断はprompt-engine側に委ねる）:
+
+| APAP `AdapterErrorCategory` | `retryable` | → prompt-engine `ExecutionErrorType` |
+|---|---|---|
+| `RATE_LIMITED` | true | `RATE_LIMITED` |
+| `TRANSIENT` | true | `SERVER_ERROR` |
+| `PROVIDER_UNAVAILABLE` | true | `SERVER_ERROR` |
+| `MODEL_ERROR` | 通常false | `CLIENT_ERROR` |
+| `INVALID_REQUEST` | false | `CLIENT_ERROR` |
+| `AUTH_ERROR` | false | `CLIENT_ERROR` |
+| `CONTENT_FILTERED` | false | `CLIENT_ERROR` |
+| `UNSUPPORTED_CAPABILITY` | false | `CLIENT_ERROR` |
+| 上記以外・分類不能 | - | `UNKNOWN` |
+
+```kotlin
+private fun apap.domain.model.vo.NormalizedError.toExecutionErrorType(): ExecutionErrorType =
+    when {
+        category == apap.domain.model.vo.AdapterErrorCategory.RATE_LIMITED -> ExecutionErrorType.RATE_LIMITED
+        retryable -> ExecutionErrorType.SERVER_ERROR
+        else -> ExecutionErrorType.CLIENT_ERROR
+    }
+```
+
+**`CONNECT_TIMEOUT`/`READ_TIMEOUT`の区別が消える理由**: prompt-engineがこの2値を分けるのは
+「未送信と確実に言えるか（二重課金防止）」を、直接HTTP接続するアダプタが自前で判定する
+必要があったため（ADR-0014決定7、ADR-0029決定3・4）。APAPを埋込ライブラリとして呼ぶ構成では
+prompt-engine⇔APAP間はプロセス内関数呼出であり、Provider⇔APAP間のネットワーク境界の
+安全性判定は**APAP自身の`NormalizedError.retryable`が既に行っている**
+（02_システム仕様.md 2.11の表）。そのためこの2値の区別を呼出側で再現する必要はない
+——`retryable`のみを見れば足りる。
+
+**Retry責務の重複について（Issue #31宛のメモ）**: APAPの`execute()`が例外を投げて返ってくる
+時点で、APAP内部のRetry（既定最大3回）とFallback（既定3段）は**既に使い切られている**。
+`RetryingExecutionAdapter`によるprompt-engine側の追加リトライは、単純な「同じ失敗の繰り返し」
+ではなく「APAPへの新規`execute()`呼出＝新しいRouting決定（別Provider/Modelの再選定）」を
+意味するため、二重リトライというより多段防御に近い。ただし`policy.maxRetries`と
+APAP内部の既定値の掛け算で最大試行回数が意図せず膨れる点（例: PE側2回×APAP内部3回＝
+最悪6回のProvider呼出）は実際の重複であり、Issue #31で判断すべき論点として引き継ぐ。
+`retryAfterMs`（`NormalizedError`が保持、レート制限時のProvider指定待機時間）は現在の
+`ExecutionFailedException`に対応するフィールドがなく、素通しできない
+——値を活用したい場合は`ExecutionFailedException`へのフィールド追加がprompt-engine側で必要。
+
+## 3. ストリーミングのブリッジ（新規未踏領域であることの明記）
+
+prompt-engineは現時点で**coroutines/`Flow`を一切使っていない**
+（`ExecutionAdapter.execute`が非suspendである通り）。`ApapEngine.executeStream(request): Flow<ApapStreamChunk>`
+をprompt-engine側へブリッジするには、少なくとも次のいずれかの設計判断がprompt-engine側で
+必要になる（本ガイドはどちらか一方を推奨しない。既存のPE設計思想=非同期皆無、との整合を
+考慮した意思決定が要る）:
+
+1. `ExecutionAdapter`に`executeStream`相当のメソッドを追加し、`Flow<T>`または
+   `kotlin.sequences.Sequence<T>`／コールバック型（`(T) -> Unit`）のいずれかで返す新規Port
+   シグネチャを設計する（既存の`execute`は変えない、追加のみ）。
+2. Streamingを当面サポート対象から外し、`ApapEngine.execute`（非Streaming）のみを繋ぐ
+   （FR-CAP-004はAPAP側では実装済みだが、PE側での消費経路が無い状態を許容する）。
+
+**このドキュメントではどちらか一方を選定しない**（prompt-engine側のアーキテクチャ判断であり、
+APAP側から強制すべきでないため）。参考として、`Flow<ApapStreamChunk>`を同期的な
+`Iterator<ApapStreamChunk>`へ変換するだけなら`kotlinx.coroutines.flow.Flow.asIterable()`
+（`runBlocking`のスコープ内で使う）が最小の橋渡しになる——ただしこれは「非同期性を
+捨てて同期的に全チャンクを待つ」ものではなく、`Iterator.next()`呼出のたびに1チャンク分だけ
+`runBlocking`する形になるため、SSE等への逐次書き出しとは相性が悪い。実際の設計は
+prompt-engine側のPresentation層（Controller/SSE実装）の要求に応じて別途検討すること。
+
+## 4. adapter-mockでの差替方法
+
+`ApapEngineBuilder.adapterRegistry(registry: AdapterRegistry)`で任意の`AdapterRegistry`を
+注入できる。テストでは`adapters:adapter-mock`（`apap.adapter.mock.MockProviderAdapter`/
+`MockAdapterConfig`）を使い、実Provider Plugin配置なしに`ApapEngine`をE2Eで動かせる
+（`modules/apap-runtime/src/test/kotlin/apap/runtime/ApapEngineBuilderTest.kt`が実例）。
+
+```kotlin
+val engine =
+    ApapEngineBuilder()
+        .adapterRegistry(/* MockProviderAdapter を返す AdapterRegistry 実装 */)
+        .build()
+// engine.admin.providers.register(...) → beginValidation → completeValidation → enable
+// engine.admin.models.register(...) → changeStatus(TESTING) → changeStatus(ACTIVE)
+// のシーケンスでProvider/Modelを用意してから engine.execute(...) を呼ぶ
+```
+
+**命名規約の衝突に注意**: apap-engine自身のテスト用Provider Adapterは`MockProviderAdapter`
+（`Mock*`接頭辞）。一方prompt-engine側のテストダブル命名規約は`Fake*`
+（`Stub*`/`Mock*`/`InMemory*`は使わない、例: `FakeExecutionAdapter`）。prompt-engine側で
+`ApapEngine`自体をテストダブル化したい場合（`ApapExecutionAdapter`の単体テスト等）は、
+prompt-engine自身の規約に従い`FakeApapEngine`のように命名すること
+（`apap.adapter.mock.MockProviderAdapter`をそのままprompt-engine側のテストへ持ち込むのは、
+別の依存境界の型を混入させるだけでなく命名規約上も一貫しない）。
+
+## 5. バージョニング方針
+
+- **`apap-runtime`（成果物）**: semver。CLAUDE.md不変条件・ADR-0016の枠組みに従い、
+  `apap-runtime`自体の公開API（`ApapEngine`/`ApapEngineBuilder`/`ApapAdmin`/`ApapConfig`/
+  `ApapHealth`とその公開DTO）の破壊的変更はメジャーバージョンでのみ行う。
+- **`apap-api`（公開DTOモジュール）**: `apap-domain`のVOを直接再利用している
+  （`ApapRequest`/`ApapResponse`のKDoc参照）。ADR-0016のような明示的なSPI境界
+  （`SpiSurface`一覧＋`SpiSurfaceTest`によるKonsist機械検証）は`apap-api`にはまだ無い
+  ——`apap-domain`のVOに破壊的変更が入ると、現状`apap-api`の破壊的変更としても波及しうる
+  制約として残っている（`apap.api.ApapRequest`のKDoc「要件充足に影響しない実装判断」節参照）。
+  厳密なSPI面管理が必要になった場合は、ADR-0016と同型の`SpiSurface`相当の仕組みを
+  `apap-api`にも導入するADRを別途起票すること。
+- **SPI公開面全般（`apap-adapter-spi`のtypealias境界）**: ADR-0016参照。typealiasは
+  ソースレベル分離のみを提供し、バイナリ／依存関係レベルの分離は提供しない
+  （実体は常に`apap.domain.*`の型）。
+
+## 6. Jacksonバージョン整合（ADR-0017の要約、詳細は同ADR参照）
+
+- prompt-engine（宿主）は`gradle/libs.versions.toml`で`jackson`を独自宣言しており、
+  Spring Boot BOM（`spring-boot-dependencies`、`implementation(platform(...))`）の管理下で
+  実際に使われるJacksonバージョンは、**このカタログ値ではなくSpring Boot BOMが決める**
+  （2026-08-31確認: prompt-engine側カタログの`jackson`エントリは`2.22.2`だが、これは
+  実際の依存解決に強制されない参考値）。`prompt-engine-bootstrap`の
+  `implementation(libs.jackson.module.kotlin)`にバージョン指定がないのはこのため。
+- apap-engine側は`gradle/libs.versions.toml`で`jackson = "2.22.1"`を明示宣言し
+  （ADR-0017決定0-a）、`apap-provider`の`json-schema-validator`が推移的に要求する
+  `2.18.3`を上書きしている。**この`2.22.1`はADR-0017策定時点（2026-08-21）の
+  prompt-engine側宣言値のスナップショットであり、上記の通りprompt-engine側カタログは
+  既に`2.22.2`へ進んでいる（2026-08-31確認、1パッチ差でドリフト済み）。** 実結線時には
+  必ず両リポジトリの`gradle/libs.versions.toml`の`jackson`エントリを直接diffし、
+  apap-engine側を追従させること（ADR-0017は「自動追従の仕組みはない、レビュー時の目視のみ」
+  と明記しており、本ガイドの日付以降さらにドリフトしている可能性がある）。
+- JSONスタックはプロジェクト全体でJacksonに一本化する方針（ADR-0017決定0-b）。
+  `apap-domain`/`apap-adapter-spi`/`apap-provider`/`apap-runtime`（およびこれらが依存する
+  他モジュール）へ`kotlinx-serialization`/Gson/`org.json`/Moshi等を追加しないこと。
+
+## 7. 永続化の選択肢と既定（In-Memory）を使った場合の性質
+
+`ApapEngineBuilder()`は`repositories`引数を省略すると`ApapRepositories()`
+（全14 Repository PortのIn-Memory実装、`apap.infrastructure.persistence.inmemory.*`）を使う。
+この既定構成で`build()`した場合の性質:
+
+- **プロセス再起動で全データ消失**: Provider/Model/Alias/Policy登録、Conversation履歴、
+  Memory、Usage/Cost記録はすべてプロセスメモリ上のみに存在する。prompt-engineが複数Pod/
+  複数インスタンスで動く場合、各インスタンスが独立した`ApapEngine`状態を持つ
+  （Provider登録がインスタンス間で共有されない）。
+- **`apap-infrastructure-jdbc`/`apap-infrastructure-distributed`は既定構成の依存グラフに
+  一切現れない**（`EmbeddingConstraintTest`で機械検証。`ApapEngineBuilder`の
+  `repositories`/`cacheStore`引数へ明示的にJDBC/Redis実装を注入しない限り、これらのモジュールは
+  ロードされない）。
+- 本番投入（Pod水平スケール、prompt-engine側は複数レプリカ運用が前提）では、
+  `ApapEngineBuilder(repositories = ApapRepositories(providerRepository = JdbcProviderRepository(...), ...))`
+  のように`apap-infrastructure-jdbc`の実装へ明示的に差し替える必要がある。この差替え自体は
+  `apap-runtime`の依存には現れず、prompt-engine側の呼出コード（`ApapEngineConfig`）が
+  `apap-infrastructure-jdbc`への依存を追加した上で行う（1章の「2つのみ」の対象外
+  ——JDBC実装を使う場合は追加の依存宣言が必要になる、という制約として明記する）。
+- `cacheStore`も同様に既定はIn-Memory（`InMemoryCacheStore`）。複数インスタンス間でCache
+  Hit率を共有したい場合は分散KVS実装（`apap-infrastructure-distributed`）への差替えが必要
+  （同上、追加依存が要る）。
+
+## 8. 未確定のまま残る事項（この文書のスコープ外）
+
+- 3章のStreamingブリッジ設計（どちらの選択肢を採るか）
+- 2-bの`principal`/`tenantId`をリクエスト単位でどう受け渡すか（`ExecutionAdapter`シグネチャ
+  変更の要否を含む、prompt-engine側の判断）
+- Provider/Model/Policy登録の運用手順（`ApapEngine.admin`をどこから・どう呼ぶか。
+  Admin API・起動時シーディング・別運用ツール等、prompt-engine側で選定）
+- Plugin配置方針（`pluginDirectory(dir, trustedPublicKey)`の`dir`/署名鍵をprompt-engine側の
+  デプロイ構成のどこに置くか）
+- 6章のJacksonバージョンdiffの自動検知（現状は目視のみ、ADR-0017が課題として明記）

@@ -11,6 +11,8 @@ import apap.cache.DefaultCacheabilityPolicy
 import apap.cache.InMemoryCacheStore
 import apap.cache.NormalizedJsonCacheKeyStrategy
 import apap.cache.PassthroughCacheCodec
+import apap.cache.ratelimit.InMemoryRateLimitCounterStore
+import apap.cache.ratelimit.RateLimitCounterStore
 import apap.cache.ratelimit.RateLimiter
 import apap.cache.ratelimit.RateLimiterConfig
 import apap.cache.ratelimit.TokenBucketRateLimiter
@@ -37,6 +39,7 @@ import apap.domain.model.vo.ModelId
 import apap.domain.model.vo.TenantId
 import apap.domain.port.AliasRepository
 import apap.domain.port.BudgetRepository
+import apap.domain.port.CircuitBreakerStateStore
 import apap.domain.port.Clock
 import apap.domain.port.ConversationRepository
 import apap.domain.port.DomainEventPublisher
@@ -44,6 +47,7 @@ import apap.domain.port.DomainEventSubscriber
 import apap.domain.port.HealthLatencyStatsRepository
 import apap.domain.port.IdGenerator
 import apap.domain.port.MemoryRepository
+import apap.domain.port.MetricsRecorder
 import apap.domain.port.ModelRepository
 import apap.domain.port.PolicyRepository
 import apap.domain.port.PriceBookRepository
@@ -62,12 +66,16 @@ import apap.execution.circuitbreaker.CircuitBreaker
 import apap.execution.circuitbreaker.CircuitBreakerConfig
 import apap.execution.estimation.TokenEstimator
 import apap.execution.fallback.FallbackEngine
+import apap.execution.retry.ExponentialBackoffJitterStrategy
 import apap.execution.retry.RetryConfig
+import apap.execution.retry.RetryStrategy
 import apap.execution.streaming.StreamingConfig
 import apap.execution.streaming.StreamingEngine
 import apap.execution.streaming.StreamingRequestExecutor
 import apap.execution.streaming.StreamingTurnRecorder
 import apap.execution.structuredoutput.StructuredOutputConfig
+import apap.observability.metrics.MetricsEngine
+import apap.observability.metrics.OpenTelemetryMetricsRecorder
 import apap.prompt.DefaultPromptEngine
 import apap.prompt.PromptEngine
 import apap.provider.AdapterRegistry
@@ -76,6 +84,10 @@ import apap.routing.CostEstimator
 import apap.routing.RealCostEstimator
 import apap.routing.RoutingCandidateCache
 import apap.routing.RoutingEngine
+import apap.routing.spi.LoadBalancer
+import apap.routing.spi.RoutingStrategy
+import apap.routing.spi.WeightedRoundRobinLoadBalancer
+import apap.routing.spi.WeightedScoreRoutingStrategy
 import io.opentelemetry.api.OpenTelemetry
 import io.opentelemetry.api.trace.Tracer
 
@@ -122,11 +134,25 @@ class ExecutionEngineComposer(
     private val eventPublisher: DomainEventPublisher,
     private val eventSubscriber: DomainEventSubscriber,
     private val tracer: Tracer = OpenTelemetry.noop().getTracer("apap-execution"),
+    /**
+     * 02_システム仕様.md 2.19 Monitoring仕様。既定はOpenTelemetryのnoop Meter（[tracer]と同じ
+     * パターン）。埋込ホストが実SDKのMeterを使う場合は[OpenTelemetryMetricsRecorder]を明示的に渡す。
+     * [build]内で[MetricsEngine]（Event Bus購読）へ配線し、`apap_overhead_duration_seconds`は
+     * [apap.execution.PhaseTimings]から、`apap_rate_limit_events_total{action="wait"}`は
+     * [TokenBucketRateLimiter]から直接呼ばれる（[MetricsEngine]のKDoc参照）。
+     */
+    private val metricsRecorder: MetricsRecorder =
+        OpenTelemetryMetricsRecorder(OpenTelemetry.noop().getMeter("apap-execution")),
     private val quotaPolicyProvider: (TenantId) -> QuotaPolicy? = {
         quotaPolicyRepository.findByTenant(it).firstOrNull()
     },
     private val circuitBreakerConfig: CircuitBreakerConfig = CircuitBreakerConfig(),
     private val retryConfig: RetryConfig = RetryConfig(),
+    /** [ApapEngineBuilder]の`retryStrategy`差替点。既定は[AttemptExecutor]自身の既定と同じ。 */
+    private val retryStrategy: RetryStrategy = ExponentialBackoffJitterStrategy(retryConfig),
+    /** [ApapEngineBuilder]の`routingStrategy`差替点。既定は[RoutingEngine]自身の既定と同じ。 */
+    private val routingStrategy: RoutingStrategy = WeightedScoreRoutingStrategy(),
+    private val loadBalancer: LoadBalancer = WeightedRoundRobinLoadBalancer(),
     private val structuredOutputConfig: StructuredOutputConfig = StructuredOutputConfig(),
     private val rateLimiterConfig: RateLimiterConfig = RateLimiterConfig(),
     private val quotaManagerConfig: QuotaManagerConfig = QuotaManagerConfig(),
@@ -154,14 +180,19 @@ class ExecutionEngineComposer(
     private val cacheabilityPolicy: CacheabilityPolicy = DefaultCacheabilityPolicy(),
     private val cacheConfig: CacheConfig = CacheConfig(),
     private val streamingConfig: StreamingConfig = StreamingConfig(),
+    // ADR-0001/ADR-0025: 既定はIn-Memory（単一プロセス埋込利用で十分）。マルチノード運用時は
+    // 埋込ホストが`modules/apap-infrastructure-distributed`のRedis実装をここへ渡す
+    // （`apap-runtime`自体はそのモジュールに依存しない）。
+    private val cbStore: CircuitBreakerStateStore = InMemoryCircuitBreakerStateStore(),
+    private val rateLimitCounterStore: RateLimitCounterStore = InMemoryRateLimitCounterStore(),
 ) {
     @Suppress("LongMethod")
     fun build(): ExecutionEngine {
         // CB状態はRouting（読取専用）とExecution（書込）の双方から同一インスタンスを参照する必要がある
         // （apap.domain.port.CircuitBreakerStateStoreのKDoc参照）。
-        val cbStore = InMemoryCircuitBreakerStateStore()
         val candidateCache = RoutingCandidateCache()
         eventSubscriber.subscribe { candidateCache.apply(it) }
+        MetricsEngine(eventSubscriber, metricsRecorder, providerRepository)
 
         val candidateFactory =
             CandidateFactory(
@@ -176,10 +207,18 @@ class ExecutionEngineComposer(
                 candidateCache,
                 clock,
             )
-        val routingEngine = RoutingEngine(candidateFactory, policyRepository)
+        val routingEngine = RoutingEngine(candidateFactory, policyRepository, routingStrategy, loadBalancer)
 
         val circuitBreaker = CircuitBreaker(cbStore, clock, eventPublisher, idGenerator, circuitBreakerConfig)
-        val rateLimiter: RateLimiter = TokenBucketRateLimiter(clock, eventPublisher, idGenerator, rateLimiterConfig)
+        val rateLimiter: RateLimiter =
+            TokenBucketRateLimiter(
+                clock,
+                eventPublisher,
+                idGenerator,
+                rateLimiterConfig,
+                metricsRecorder = metricsRecorder,
+                store = rateLimitCounterStore,
+            )
         val quotaManager: QuotaManager = DefaultQuotaManager(idGenerator, clock, eventPublisher, quotaManagerConfig)
 
         val promptEngine: PromptEngine = DefaultPromptEngine()
@@ -210,6 +249,8 @@ class ExecutionEngineComposer(
                 cacheConfig,
                 aliasRepository,
                 clock,
+                eventPublisher,
+                idGenerator,
             )
         eventSubscriber.subscribe { defaultCacheEngine.apply(it) }
         val cacheEngine: CacheEngine = defaultCacheEngine
@@ -235,6 +276,7 @@ class ExecutionEngineComposer(
                 eventPublisher,
                 idGenerator,
                 retryConfig,
+                retryStrategy,
                 tracer = tracer,
             )
         val fallbackEngine =
@@ -265,6 +307,7 @@ class ExecutionEngineComposer(
                 clock,
                 eventPublisher,
                 idGenerator,
+                tracer,
             )
 
         return DefaultExecutionEngine(
@@ -284,6 +327,7 @@ class ExecutionEngineComposer(
             clock,
             idGenerator,
             eventPublisher,
+            metricsRecorder,
             quotaPolicyProvider,
             tracer = tracer,
         )

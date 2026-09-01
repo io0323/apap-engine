@@ -10,6 +10,7 @@ import apap.testkit.inmemory.InMemoryClock
 import apap.testkit.inmemory.InMemoryConversationRepository
 import apap.testkit.inmemory.InMemoryDomainEventPublisher
 import apap.testkit.inmemory.InMemoryIdGenerator
+import apap.testkit.inmemory.NoSuchConversationException
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -32,9 +33,15 @@ class ConversationManagerTest {
     @Test
     fun `appendTurn assigns sequential seq starting at 1`() {
         val conversation = manager.start(sessionId, tenantId)
-        val first = manager.appendTurn(conversation.conversationId, TurnRole.USER, listOf(ContentPart.Text("hi")))
+        val first =
+            manager.appendTurn(conversation.conversationId, tenantId, TurnRole.USER, listOf(ContentPart.Text("hi")))
         val second =
-            manager.appendTurn(conversation.conversationId, TurnRole.ASSISTANT, listOf(ContentPart.Text("hello")))
+            manager.appendTurn(
+                conversation.conversationId,
+                tenantId,
+                TurnRole.ASSISTANT,
+                listOf(ContentPart.Text("hello")),
+            )
         assertEquals(1, first.seq)
         assertEquals(2, second.seq)
     }
@@ -57,7 +64,7 @@ class ConversationManagerTest {
                         ready.countDown()
                         start.await()
                         val content = listOf(ContentPart.Text("msg-$i"))
-                        concurrentManager.appendTurn(conversation.conversationId, TurnRole.USER, content)
+                        concurrentManager.appendTurn(conversation.conversationId, tenantId, TurnRole.USER, content)
                     }
                 }
             ready.await(5, TimeUnit.SECONDS)
@@ -67,7 +74,7 @@ class ConversationManagerTest {
             pool.shutdown()
         }
 
-        val seqs = concurrentManager.history(conversation.conversationId).map { it.seq }
+        val seqs = concurrentManager.history(conversation.conversationId, tenantId).map { it.seq }
         assertEquals((1..threadCount).toList(), seqs.sorted())
     }
 
@@ -75,15 +82,45 @@ class ConversationManagerTest {
     fun `appendTurn throws when the conversation does not exist`() {
         val unknownId = ConversationId("01ARZ3NDEKTSV4RRFFQ69G5FAX")
         assertThrows(ConversationNotFoundException::class.java) {
-            manager.appendTurn(unknownId, TurnRole.USER, listOf(ContentPart.Text("hi")))
+            manager.appendTurn(unknownId, tenantId, TurnRole.USER, listOf(ContentPart.Text("hi")))
         }
     }
 
     @Test
     fun `delete publishes ConversationDeleted`() {
         val conversation = manager.start(sessionId, tenantId)
-        manager.delete(conversation.conversationId, "trace-1")
+        manager.delete(conversation.conversationId, tenantId, "trace-1")
         val deletedEvents = events.publishedEvents.filterIsInstance<ConversationDeleted>()
         assertTrue(deletedEvents.any { it.conversationId == conversation.conversationId })
+    }
+
+    /**
+     * P8後始末レビュー item3: 他テナントの`ConversationId`を供給された場合、存在しない場合と
+     * 区別せず扱う（[ConversationRepository]のKDoc参照）。読取・追記・削除・履歴取得のいずれも
+     * 別テナントのデータへ到達できないことを確認する。
+     */
+    @Test
+    fun `another tenant's conversationId is treated as not found across read, append, history, and delete`() {
+        val otherTenantId = TenantId("01ARZ3NDEKTSV4RRFFQ69G5FAZ")
+        val conversation = manager.start(sessionId, tenantId)
+
+        assertThrows(ConversationNotFoundException::class.java) {
+            manager.appendTurn(
+                conversation.conversationId,
+                otherTenantId,
+                TurnRole.USER,
+                listOf(ContentPart.Text("hi")),
+            )
+        }
+        assertThrows(NoSuchConversationException::class.java) {
+            manager.history(conversation.conversationId, otherTenantId)
+        }
+        assertThrows(ConversationNotFoundException::class.java) {
+            manager.delete(conversation.conversationId, otherTenantId, "trace-1")
+        }
+
+        // 正当なテナントからは引き続き到達できる（境界チェック自体が壊れていないことの確認）。
+        manager.appendTurn(conversation.conversationId, tenantId, TurnRole.USER, listOf(ContentPart.Text("hi")))
+        assertEquals(1, manager.history(conversation.conversationId, tenantId).size)
     }
 }

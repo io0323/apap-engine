@@ -10,6 +10,7 @@ import apap.adapter.spi.SecretValue
 import apap.adapter.spi.TextContentPart
 import apap.adapter.spi.plugin.PluginManifest
 import apap.adapter.spi.plugin.SemVerRange
+import apap.domain.model.audit.AuditSearchCriteria
 import apap.domain.model.conversation.Conversation
 import apap.domain.model.conversation.TurnRole
 import apap.domain.model.cost.PriceBook
@@ -41,10 +42,13 @@ import apap.domain.model.vo.TenantId
 import apap.domain.model.vo.TokenCount
 import apap.domain.model.vo.Usage
 import apap.execution.ExecutionEngine
+import apap.observability.audit.AuditConfig
+import apap.observability.audit.AuditEngine
 import apap.provider.AdapterRegistry
 import apap.provider.PluginNotFoundException
 import apap.provider.ResolvedPlugin
 import apap.testkit.inmemory.InMemoryAliasRepository
+import apap.testkit.inmemory.InMemoryAuditRepository
 import apap.testkit.inmemory.InMemoryBudgetRepository
 import apap.testkit.inmemory.InMemoryClock
 import apap.testkit.inmemory.InMemoryConversationRepository
@@ -52,6 +56,7 @@ import apap.testkit.inmemory.InMemoryDomainEventPublisher
 import apap.testkit.inmemory.InMemoryHealthLatencyStatsRepository
 import apap.testkit.inmemory.InMemoryIdGenerator
 import apap.testkit.inmemory.InMemoryMemoryRepository
+import apap.testkit.inmemory.InMemoryMetricsRecorder
 import apap.testkit.inmemory.InMemoryModelRepository
 import apap.testkit.inmemory.InMemoryPolicyRepository
 import apap.testkit.inmemory.InMemoryPriceBookRepository
@@ -112,6 +117,13 @@ class CapabilitySmokeTest {
         val clock = InMemoryClock(Instant.parse("2026-01-01T00:00:00Z"))
         val events = InMemoryDomainEventPublisher()
         val ids = InMemoryIdGenerator()
+        val metricsRecorder = InMemoryMetricsRecorder()
+        val auditRepository = InMemoryAuditRepository()
+
+        // AuditEngineのコンストラクタでeventsを購読するだけで、Capability固有のテストコードには
+        // 一切登場しない横断的関心事（ADR未満: 着手前レビュー item4）。AuditEngine自体は
+        // 非同期ワーカーで処理するため、記録内容を検証するテストは`awaitQuiescence()`で待ち合わせる。
+        val auditEngine = AuditEngine(events, auditRepository, AuditConfig(), ids)
     }
 
     @Suppress("LongMethod", "LongParameterList")
@@ -203,6 +215,7 @@ class CapabilitySmokeTest {
             harness.events,
             harness.events,
             tracer,
+            harness.metricsRecorder,
         ).build()
     }
 
@@ -233,9 +246,62 @@ class CapabilitySmokeTest {
             val response = engine.execute(request)
             assertTrue(response.output.isNotEmpty())
 
-            val turns = harness.conversationRepository.findTurns(conversationId, 1..Int.MAX_VALUE)
+            val turns = harness.conversationRepository.findTurns(conversationId, tenantId, 1..Int.MAX_VALUE)
             assertEquals(2, turns.size)
             assertEquals(listOf(TurnRole.USER, TurnRole.ASSISTANT), turns.map { it.role })
+        }
+
+    /**
+     * 着手前レビュー item4: Capability固有の副作用（応答・Turn記録等）だけでなく、Capabilityに
+     * 紐づかない横断的関心事（Metrics/Audit/Domain Event配信）が実際に動作していることを検証する。
+     * `MetricsEngine`が本番配線から一度も構築されていなかった件は、Capability別スモークテストが
+     * Capability固有の副作用しか検証していなかったために見逃されていた——この1テストがその空白を埋める。
+     */
+    @Test
+    fun `chat capability also records metrics, an audit trail, and delivers events to subscribers`() =
+        runBlocking {
+            val capabilityId = CapabilityId("chat")
+            val harness = Harness()
+            val adapterConfig = MockAdapterConfig(supportedCapabilities = setOf(capabilityId))
+            val engine = buildEngine(harness, capabilityId, adapterConfig, priceBookRepository(modelId))
+
+            val independentlyObservedEvents = mutableListOf<apap.domain.event.DomainEvent>()
+            harness.events.subscribe { independentlyObservedEvents.add(it) }
+
+            val request =
+                CanonicalRequest(
+                    requestId = RequestId("01ARZ3NDEKTSV4RRFFQ69G5FE1"),
+                    tenantId = tenantId,
+                    principal = "user-1",
+                    capabilityId = capabilityId,
+                    input = listOf(ContentPart.Text("hello")),
+                    timeoutBudget = Duration.ofSeconds(30),
+                    traceId = "trace-1",
+                )
+
+            engine.execute(request)
+            harness.auditEngine.awaitQuiescence()
+
+            // Metrics: apap_requests_total / apap_request_duration_seconds / apap_tokens_total /
+            // apap_cost_total（RequestCompleted経由）と apap_overhead_duration_seconds
+            // （PhaseTimings直接呼出）の両方が、ExecutionEngineComposerの実配線経由で記録されること。
+            assertTrue(harness.metricsRecorder.requests.any { it.capabilityId == capabilityId })
+            assertTrue(harness.metricsRecorder.requestDurations.isNotEmpty())
+            assertTrue(harness.metricsRecorder.tokens.isNotEmpty())
+            assertTrue(harness.metricsRecorder.costs.isNotEmpty())
+            assertTrue(
+                harness.metricsRecorder.overheadDurations
+                    .map { it.phase }
+                    .containsAll(listOf("prompt", "routing", "mapping")),
+            )
+
+            // Audit: RequestReceived〜RequestCompletedがAuditEngineで相関され、追記専用ストアに残ること。
+            val auditRecords = harness.auditRepository.search(AuditSearchCriteria(requestId = request.requestId))
+            assertEquals(1, auditRecords.size)
+            assertEquals(tenantId, auditRecords.single().tenantId)
+
+            // Domain Event配信: publisherの内部ログだけでなく、別途登録した独立の購読者にも届くこと。
+            assertTrue(independentlyObservedEvents.any { it is apap.domain.event.RequestCompleted })
         }
 
     /**
@@ -343,7 +409,7 @@ class CapabilitySmokeTest {
             assertEquals(1, aggregate.single().requestCount)
             assertEquals(TokenCount(5), aggregate.single().totalUsage.inputTokens)
 
-            val turns = harness.conversationRepository.findTurns(conversationId, 1..Int.MAX_VALUE)
+            val turns = harness.conversationRepository.findTurns(conversationId, tenantId, 1..Int.MAX_VALUE)
             assertEquals(2, turns.size)
             assertEquals(listOf(TurnRole.USER, TurnRole.ASSISTANT), turns.map { it.role })
         }

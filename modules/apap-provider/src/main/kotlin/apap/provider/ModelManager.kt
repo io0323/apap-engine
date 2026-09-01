@@ -62,8 +62,21 @@ class ModelManager(
                 priority = command.priority,
             )
         modelRepository.save(model)
-        val capabilityIds = model.capabilities.map { it.capabilityId }
-        publish(ModelRegistered(meta(model.modelId.value), model.modelId, model.providerId, capabilityIds))
+        publishModelEvent(
+            model.modelId,
+            ModelRegistered(
+                meta(model.modelId.value),
+                model.modelId,
+                model.providerId,
+                model.capabilities,
+                model.modelName,
+                model.version,
+                model.contextWindow,
+                model.maxOutputTokens,
+                model.regions,
+                model.priority,
+            ),
+        )
         return model
     }
 
@@ -88,7 +101,7 @@ class ModelManager(
                 model.transitionTo(target)
             }
         modelRepository.save(updated)
-        publish(ModelStatusChanged(meta(modelId.value), modelId, from, target))
+        publishModelEvent(modelId, ModelStatusChanged(meta(modelId.value), modelId, from, target))
         return updated
     }
 
@@ -110,11 +123,13 @@ class ModelManager(
                 targets = targets,
                 modelStatus = { modelId -> requireModel(modelId).status },
             )
-        aliasRepository.save(alias)
-        publish(
+        aliasRepository.save(tenantId, alias)
+        publishAliasEvent(
+            aliasId,
             AliasChanged(
                 meta(aliasId.value),
                 aliasId.value,
+                alias.name,
                 previous?.targets.orEmpty().map { AliasTargetSnapshot(it.modelId, it.weight) },
                 alias.targets.map { AliasTargetSnapshot(it.modelId, it.weight) },
             ),
@@ -170,7 +185,31 @@ class ModelManager(
             version = 0,
         )
 
+    /**
+     * [ModelDiscovered]はまだ登録されていないModel候補についての通知であり、特定のModel/Alias
+     * Aggregateのstream_idに紐付かないため、Event Bus発行のみ行う（EventStoreへは永続化しない）。
+     */
     private fun publish(event: DomainEvent) {
+        eventPublisher.publish(event)
+    }
+
+    /**
+     * ADR-0026: ProviderManagerの`publish`と同じdual-writeパターン（state保存 + Event Store永続化）を
+     * ModelにもEvent Sourcing再構築のために適用する。
+     */
+    private fun publishModelEvent(
+        modelId: ModelId,
+        event: DomainEvent,
+    ) {
+        modelRepository.saveEvents(modelId, listOf(event))
+        eventPublisher.publish(event)
+    }
+
+    private fun publishAliasEvent(
+        aliasId: AliasId,
+        event: DomainEvent,
+    ) {
+        aliasRepository.saveEvents(aliasId, listOf(event))
         eventPublisher.publish(event)
     }
 }

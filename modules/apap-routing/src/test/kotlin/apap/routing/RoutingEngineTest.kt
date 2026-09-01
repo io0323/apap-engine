@@ -186,6 +186,7 @@ class RoutingEngineTest {
         modelRepository.save(model(newModelId, newProviderId, ModelStatus.TESTING))
         val aliasId = AliasId("01ARZ3NDEKTSV4RRFFQ69G5FA4")
         aliasRepository.save(
+            tenantId,
             ModelAlias(aliasId, "chat-standard", listOf(AliasTarget(oldModelId, 100), AliasTarget(newModelId, 0))),
         )
 
@@ -199,6 +200,7 @@ class RoutingEngineTest {
         )
 
         aliasRepository.save(
+            tenantId,
             ModelAlias(aliasId, "chat-standard", listOf(AliasTarget(oldModelId, 0), AliasTarget(newModelId, 100))),
         )
 
