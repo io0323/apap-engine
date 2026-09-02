@@ -20,12 +20,16 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.jackson.JacksonConverter
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.createApplicationPlugin
+import io.ktor.server.application.hooks.CallSetup
+import io.ktor.server.application.hooks.ResponseSent
 import io.ktor.server.application.install
 import io.ktor.server.plugins.callid.CallId
 import io.ktor.server.plugins.callid.callId
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.header
+import io.ktor.server.request.path
 import io.ktor.server.response.header
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.routing
@@ -58,7 +62,20 @@ fun Application.apapGateway(
     tokenVerifier: TokenVerifier,
     metricsRenderer: OpenMetricsRenderer,
     idGenerator: IdGenerator = UlidIdGenerator(),
+    lifecycle: GatewayLifecycle = GatewayLifecycle(),
 ) {
+    // in-flightを数える。`server.stop`のgracePeriodだけではサスペンド中のリクエストが
+    // 完遂しない（GatewayLifecycleのKDoc参照）ため、停止前に0になるまで待てるようにする。
+    //
+    // `ResponseSent`を終了点に使う: 応答を送り切った時点で減算されるので、SSEのように
+    // 長く続く応答も「送り終わるまで実行中」と正しく数えられる。
+    install(
+        createApplicationPlugin(name = "InFlightTracking") {
+            on(CallSetup) { call -> if (call.isTracked()) lifecycle.requestStarted() }
+            on(ResponseSent) { call -> if (call.isTracked()) lifecycle.requestFinished() }
+        },
+    )
+
     install(ContentNegotiation) {
         register(io.ktor.http.ContentType.Application.Json, JacksonConverter(GatewayJson.mapper))
     }
@@ -99,7 +116,7 @@ fun Application.apapGateway(
 
     routing {
         // 認証不要（Kubernetes probe / スクレイプ対象）。
-        opsRoutes(engine, metricsRenderer)
+        opsRoutes(engine, metricsRenderer, lifecycle)
 
         // 以降は認証必須。ルートごとにverifyを呼ぶのではなく、
         // ルート定義側で`authenticated { }`を使うことで付け忘れを構造的に防ぐ。
@@ -152,6 +169,13 @@ fun notImplemented(
         ApiError.NotImplemented,
         "$method $path is defined in the API design but is not provided by this build. $reason",
     )
+
+/**
+ * 排出の対象に数えるリクエストか。opsルート（probe/scrape）は除く——これらを数えると
+ * Kubernetesがprobeを打ち続ける限りin-flightが0にならず、排出が永久に終わらない。
+ */
+private fun ApplicationCall.isTracked(): Boolean =
+    request.path().startsWith("/v1") || request.path().startsWith("/admin")
 
 private const val BEARER_PREFIX = "Bearer "
 private const val TOO_MANY_REQUESTS = 429

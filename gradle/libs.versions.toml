@@ -84,6 +84,7 @@ ktor-server-call-id = { module = "io.ktor:ktor-server-call-id", version.ref = "k
 ktor-server-sse = { module = "io.ktor:ktor-server-sse", version.ref = "ktor" }
 ktor-server-test-host = { module = "io.ktor:ktor-server-test-host", version.ref = "ktor" }
 ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
+ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
 java-jwt = { module = "com.auth0:java-jwt", version.ref = "auth0-java-jwt" }
 jwks-rsa = { module = "com.auth0:jwks-rsa", version.ref = "auth0-jwks-rsa" }
 

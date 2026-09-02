@@ -39,6 +39,7 @@ import apap.runtime.ApapEngine
 import apap.runtime.ApapEngineBuilder
 import apap.runtime.ApapRepositories
 import io.opentelemetry.sdk.metrics.SdkMeterProvider
+import java.util.concurrent.CountDownLatch
 import java.math.BigDecimal
 import java.time.Instant
 
@@ -96,8 +97,15 @@ class TestEngineFixture(
     adapterConfig: MockAdapterConfig = MockAdapterConfig(supportedCapabilities = setOf(CapabilityId("chat"))),
 ) {
     val repositories = ApapRepositories()
+
+    /**
+     * Adapterの`execute`へ実際に入ったことを知らせる。「実行中である」ことを
+     * sleepで推測せずに待てるようにするため（GracefulShutdownTestが使う）。
+     */
+    val adapterEntered = CountDownLatch(1)
+
     private val region = Region.of("jp-east", RegionCodeTable(setOf("jp-east")))
-    private val adapter = MockProviderAdapter(adapterConfig)
+    private val adapter = SignallingAdapter(MockProviderAdapter(adapterConfig), adapterEntered)
 
     val engine: ApapEngine =
         ApapEngineBuilder(repositories = repositories)

@@ -45,6 +45,9 @@ dependencies {
 
     testImplementation(lib("ktor-server-test-host"))
     testImplementation(lib("ktor-client-content-negotiation"))
+    // GracefulShutdownTestは実サーバへ本物のHTTPクライアントで接続する（testApplicationのハーネスでは
+    // 停止時の挙動を検証できないため）。
+    testImplementation(lib("ktor-client-cio"))
     testImplementation(project(":adapters:adapter-mock"))
     // adapter-mockのシグネチャに現れるSPI型（AdapterConfig/SecretAccessor/PluginManifest等）を
     // テストから直接組み立てるため。本番コードはSPIに触れない（HTTP層はApapEngineだけを見る）。

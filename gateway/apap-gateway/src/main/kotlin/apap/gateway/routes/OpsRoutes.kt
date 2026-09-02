@@ -1,6 +1,7 @@
 package apap.gateway.routes
 
 import apap.api.ApapHealthState
+import apap.gateway.GatewayLifecycle
 import apap.gateway.metrics.OpenMetricsRenderer
 import apap.runtime.ApapEngine
 import io.ktor.http.ContentType
@@ -20,6 +21,7 @@ import io.ktor.server.routing.get
 fun Route.opsRoutes(
     engine: ApapEngine,
     metricsRenderer: OpenMetricsRenderer,
+    lifecycle: GatewayLifecycle = GatewayLifecycle(),
 ) {
     // Liveness: プロセスが生きているか。依存先の状態では落とさない
     // （落とすと下流の一時障害でPodが再起動され、状況が悪化する）。
@@ -29,7 +31,17 @@ fun Route.opsRoutes(
     }
 
     // Readiness: トラフィックを受けられるか。DOWNなら503でLBから外す。
+    //
+    // 排出中も503を返す。SIGTERM後すぐ「準備できていない」と申告することで、
+    // Kubernetesが新規トラフィックを送るのを止め、既存リクエストの完遂に専念できる。
     get("/readyz") {
+        if (lifecycle.isDraining) {
+            call.respond(
+                HttpStatusCode.ServiceUnavailable,
+                mapOf("state" to "DRAINING", "in_flight" to lifecycle.inFlightCount.toString()),
+            )
+            return@get
+        }
         val result = engine.health.readiness()
         call.respond(result.toStatus(), mapOf("state" to result.state.name, "details" to result.details))
     }
