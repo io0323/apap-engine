@@ -25,22 +25,28 @@ if ! echo "$JAVA_VERSION_LINE" | grep -q '"21'; then
     exit 1
 fi
 
-echo "==> [1/5] build (compile + test + detekt + ktlint)"
+echo "==> [1/6] build (compile + test + detekt + ktlint)"
 "$GRADLEW" build
 
-echo "==> [2/5] detekt"
+echo "==> [2/6] detekt"
 "$GRADLEW" detekt
 
-echo "==> [3/5] kover（apap-domain / apap-application 行カバレッジ80%検証）"
+echo "==> [3/6] kover（apap-domain / apap-application 行カバレッジ80%検証）"
 "$GRADLEW" koverVerify
 
-echo "==> [4/5] アーキテクチャテスト（Konsist, apap-domain）"
+echo "==> [4/6] アーキテクチャテスト（Konsist, apap-domain）"
 "$GRADLEW" :modules:apap-domain:test --tests "apap.domain.architecture.*"
 
 # 着手前レビュー item2: 「実装済みだが実行経路から呼ばれていない」を機械的に検出するための
 # Capability別E2Eスモークテスト（ExecutionEngineComposerで組み立てた実エンジン、adapter-mockのみ）。
 # build（1/5）で既に実行済みだが、検知の要と位置づけて明示的な独立ステップとしても可視化する。
-echo "==> [5/5] Capability別E2Eスモークテスト（apap-runtime）"
+echo "==> [5/6] Capability別E2Eスモークテスト（apap-runtime）"
 "$GRADLEW" :modules:apap-runtime:test --tests "apap.runtime.CapabilitySmokeTest"
+
+# ADR-0029: ドキュメントのコード例が「埋込ホストが実際に持つ依存だけで」コンパイルできるか。
+# P9では内部型をimportする例をドキュメントへ載せてしまい、ドキュメントが検査対象外だったため
+# 気づけなかった。build（1/6）で既に実行済みだが、ホストへ渡す前の関門として明示的に可視化する。
+echo "==> [6/6] ホスト互換性検証（integration/host-compat）"
+"$GRADLEW" :integration:host-compat:test
 
 echo "==> verify.sh: すべて成功しました"

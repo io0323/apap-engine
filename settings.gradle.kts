@@ -41,6 +41,9 @@ include(
     "modules:apap-runtime",
     "modules:apap-testkit",
     "gateway:apap-gateway",
+    // ホスト（prompt-engine）が実際に持つ依存だけでdocs/integration/prompt-engine.mdの
+    // コード例がコンパイルできることを検証するモジュール（ADR-0029）。
+    "integration:host-compat",
     "adapters:adapter-mock",
     "adapters:adapter-generic-http",
 )

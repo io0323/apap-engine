@@ -8,6 +8,7 @@ import apap.domain.model.vo.ProviderId
 import apap.gateway.auth.TokenVerifier
 import apap.gateway.authenticate
 import apap.gateway.config.GatewayConfig
+import apap.gateway.error.ApiError
 import apap.gateway.error.ApiException
 import apap.gateway.requireAdminScope
 import apap.runtime.ApapEngine
@@ -64,7 +65,7 @@ private fun Route.providerAdminRoutes(
         call.admin(tokenVerifier, config)
         val provider =
             engine.admin.providers.findById(ProviderId(call.pathParam("id")))
-                ?: throw ApiException(ErrorCode.CAPABILITY_NOT_AVAILABLE, "Provider not found")
+                ?: throw ApiException(ApiError.ResourceNotFound, "Provider not found: ${call.pathParam("id")}")
         call.respond(provider)
     }
 

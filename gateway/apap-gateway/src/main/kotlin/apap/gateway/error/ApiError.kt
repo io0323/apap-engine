@@ -9,9 +9,14 @@ import apap.domain.model.vo.ErrorCode
  * 13.4の全18コードとHTTPステータス・retryableを保持しているため、それを唯一の情報源として使う
  * （Gateway側に同じ表を書くと、いずれ必ず片方だけ更新されてズレる）。
  *
- * Gatewayが追加するのは、13.4に存在しない[NotImplemented]だけ。根拠はADR-0027
- * （13.1に定義はあるが対応するユースケースがapap-runtimeに無いエンドポイントを、
- * 黙って501で返さず明示的に区別するため）。
+ * Gatewayが追加するのは13.4に存在しない2コードだけ:
+ * - [NotImplemented]（ADR-0027）: 13.1に定義はあるが対応するユースケースがapap-runtimeに無い
+ *   エンドポイントを、黙って501で返さず明示的に区別するため。
+ * - [ResourceNotFound]（ADR-0030）: Admin系リソースの「指定IDが存在しない」。
+ *
+ * どちらも**ドメイン側の`ErrorCode`には足さない**。`ErrorCode`は13.4の表の忠実な写しであり、
+ * エンジンが実際に produce するコードの集合でもある。エンジンが決して発生させないコードを
+ * そこへ混ぜると、両方の意味が曖昧になる（`ApiErrorClosedSetTest`がこの区別を固定する）。
  */
 sealed interface ApiError {
     /** 13.4の`code`。 */
@@ -43,6 +48,22 @@ sealed interface ApiError {
         override val retryable: Boolean = false
     }
 
+    /**
+     * ADR-0030: Admin系リソース（Provider/Model/Alias/Policy/Quota/Budget/Plugin）の
+     * 「指定IDのリソースが存在しない」。
+     *
+     * 13.4の404系は`CAPABILITY_NOT_AVAILABLE`（対応候補なし）/`ALIAS_NOT_FOUND`/
+     * `CONVERSATION_NOT_FOUND`で、いずれも実行系API向けの意味を持つ。
+     * Provider未存在に`CAPABILITY_NOT_AVAILABLE`を流用すると、クライアントは
+     * 「Capability自体が使えない」と誤解する——コードは公開契約であり、
+     * クライアントはこれで分岐する。
+     */
+    data object ResourceNotFound : ApiError {
+        override val code: String = "RESOURCE_NOT_FOUND"
+        override val status: Int = HTTP_NOT_FOUND
+        override val retryable: Boolean = false
+    }
+
     companion object {
         /**
          * 13.4の例示 `https://apap.example.internal/errors/rate-limit-exceeded` に合わせる。
@@ -52,6 +73,7 @@ sealed interface ApiError {
          */
         const val TYPE_BASE = "https://apap.example.internal/errors"
         const val HTTP_NOT_IMPLEMENTED = 501
+        const val HTTP_NOT_FOUND = 404
 
         fun of(errorCode: ErrorCode): ApiError = Domain(errorCode)
     }

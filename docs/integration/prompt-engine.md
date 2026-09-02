@@ -39,28 +39,37 @@
 
 ## 2. 最小の初期化コード
 
-### 2-a. `prompt-engine-bootstrap`: `ApapEngine`をSpring Beanとして構築する
+### 2-a. `prompt-engine-bootstrap`: `ApapEngine`を構築する
 
+まず**フレームワーク非依存**の組み立て。この部分は`integration/host-compat`で実際に
+コンパイルされており（ホストと同じ依存だけで）、ドキュメントとコードの一致は
+`DocumentedSnippetTest`が機械検証している（ADR-0029）。
+
+
+<!-- docs:build-engine src=integration/host-compat/src/main/kotlin/apap/hostcompat/EngineBootstrap.kt -->
 ```kotlin
-package promptengine.bootstrap.config
+/**
+ * 依存ゼロ構成でも`build()`自体は成功する。ただしProvider未登録のため、そのままでは
+ * どの`execute()`呼出も候補解決（FR-RTE-001）で失敗する。実運用では
+ * `pluginDirectory(dir, trustedPublicKey)`か`adapterRegistry(...)`のいずれかを
+ * 明示的に渡し、`ApapEngine.admin`経由でProvider/Modelを登録しておくこと。
+ *
+ * 戻り値の[ApapEngine]は[AutoCloseable]。`close()`がDRAINING→実行中完遂→Plugin unload
+ * を行うので、ホストのシャットダウンフックへ必ず接続すること
+ * （Springなら`@Bean(destroyMethod = "close")`）。
+ */
+fun buildEngine(): ApapEngine = ApapEngineBuilder().build()
+```
 
-import apap.runtime.ApapEngine
-import apap.runtime.ApapEngineBuilder
-import org.springframework.context.annotation.Bean
-import org.springframework.context.annotation.Configuration
+これをSpringのBeanとして公開する場合は次のように包む。**`destroyMethod = "close"`を必ず付ける**
+（付けないとシャットダウン時にDRAINING→実行中完遂→Plugin unloadが走らない）。
 
+<!-- docs:illustrative reason=Springはhost-compatの依存に無いため（apap-runtime/apap-apiのみ）コンパイル検証の対象外 -->
+```kotlin
 @Configuration
 class ApapEngineConfig {
-    /**
-     * `destroyMethod = "close"`でSpringのシャットダウンフックに`ApapEngine.close()`
-     * （DRAINING→実行中完遂→Plugin unload）を接続する。
-     * `adapterRegistry`未指定＝Plugin未配置なら`Provider.beginValidation`は失敗する
-     * （`EmptyAdapterRegistry`）。実運用では`pluginDirectory(dir, trustedPublicKey)`か
-     * `adapterRegistry(...)`のいずれかを明示的に渡すこと（現時点でPlugin配布方針は
-     * prompt-engine側で未確定のため、本ガイドでは配線の型だけ示す）。
-     */
     @Bean(destroyMethod = "close")
-    fun apapEngine(): ApapEngine = ApapEngineBuilder().build()
+    fun apapEngine(): ApapEngine = EngineBootstrap.buildEngine()
 }
 ```
 
@@ -87,13 +96,21 @@ apap:
   plugin.signature.required: true
 ```
 
+<!-- docs:build-engine-from-config src=integration/host-compat/src/main/kotlin/apap/hostcompat/EngineBootstrap.kt -->
 ```kotlin
-@Bean(destroyMethod = "close")
-fun apapEngine(): ApapEngine =
+/**
+ * 03_基本設計.md 3.15の`application.yaml`形式でSPIを宣言的に選ぶ場合。
+ * [ApapConfig]はファイル/Map/プログラマティックの3経路で構築できる。
+ */
+fun buildEngineFromConfigFile(configFile: Path): ApapEngine =
     ApapEngineBuilder()
-        .applyConfig(ApapConfig.fromYamlFile(Path.of("/etc/apap/apap.yaml")))
-        // Spring の Environment から組み立てるなら fromMap も使える:
-        // .applyConfig(ApapConfig.fromMap(mapOf("routing.strategy" to "weighted-score")))
+        .applyConfig(ApapConfig.fromYamlFile(configFile))
+        .build()
+
+/** ホストの設定機構（Springの`Environment`等）から組み立てる場合はこちら。 */
+fun buildEngineFromConfigMap(settings: Map<String, String>): ApapEngine =
+    ApapEngineBuilder()
+        .applyConfig(ApapConfig.fromMap(settings))
         .build()
 ```
 
@@ -117,35 +134,17 @@ prompt-engineは既に`ExecutionAdapter`という名のPortを持っているた
 推奨パターンは「`ExecutionAdapter`の実装として`ApapExecutionAdapter`を書き、
 `ApapEngine`をコンストラクタ注入する」——Ports & Adaptersとして既に正しい形。
 
+<!-- docs:execution-adapter src=integration/host-compat/src/main/kotlin/apap/hostcompat/ApapExecutionAdapter.kt -->
 ```kotlin
-package promptengine.infrastructure.execution
-
-import apap.api.ApapException
-import apap.api.ApapRequest
-import apap.domain.model.vo.CapabilityId
-import apap.domain.model.vo.ContentPart
-import apap.domain.model.vo.TenantId
-import apap.runtime.ApapEngine
-import kotlinx.coroutines.runBlocking
-import promptengine.domain.execution.ExecutionAdapter
-import promptengine.domain.execution.ExecutionErrorType
-import promptengine.domain.execution.ExecutionFailedException
-import promptengine.domain.execution.ExecutionPolicy
-import promptengine.domain.execution.RawResponse
-import promptengine.domain.execution.Usage
-import promptengine.domain.render.RenderedPrompt
-import promptengine.domain.shared.LatencyMs
-import promptengine.domain.shared.SensitiveValue
-import promptengine.domain.shared.TokenCount
-
 class ApapExecutionAdapter(
     private val apapEngine: ApapEngine,
     private val tenantId: TenantId,
     private val capabilityId: CapabilityId = CapabilityId("chat"),
 ) : ExecutionAdapter {
-    // ExecutionAdapter.execute は非suspend（0章参照）。ApapEngine.execute は suspend fun のため
-    // runBlocking でブリッジする。呼出元（RetryingExecutionAdapter）もExecutionCoordinatorも
-    // 現時点で非同期を要求しないため、この境界1箇所に閉じ込める。
+    /**
+     * ホスト側の`execute`は非suspend、`ApapEngine.execute`はsuspend。
+     * `runBlocking`でのブリッジをこの境界1箇所に閉じ込める。
+     */
     override fun execute(
         prompt: RenderedPrompt,
         policy: ExecutionPolicy,
@@ -160,20 +159,25 @@ class ApapExecutionAdapter(
                             principal = "prompt-engine",
                             capabilityId = capabilityId,
                             input = prompt.messages.map { ContentPart.Text(it.content) },
-                            timeoutBudget = java.time.Duration.ofMillis(policy.timeoutMs),
+                            timeoutBudget = Duration.ofMillis(policy.timeoutMs),
                         ),
                     )
                 }
             RawResponse(
-                content = SensitiveValue.of(response.output.joinToString("") { (it as? ContentPart.Text)?.text.orEmpty() }),
+                content =
+                    SensitiveValue.of(
+                        response.output.filterIsInstance<ContentPart.Text>().joinToString("") { it.text },
+                    ),
                 usage =
-                    Usage(
-                        TokenCount(response.usage.inputTokens.value),
-                        TokenCount(response.usage.outputTokens.value),
+                    HostUsage(
+                        HostTokenCount(response.usage.inputTokens.value),
+                        HostTokenCount(response.usage.outputTokens.value),
                     ),
                 latency = LatencyMs((System.nanoTime() - startNanos) / NANOS_PER_MILLI),
             )
         } catch (e: ApapException) {
+            // 実行系の失敗はすべて apap.api.ApapException へ正規化されている。
+            // 内部例外（apap.execution.* 等）はホストから見えないのでcatchしてはならない。
             throw ExecutionFailedException(e.error.toExecutionErrorType(), retryCount = 0, cause = e)
         }
     }
@@ -222,10 +226,18 @@ APAPの`NormalizedError.category`（`AdapterErrorCategory`）→prompt-engineの
 | `UNSUPPORTED_CAPABILITY` | false | `CLIENT_ERROR` |
 | 上記以外・分類不能 | - | `UNKNOWN` |
 
+<!-- docs:error-mapping src=integration/host-compat/src/main/kotlin/apap/hostcompat/ApapExecutionAdapter.kt -->
 ```kotlin
-private fun apap.domain.model.vo.NormalizedError.toExecutionErrorType(): ExecutionErrorType =
+/**
+ * 13.4のコード体系（`NormalizedError`が保持）からホスト側の分類へ写す。
+ *
+ * **エラー分類をやり直さない**のが要点。retryableかどうかはAPAP側（2.11の表）で確定済みで、
+ * `CONNECT_TIMEOUT`/`READ_TIMEOUT`のような「未送信と言い切れるか」の判定も
+ * Provider⇔APAP間の境界でAPAPが済ませている。ホストは`retryable`を読むだけでよい。
+ */
+fun NormalizedError.toExecutionErrorType(): ExecutionErrorType =
     when {
-        category == apap.domain.model.vo.AdapterErrorCategory.RATE_LIMITED -> ExecutionErrorType.RATE_LIMITED
+        category == AdapterErrorCategory.RATE_LIMITED -> ExecutionErrorType.RATE_LIMITED
         retryable -> ExecutionErrorType.SERVER_ERROR
         else -> ExecutionErrorType.CLIENT_ERROR
     }
@@ -265,7 +277,56 @@ prompt-engineは現時点で**coroutines/`Flow`を一切使っていない**
    （FR-CAP-004はAPAP側では実装済みだが、PE側での消費経路が無い状態を許容する）。
 
 **このドキュメントではどちらか一方を選定しない**（prompt-engine側のアーキテクチャ判断であり、
-APAP側から強制すべきでないため）。参考として、`Flow<ApapStreamChunk>`を同期的な
+APAP側から強制すべきでないため）。ただし**どちらもAPAP側から見て型として成立すること**は
+確認済みで、次の2つは`integration/host-compat`で実際にコンパイルされている。
+
+方式1: `Flow`のまま渡す。
+
+<!-- docs:streaming-flow src=integration/host-compat/src/main/kotlin/apap/hostcompat/StreamingBridge.kt -->
+```kotlin
+/**
+ * 方式1: `Flow`のまま渡す。ホストがcoroutinesを受け入れられるなら最も素直で、
+ * バックプレッシャ（2.10のpull型）もそのまま活きる。
+ * テキストデルタだけを取り出す例。
+ */
+fun textDeltas(
+    engine: ApapEngine,
+    request: ApapRequest,
+): Flow<String> =
+    engine
+        .executeStream(request)
+        .mapNotNull { chunk ->
+            if (chunk.type == ApapStreamChunkType.CONTENT_DELTA) {
+                (chunk.delta as? ContentPart.Text)?.text
+            } else {
+                null
+            }
+        }
+```
+
+方式2: コールバックで押し出す（ホストへcoroutinesを持ち込みたくない場合）。
+
+<!-- docs:streaming-callback src=integration/host-compat/src/main/kotlin/apap/hostcompat/StreamingBridge.kt -->
+```kotlin
+/**
+ * 方式2: コールバックで押し出す。非同期を持ち込みたくないホスト向け。
+ *
+ * **注意**: `runBlocking`はストリーム全体を1スレッドで待つ。SSE等へ逐次書き出すなら
+ * 呼び出し側が専用スレッド/ディスパッチャで実行すること（そうしないと
+ * 「逐次」の意味が失われ、全チャンク受信後にまとめて処理される形になる）。
+ */
+fun forEachChunk(
+    engine: ApapEngine,
+    request: ApapRequest,
+    onChunk: (ApapStreamChunk) -> Unit,
+) {
+    runBlocking {
+        engine.executeStream(request).collect { chunk -> onChunk(chunk) }
+    }
+}
+```
+
+参考として、`Flow<ApapStreamChunk>`を同期的な
 `Iterator<ApapStreamChunk>`へ変換するだけなら`kotlinx.coroutines.flow.Flow.asIterable()`
 （`runBlocking`のスコープ内で使う）が最小の橋渡しになる——ただしこれは「非同期性を
 捨てて同期的に全チャンクを待つ」ものではなく、`Iterator.next()`呼出のたびに1チャンク分だけ
@@ -279,14 +340,47 @@ prompt-engine側のPresentation層（Controller/SSE実装）の要求に応じ�
 `MockAdapterConfig`）を使い、実Provider Plugin配置なしに`ApapEngine`をE2Eで動かせる
 （`modules/apap-runtime/src/test/kotlin/apap/runtime/ApapEngineBuilderTest.kt`が実例）。
 
+<!-- docs:adapter-mock-substitution src=integration/host-compat/src/test/kotlin/apap/hostcompat/AdapterMockSubstitutionTest.kt -->
 ```kotlin
-val engine =
-    ApapEngineBuilder()
-        .adapterRegistry(/* MockProviderAdapter を返す AdapterRegistry 実装 */)
-        .build()
-// engine.admin.providers.register(...) → beginValidation → completeValidation → enable
-// engine.admin.models.register(...) → changeStatus(TESTING) → changeStatus(ACTIVE)
-// のシーケンスでProvider/Modelを用意してから engine.execute(...) を呼ぶ
+/**
+ * `ApapEngineBuilder.adapterRegistry(...)`へ任意の[AdapterRegistry]を渡すと、
+ * 実Provider Pluginを配置せずに`ApapEngine`を動かせる。
+ *
+ * 注意: `Provider.beginValidation`→`completeValidation`はAdapterの
+ * `validateCredential`/`healthCheck`/`supportedCapabilities`を実際に呼ぶため、
+ * Adapterは`initialize`済みである必要がある。
+ */
+fun mockAdapterRegistry(capabilityId: CapabilityId): AdapterRegistry {
+    val region = Region.of("jp-east", RegionCodeTable(setOf("jp-east")))
+    val adapter = MockProviderAdapter(MockAdapterConfig(supportedCapabilities = setOf(capabilityId)))
+    adapter.initialize(
+        AdapterConfig(
+            ProviderId("01ARZ3NDEKTSV4RRFFQ69G5FD1"),
+            listOf(Endpoint("ep1", region, "https://example.internal", 100)),
+            RateLimits(600, 100_000, 10),
+            setOf(region),
+        ),
+        object : SecretAccessor {
+            override fun resolve(ref: CredentialRef): SecretValue = SecretValue("secret".toCharArray())
+        },
+    )
+    val manifest =
+        PluginManifest(
+            pluginId = "plugin-a",
+            version = SemVer(1, 0, 0),
+            spiVersionRange = SemVerRange.parse(">=1.0"),
+            entryPoint = "test.Entry",
+            capabilities = setOf(capabilityId),
+            authTypes = setOf("api_key"),
+            signature = "sig",
+        )
+    return object : AdapterRegistry {
+        override fun resolve(pluginId: String): ResolvedPlugin {
+            if (pluginId != "plugin-a") throw PluginNotFoundException(pluginId)
+            return ResolvedPlugin(adapter, manifest)
+        }
+    }
+}
 ```
 
 **命名規約の衝突に注意**: apap-engine自身のテスト用Provider Adapterは`MockProviderAdapter`

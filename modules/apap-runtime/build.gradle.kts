@@ -23,6 +23,13 @@ dependencies {
     implementation(project(":modules:apap-observability"))
     implementation(project(":modules:apap-infrastructure"))
     implementation(project(":modules:apap-adapter-spi"))
+    // `api`: ApapEngineの公開APIが `suspend fun execute(...)` と
+    // `fun executeStream(...): Flow<ApapStreamChunk>` を持つため、埋込ホストは
+    // kotlinx-coroutinesの型（Flow/suspendの呼び出し）へコンパイル時に到達できる必要がある。
+    // apap-adapter-spiが`AdapterStream.asFlow()`に対して同じ判断をしているのと同じ理由。
+    // implementationにするとホスト側で「Unresolved reference: Flow」になる
+    // （integration/host-compatのHostCompileClasspathTest/コンパイルで検出される）。
+    api(libs.findLibrary("kotlinx-coroutines-core").get())
     // ResilientQueryEmbedder（ADR-0023）が縮退時にWARNログを出すために使う
     // （CLAUDE.md不変条件6でSLF4J APIは許可）。
     implementation(libs.findLibrary("slf4j-api").get())
