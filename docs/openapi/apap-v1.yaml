@@ -1,0 +1,920 @@
+# APAP AI Gateway — OpenAPI 3.1 定義
+#
+# 対象は docs/design/13_API設計.md（13.1 エンドポイント / 13.2 Request / 13.3 Response /
+# 13.4 Error / 13.5 HTTP Status）。設計書は編集しない方針のため、本ファイルが
+# 「実装が実際に何を提供しているか」を表す唯一のAPI定義になる。
+#
+# **手で書き換えないこと。** paths は gateway の EndpointCatalog を単一の情報源として
+# おり、両者の一致は OpenApiContractTest が機械検証する（乖離するとビルドが落ちる）。
+#
+# 提供していないエンドポイントも**definitionから消さない**。`x-apap-status: NOT_IMPLEMENTED`
+# を付けて残す（ADR-0027）。消すと「そんなAPIは無い」ことになり、
+# 「13.1にはあるがこのビルドでは未提供」という実際の状態を表現できなくなる。
+openapi: 3.1.0
+info:
+  title: APAP AI Gateway
+  version: "1.0.0"
+  description: |
+    AI Provider Abstraction Platform の HTTP API。
+
+    Vendor Neutral 原則（CLAUDE.md 不変条件3）により、リクエストで Provider / Model の
+    物理名を指定することはできず、応答にも既定で含まれない。利用側が指定できるのは
+    Capability と Model Alias のみ。
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  "/v1/chat":
+    post:
+      summary: "Chat（stream=trueでSSE）"
+      operationId: post_v1_chat
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/completions":
+    post:
+      summary: "Completion"
+      operationId: post_v1_completions
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/embeddings":
+    post:
+      summary: "Embedding生成"
+      operationId: post_v1_embeddings
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/images/generations":
+    post:
+      summary: "画像生成"
+      operationId: post_v1_images_generations
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/images/edits":
+    post:
+      summary: "画像編集"
+      operationId: post_v1_images_edits
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/images/analyses":
+    post:
+      summary: "画像解析"
+      operationId: post_v1_images_analyses
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/audio/transcriptions":
+    post:
+      summary: "Speech To Text"
+      operationId: post_v1_audio_transcriptions
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/audio/speech":
+    post:
+      summary: "Text To Speech"
+      operationId: post_v1_audio_speech
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/audio/translations":
+    post:
+      summary: "Audio Translation"
+      operationId: post_v1_audio_translations
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/videos/analyses":
+    post:
+      summary: "動画解析"
+      operationId: post_v1_videos_analyses
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/batches":
+    post:
+      summary: "Batchジョブ投入"
+      operationId: post_v1_batches
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/batches/{job_id}":
+    get:
+      summary: "Batch状態取得"
+      operationId: get_v1_batches_job_id
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: "Batchキャンセル"
+      operationId: delete_v1_batches_job_id
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/batches/{job_id}/results":
+    get:
+      summary: "Batch結果取得"
+      operationId: get_v1_batches_job_id_results
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/memories":
+    post:
+      summary: "Memory登録"
+      operationId: post_v1_memories
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/memories/{id}":
+    get:
+      summary: "Memory取得"
+      operationId: get_v1_memories_id
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: "Memory削除"
+      operationId: delete_v1_memories_id
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/memories/search":
+    post:
+      summary: "Memory検索"
+      operationId: post_v1_memories_search
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/capabilities":
+    get:
+      summary: "利用可能Capability一覧（テナント権限適用済）"
+      operationId: get_v1_capabilities
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/capabilities/{capability_id}":
+    get:
+      summary: "Capability詳細（入出力JSON Schema、制約）"
+      operationId: get_v1_capabilities_capability_id
+      x-apap-status: IMPLEMENTED
+      parameters:
+        - name: capability_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/aliases":
+    get:
+      summary: "利用可能Model Alias一覧"
+      operationId: get_v1_aliases
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/sessions":
+    post:
+      summary: "Session作成"
+      operationId: post_v1_sessions
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/sessions/{id}":
+    delete:
+      summary: "Session失効"
+      operationId: delete_v1_sessions_id
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/conversations":
+    post:
+      summary: "Conversation作成"
+      operationId: post_v1_conversations
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/conversations/{id}":
+    get:
+      summary: "Conversation取得"
+      operationId: get_v1_conversations_id
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: "Conversation削除"
+      operationId: delete_v1_conversations_id
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/conversations/{id}/turns":
+    get:
+      summary: "Conversation履歴取得"
+      operationId: get_v1_conversations_id_turns
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/providers":
+    post:
+      summary: "Provider登録"
+      operationId: post_admin_v1_providers
+      x-apap-status: IMPLEMENTED
+      responses:
+        "201": { $ref: "#/components/responses/Created" }
+        default: { $ref: "#/components/responses/Problem" }
+    get:
+      summary: "Provider一覧"
+      operationId: get_admin_v1_providers
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/providers/{id}":
+    get:
+      summary: "Provider取得"
+      operationId: get_admin_v1_providers_id
+      x-apap-status: IMPLEMENTED
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+    patch:
+      summary: "Provider更新"
+      operationId: patch_admin_v1_providers_id
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: "Provider論理削除"
+      operationId: delete_admin_v1_providers_id
+      x-apap-status: IMPLEMENTED
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: "削除成功（13.5）" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/providers/{id}:enable":
+    post:
+      summary: "Provider有効化"
+      operationId: post_admin_v1_providers_id_enable
+      x-apap-status: IMPLEMENTED
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/providers/{id}:drain":
+    post:
+      summary: "Provider排出開始"
+      operationId: post_admin_v1_providers_id_drain
+      x-apap-status: IMPLEMENTED
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/providers/{id}:disable":
+    post:
+      summary: "Provider無効化（排出完了）"
+      operationId: post_admin_v1_providers_id_disable
+      x-apap-status: IMPLEMENTED
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/providers/{id}:validate":
+    post:
+      summary: "Provider疎通・Credential検証"
+      operationId: post_admin_v1_providers_id_validate
+      x-apap-status: IMPLEMENTED
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/providers/{id}/credentials:rotate":
+    post:
+      summary: "Credential Rotation"
+      operationId: post_admin_v1_providers_id_credentials_rotate
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/models":
+    post:
+      summary: "Model登録"
+      operationId: post_admin_v1_models
+      x-apap-status: IMPLEMENTED
+      responses:
+        "201": { $ref: "#/components/responses/Created" }
+        default: { $ref: "#/components/responses/Problem" }
+    get:
+      summary: "Model一覧（provider_id または capability_id で絞り込み必須）"
+      operationId: get_admin_v1_models
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/models:discovered":
+    get:
+      summary: "Discovery検出済み候補一覧"
+      operationId: get_admin_v1_models_discovered
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/models/{id}":
+    patch:
+      summary: "Model更新（status変更）"
+      operationId: patch_admin_v1_models_id
+      x-apap-status: IMPLEMENTED
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/aliases/{name}":
+    put:
+      summary: "Alias付替（Canary weight）"
+      operationId: put_admin_v1_aliases_name
+      x-apap-status: IMPLEMENTED
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+    get:
+      summary: "Alias取得"
+      operationId: get_admin_v1_aliases_name
+      x-apap-status: IMPLEMENTED
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/policies":
+    post:
+      summary: "Routing Policy登録"
+      operationId: post_admin_v1_policies
+      x-apap-status: IMPLEMENTED
+      responses:
+        "201": { $ref: "#/components/responses/Created" }
+        default: { $ref: "#/components/responses/Problem" }
+    get:
+      summary: "Routing Policy一覧（有効ポリシー解決）"
+      operationId: get_admin_v1_policies
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+    put:
+      summary: "Routing Policy更新"
+      operationId: put_admin_v1_policies
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/quotas/{tenant_id}":
+    put:
+      summary: "Quota設定"
+      operationId: put_admin_v1_quotas_tenant_id
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/budgets/{tenant_id}":
+    put:
+      summary: "Budget設定"
+      operationId: put_admin_v1_budgets_tenant_id
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/analytics/usage":
+    get:
+      summary: "Usage集計"
+      operationId: get_admin_v1_analytics_usage
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/analytics/cost":
+    get:
+      summary: "Cost集計"
+      operationId: get_admin_v1_analytics_cost
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/analytics/errors":
+    get:
+      summary: "Error集計"
+      operationId: get_admin_v1_analytics_errors
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/audit":
+    get:
+      summary: "監査検索"
+      operationId: get_admin_v1_audit
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/health/providers":
+    get:
+      summary: "Provider Health集約"
+      operationId: get_admin_v1_health_providers
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/plugins:scan":
+    post:
+      summary: "Pluginスキャン"
+      operationId: post_admin_v1_plugins_scan
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/plugins":
+    get:
+      summary: "Plugin一覧"
+      operationId: get_admin_v1_plugins
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/admin/v1/caches:invalidate":
+    post:
+      summary: "Cache無効化"
+      operationId: post_admin_v1_caches_invalidate
+      x-apap-status: NOT_IMPLEMENTED
+      description: |
+        13.1に定義があるが本ビルドでは提供していない（ADR-0027）。
+        呼び出すと NOT_IMPLEMENTED (501) が返り、detailに不足しているユースケースが示される。
+      deprecated: false
+      responses:
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/healthz":
+    get:
+      summary: "Liveness"
+      operationId: get_healthz
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/readyz":
+    get:
+      summary: "Readiness"
+      operationId: get_readyz
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/metrics":
+    get:
+      summary: "OpenMetrics形式のメトリクス"
+      operationId: get_metrics
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+  "/v1/_endpoints":
+    get:
+      summary: "本カタログ（各エンドポイントの提供状況）"
+      operationId: get_v1__endpoints
+      x-apap-status: IMPLEMENTED
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        default: { $ref: "#/components/responses/Problem" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        CIAP が発行した JWT（13章共通事項）。検証は TokenVerifier（腐敗防止層、ADR-0004）
+        の背後で行われ、クレーム名は設定駆動。
+  responses:
+    Ok:
+      description: 同期成功（13.5）。SSE も 200 で開始する。
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ChatResponse" }
+        text/event-stream:
+          schema:
+            type: string
+            description: |
+              `stream=true` のときの SSE ストリーム（13.3）。イベント名は
+              message_start / content_delta / tool_call_delta / usage / message_end /
+              error / heartbeat。heartbeat は 15 秒間隔（2.10）。
+              message_end に finish_reason は含まれない（ADR-0028）。
+    Created:
+      description: 作成成功（13.5）。
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+      content:
+        application/json:
+          schema: { type: object }
+    Problem:
+      description: |
+        エラー応答（13.4、RFC 9457 Problem Details + APAP 拡張）。
+        429 / 503 には Retry-After ヘッダも付く（13.5）。
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        Retry-After:
+          description: 429 / 503 のときのみ。秒単位の整数（RFC 9110）。
+          required: false
+          schema: { type: integer }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/ProblemDetails" }
+  headers:
+    XRequestId:
+      description: 全応答に付与される（13.5）。ULID 形式。
+      required: true
+      schema: { type: string }
+  schemas:
+    ProblemDetails:
+      type: object
+      required: [type, title, status, code, detail, request_id, retryable]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        code: { $ref: "#/components/schemas/ErrorCode" }
+        detail: { type: string }
+        request_id: { type: string }
+        retryable: { type: boolean }
+        retry_after_ms:
+          type: integer
+          description: レート制限時などの再試行猶予。無い場合は省略される。
+    ErrorCode:
+      type: string
+      description: |
+        13.4 のエラーコード体系。NOT_IMPLEMENTED（ADR-0027）と
+        RESOURCE_NOT_FOUND（ADR-0030）のみ Gateway 側の追加。
+      enum:
+            - INVALID_REQUEST
+            - PROMPT_VALIDATION_FAILED
+            - UNAUTHENTICATED
+            - PERMISSION_DENIED
+            - CAPABILITY_NOT_AVAILABLE
+            - ALIAS_NOT_FOUND
+            - CONVERSATION_NOT_FOUND
+            - CONFLICT
+            - PAYLOAD_TOO_LARGE
+            - CONTEXT_LENGTH_EXCEEDED
+            - OUTPUT_SCHEMA_VIOLATION
+            - CONTENT_FILTERED
+            - RATE_LIMIT_EXCEEDED
+            - QUOTA_EXCEEDED
+            - INTERNAL_ERROR
+            - PROVIDER_ERROR
+            - NO_CANDIDATE_AVAILABLE
+            - TIMEOUT
+            - NOT_IMPLEMENTED
+            - RESOURCE_NOT_FOUND
+    ContentPart:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, enum: [text, image, audio, video, json] }
+        text: { type: string }
+        uri: { type: string }
+        mime_type: { type: string }
+    Message:
+      type: object
+      required: [role, content]
+      properties:
+        role: { type: string }
+        content:
+          type: array
+          items: { $ref: "#/components/schemas/ContentPart" }
+    ChatRequest:
+      type: object
+      required: [messages]
+      description: |
+        13.2 POST /v1/chat。Provider / Model の物理名を指定するフィールドは
+        意図的に存在しない（CLAUDE.md 不変条件3）。
+      properties:
+        messages:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items: { $ref: "#/components/schemas/Message" }
+        model_alias: { type: string }
+        params: { $ref: "#/components/schemas/GenerationParams" }
+        tools:
+          type: array
+          items: { $ref: "#/components/schemas/ToolDefinition" }
+        output_schema: { type: string }
+        stream: { type: boolean, default: false }
+        conversation_id: { type: string }
+        session_id: { type: string }
+        metadata: { type: object, additionalProperties: { type: string } }
+    EmbeddingRequest:
+      type: object
+      required: [inputs]
+      description: 13.2 POST /v1/embeddings。
+      properties:
+        inputs:
+          type: array
+          minItems: 1
+          items: { type: string }
+        model_alias: { type: string }
+        dimensions: { type: integer }
+    GenerationParams:
+      type: object
+      properties:
+        temperature: { type: number }
+        max_tokens: { type: integer }
+        top_p: { type: number }
+        stop: { type: array, items: { type: string } }
+        seed: { type: integer }
+    ToolDefinition:
+      type: object
+      required: [name, description, input_schema]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        input_schema: { type: string }
+    Usage:
+      type: object
+      required: [input_tokens, output_tokens, total_tokens, estimated]
+      properties:
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+        total_tokens: { type: integer }
+        estimated: { type: boolean }
+    Cost:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { type: number }
+        currency: { type: string }
+    ToolCall:
+      type: object
+      required: [id, name, arguments]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        arguments: { type: object }
+    ChatResponse:
+      type: object
+      required: [response_id, request_id, output, finish_reason, usage, cost, cached]
+      description: |
+        13.3。物理 Provider / Model 名は含まれない（13.3 注、CLAUDE.md 不変条件3）。
+        返るのは利用側が指定した Alias（論理名）のみ。
+      properties:
+        response_id: { type: string }
+        request_id: { type: string }
+        output:
+          type: object
+          required: [message]
+          properties:
+            message: { $ref: "#/components/schemas/Message" }
+        tool_calls:
+          type: array
+          items: { $ref: "#/components/schemas/ToolCall" }
+        finish_reason: { type: string }
+        usage: { $ref: "#/components/schemas/Usage" }
+        cost: { $ref: "#/components/schemas/Cost" }
+        cached: { type: boolean }
+        model_alias: { type: string }
+        metadata: { type: object, additionalProperties: { type: string } }
