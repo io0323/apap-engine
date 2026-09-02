@@ -125,7 +125,7 @@ class DefaultContextManagerBudgetTest {
     )
 
     @Test
-    fun `boundary exactly at budget keeps all turns without truncation`() =
+    fun `boundary exactly at budget keeps all turns without truncation`(): Unit =
         runBlocking {
             // "hi" (2 chars) fixed input + one 8-char turn = 10 chars.
             // budget = contextWindow(11) - maxOutputTokens(1) = 10.
@@ -138,7 +138,7 @@ class DefaultContextManagerBudgetTest {
         }
 
     @Test
-    fun `one token over budget truncates the oldest turn deterministically`() =
+    fun `one token over budget truncates the oldest turn deterministically`(): Unit =
         runBlocking {
             model(contextWindow = 11)
             val history = listOf(turn(1, "12345678"), turn(2, "9"))
@@ -164,7 +164,7 @@ class DefaultContextManagerBudgetTest {
     }
 
     @Test
-    fun `EXACT mode uses a smaller safety margin than HEURISTIC, yielding a larger usable budget`() =
+    fun `EXACT mode uses a smaller safety margin than HEURISTIC, yielding a larger usable budget`(): Unit =
         runBlocking {
             model(contextWindow = 100, maxOutputTokens = 1)
             val config = TokenEstimationConfig(exactSafetyMarginRatio = 0.05, heuristicSafetyMarginRatio = 0.50)

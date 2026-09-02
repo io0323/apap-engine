@@ -177,7 +177,7 @@ class FallbackEngineTest {
         )
 
     @Test
-    fun `first candidate fails, second succeeds`() =
+    fun `first candidate fails, second succeeds`(): Unit =
         runBlocking {
             val config = MockAdapterConfig(forcedErrorCategory = AdapterErrorCategory.PROVIDER_UNAVAILABLE)
             val adapterA = initialized(providerA, config)
@@ -188,7 +188,7 @@ class FallbackEngineTest {
         }
 
     @Test
-    fun `all candidates fail returns the last error with correct attempts and fallbacks`() =
+    fun `all candidates fail returns the last error with correct attempts and fallbacks`(): Unit =
         runBlocking {
             val category = AdapterErrorCategory.PROVIDER_UNAVAILABLE
             val adapterA = initialized(providerA, MockAdapterConfig(forcedErrorCategory = category))
@@ -202,7 +202,7 @@ class FallbackEngineTest {
         }
 
     @Test
-    fun `stops without falling back when the error is not fallbackable`() =
+    fun `stops without falling back when the error is not fallbackable`(): Unit =
         runBlocking {
             val config = MockAdapterConfig(forcedErrorCategory = AdapterErrorCategory.INVALID_REQUEST)
             val adapterA = initialized(providerA, config)
@@ -213,7 +213,7 @@ class FallbackEngineTest {
         }
 
     @Test
-    fun `CB Open candidate is skipped entirely`() =
+    fun `CB Open candidate is skipped entirely`(): Unit =
         runBlocking {
             val cb = defaultCb()
             val keyA = CbKey(providerA, modelA)
@@ -231,7 +231,7 @@ class FallbackEngineTest {
         }
 
     @Test
-    fun `stops when remaining budget cannot cover the next candidate's p50 latency`() =
+    fun `stops when remaining budget cannot cover the next candidate's p50 latency`(): Unit =
         runBlocking {
             val config = MockAdapterConfig(forcedErrorCategory = AdapterErrorCategory.PROVIDER_UNAVAILABLE)
             val adapterA = initialized(providerA, config)
@@ -248,7 +248,7 @@ class FallbackEngineTest {
         }
 
     @Test
-    fun `structured output correction budget is not reset across a fallback to a different candidate`() =
+    fun `structured output correction budget is not reset across a fallback to a different candidate`(): Unit =
         runBlocking {
             // Candidate A always returns MODEL_ERROR (consumes both correction slots across its own retries).
             val modelErrorOutcomes = List(5) { ScriptedOutcome(AdapterErrorCategory.MODEL_ERROR) }

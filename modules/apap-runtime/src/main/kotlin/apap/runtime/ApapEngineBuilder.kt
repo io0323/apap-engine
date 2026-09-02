@@ -93,6 +93,50 @@ class ApapEngineBuilder(
         pluginTrustedPublicKey = trustedPublicKey
     }
 
+    /**
+     * Plugin署名検証の信頼鍵のみを設定する（[applyConfig]で`plugin.dir`を与えた場合、鍵は設定
+     * ファイルに書けないためこちらで別途渡す）。鍵無しで[pluginDirectory]だけが設定された状態で
+     * [build]すると例外になる（黙って`EmptyAdapterRegistry`へ縮退させない）。
+     */
+    fun pluginTrustedPublicKey(trustedPublicKey: PublicKey) = apply { pluginTrustedPublicKey = trustedPublicKey }
+
+    /**
+     * 03_基本設計.md 3.15の`application.yaml`（[ApapConfig]）で宣言されたSPIバインドを適用する。
+     * [ApapConfig]はファイル/Map/プログラマティックの3経路で構築できる（[ApapConfig.fromYamlFile]/
+     * [ApapConfig.fromMap]/コンストラクタ）。
+     *
+     * 名前で選べるのは引数無しで構築できる組込み実装（[KNOWN_ROUTING_STRATEGIES]等）に限る。
+     * 外部システム接続を要する実装（3.15例の`distributed-kvs`/`vault-compatible`）は接続情報を
+     * 名前だけでは決められないため、対応する実装インスタンスを[cacheStore]/[secretStore]へ
+     * 直接渡すこと。未知の名前は黙って既定値へfall backせず例外にする（設定ミスの握り潰しを避ける）。
+     */
+    fun applyConfig(config: ApapConfig) =
+        apply {
+            config.routingStrategy?.let {
+                routingStrategy = resolveNamed(it, KNOWN_ROUTING_STRATEGIES, "routing.strategy")
+            }
+            config.retryStrategy?.let { retryStrategy = resolveNamed(it, KNOWN_RETRY_STRATEGIES, "retry.strategy") }
+            config.compactionStrategy?.let {
+                compactionStrategy = resolveNamed(it, KNOWN_COMPACTION_STRATEGIES, "compaction.strategy")
+            }
+            config.secretStore?.let { secretStore = resolveNamed(it, KNOWN_SECRET_STORES, "secret.store") }
+            config.cacheStore?.let { name ->
+                // `in-memory`は名前の妥当性のみ検証し、生成はbuild()へ委ねる（InMemoryCacheStoreは
+                // Clockを要るため、ここで生成すると applyConfig(...).clock(...) の順で呼ばれた際に
+                // 古いClockを掴んだままになる）。cacheStore=nullのままならbuild()が最終的なclockで
+                // InMemoryCacheStoreを構築する。
+                if (name != CACHE_STORE_IN_MEMORY) {
+                    throw unknownName("cache.store", name, setOf(CACHE_STORE_IN_MEMORY))
+                }
+                cacheStore = null
+            }
+            config.pluginDir?.let { pluginDirectory = Path.of(it) }
+            require(config.pluginSignatureRequired) {
+                "apap.plugin.signature.required=false is not supported: ApapEngineBuilder always verifies " +
+                    "plugin signatures (PluginSignatureVerifier). Remove the setting or set it to true."
+            }
+        }
+
     fun secretStore(store: SecretStore) = apply { secretStore = store }
 
     fun cacheStore(store: CacheStore<CanonicalResponse>) = apply { cacheStore = store }
@@ -202,6 +246,11 @@ class ApapEngineBuilder(
         val explicit = adapterRegistry
         val directory = pluginDirectory
         val publicKey = pluginTrustedPublicKey
+        require(directory == null || publicKey != null) {
+            "pluginDirectory is set but no trusted public key was provided. " +
+                "Pass it via pluginDirectory(directory, trustedPublicKey) or pluginTrustedPublicKey(key); " +
+                "plugin signature verification cannot be skipped."
+        }
         return if (explicit != null) {
             explicit
         } else if (directory != null && publicKey != null) {
@@ -223,5 +272,54 @@ class ApapEngineBuilder(
 
     private object EmptyAdapterRegistry : AdapterRegistry {
         override fun resolve(pluginId: String): ResolvedPlugin = throw PluginNotFoundException(pluginId)
+    }
+
+    companion object {
+        /** 03_基本設計.md 3.15 `routing.strategy`で選べる組込み実装名。 */
+        val KNOWN_ROUTING_STRATEGIES: Map<String, () -> RoutingStrategy> =
+            mapOf("weighted-score" to { WeightedScoreRoutingStrategy() })
+
+        /** 3.15 `retry.strategy`。 */
+        val KNOWN_RETRY_STRATEGIES: Map<String, () -> RetryStrategy> =
+            mapOf("exp-backoff-jitter" to { ExponentialBackoffJitterStrategy() })
+
+        /**
+         * 3.15 `compaction.strategy`。`SummarizeCompactionStrategy`/`ImportanceCompactionStrategy`は
+         * 要約器・重要度スコアラの注入を要し名前だけでは構築できないため、
+         * [compactionStrategy]へ直接インスタンスを渡すこと。
+         */
+        val KNOWN_COMPACTION_STRATEGIES: Map<String, () -> CompactionStrategy> =
+            mapOf("truncate-oldest" to { TruncateOldestCompactionStrategy() })
+
+        /**
+         * 3.15 `secret.store`。3.15例の`vault-compatible`（`ExternalSecretStore`）は接続情報を
+         * 要するため名前では選べない——[secretStore]へ直接渡すこと。
+         */
+        val KNOWN_SECRET_STORES: Map<String, () -> SecretStore> =
+            mapOf("env-var" to { EnvVarSecretStore() })
+
+        /**
+         * 3.15 `cache.store`。3.15例の`distributed-kvs`は`apap-infrastructure-distributed`の実装であり、
+         * これを名前で解決可能にすると`apap-runtime`が同モジュールへ依存してしまう
+         * （`EmbeddingConstraintTest`が禁止する既定依存グラフ違反）。[cacheStore]へ直接渡すこと。
+         */
+        const val CACHE_STORE_IN_MEMORY = "in-memory"
+
+        private fun <T> resolveNamed(
+            name: String,
+            known: Map<String, () -> T>,
+            settingKey: String,
+        ): T = known[name]?.invoke() ?: throw unknownName(settingKey, name, known.keys)
+
+        private fun unknownName(
+            settingKey: String,
+            name: String,
+            known: Set<String>,
+        ): IllegalArgumentException =
+            IllegalArgumentException(
+                "Unknown apap.$settingKey: '$name'. Known names: ${known.sorted()}. " +
+                    "Implementations requiring external connection details cannot be selected by name — " +
+                    "pass the instance to the corresponding ApapEngineBuilder method instead.",
+            )
     }
 }

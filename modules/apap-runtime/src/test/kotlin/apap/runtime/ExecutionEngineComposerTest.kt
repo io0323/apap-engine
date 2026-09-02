@@ -104,7 +104,7 @@ class ExecutionEngineComposerTest {
 
     @Suppress("LongMethod")
     @Test
-    fun `wired ExecutionEngine completes a chat request end-to-end`() =
+    fun `wired ExecutionEngine completes a chat request end-to-end`(): Unit =
         runBlocking {
             val providerRepository = InMemoryProviderRepository()
             val modelRepository = InMemoryModelRepository()
@@ -220,7 +220,7 @@ class ExecutionEngineComposerTest {
      */
     @Suppress("LongMethod")
     @Test
-    fun `sequential requests with the same conversationId accumulate history`() =
+    fun `sequential requests with the same conversationId accumulate history`(): Unit =
         runBlocking {
             val providerRepository = InMemoryProviderRepository()
             val modelRepository = InMemoryModelRepository()
@@ -354,7 +354,7 @@ class ExecutionEngineComposerTest {
      */
     @Suppress("LongMethod")
     @Test
-    fun `a turn persistence failure does not fail the response`() =
+    fun `a turn persistence failure does not fail the response`(): Unit =
         runBlocking {
             val providerRepository = InMemoryProviderRepository()
             val modelRepository = InMemoryModelRepository()
@@ -472,7 +472,7 @@ class ExecutionEngineComposerTest {
      */
     @Suppress("LongMethod")
     @Test
-    fun `retries and fallback do not duplicate turn persistence`() =
+    fun `retries and fallback do not duplicate turn persistence`(): Unit =
         runBlocking {
             val providerRepository = InMemoryProviderRepository()
             val modelRepository = InMemoryModelRepository()
@@ -674,7 +674,7 @@ class ExecutionEngineComposerTest {
      */
     @Suppress("LongMethod")
     @Test
-    fun `conversation history is merged into the prompt actually sent to the adapter`() =
+    fun `conversation history is merged into the prompt actually sent to the adapter`(): Unit =
         runBlocking {
             val providerRepository = InMemoryProviderRepository()
             val modelRepository = InMemoryModelRepository()
@@ -817,7 +817,7 @@ class ExecutionEngineComposerTest {
      */
     @Suppress("LongMethod")
     @Test
-    fun `context length exceeded even after compaction surfaces as ExecutionFailedException`() =
+    fun `context length exceeded even after compaction surfaces as ExecutionFailedException`(): Unit =
         runBlocking {
             val providerRepository = InMemoryProviderRepository()
             val modelRepository = InMemoryModelRepository()

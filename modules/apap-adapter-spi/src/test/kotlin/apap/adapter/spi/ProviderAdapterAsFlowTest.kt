@@ -28,7 +28,7 @@ class ProviderAdapterAsFlowTest {
     private fun chunk(index: Int) = AdapterChunk(type = AdapterChunkType.CONTENT_DELTA, index = index)
 
     @Test
-    fun `emits every chunk in order until next returns null`() =
+    fun `emits every chunk in order until next returns null`(): Unit =
         runBlocking {
             val stream = RecordingStream(listOf(chunk(0), chunk(1), chunk(2)))
             val collected = stream.asFlow().toList()
@@ -36,7 +36,7 @@ class ProviderAdapterAsFlowTest {
         }
 
     @Test
-    fun `does not call cancel when the stream completes normally`() =
+    fun `does not call cancel when the stream completes normally`(): Unit =
         runBlocking {
             val stream = RecordingStream(listOf(chunk(0)))
             stream.asFlow().toList()
@@ -44,7 +44,7 @@ class ProviderAdapterAsFlowTest {
         }
 
     @Test
-    fun `calls cancel when the collector stops before the stream is exhausted`() =
+    fun `calls cancel when the collector stops before the stream is exhausted`(): Unit =
         runBlocking {
             val stream = RecordingStream(listOf(chunk(0), chunk(1), chunk(2)))
             val collected = stream.asFlow().take(1).toList()

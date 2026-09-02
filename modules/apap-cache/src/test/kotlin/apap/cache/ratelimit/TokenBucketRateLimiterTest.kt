@@ -40,7 +40,7 @@ class TokenBucketRateLimiterTest {
     }
 
     @Test
-    fun `acquire with zero maxWait behaves like an immediate accept-or-reject check`() =
+    fun `acquire with zero maxWait behaves like an immediate accept-or-reject check`(): Unit =
         runTest {
             val limiter = TokenBucketRateLimiter(clock, events, ids, RateLimiterConfig(defaultCapacity = 1))
             val first = limiter.acquire(scope, "trace-1", Duration.ZERO)
@@ -56,7 +56,7 @@ class TokenBucketRateLimiterTest {
         }
 
     @Test
-    fun `acquire waits up to maxWait and succeeds once the bucket refills`() =
+    fun `acquire waits up to maxWait and succeeds once the bucket refills`(): Unit =
         runTest {
             // capacity=1, refill 20 tokens/sec -> the 2nd token needs ~50ms inside acquire()'s delay().
             val config = RateLimiterConfig(defaultCapacity = 1, defaultRefillPerSecond = 20.0)
@@ -88,7 +88,7 @@ class TokenBucketRateLimiterTest {
         }
 
     @Test
-    fun `acquire rejects promptly, without waiting the full deficit, when it exceeds maxWait`() =
+    fun `acquire rejects promptly, without waiting the full deficit, when it exceeds maxWait`(): Unit =
         runTest {
             // capacity=1, refill 1 token/sec -> the 2nd token needs ~1000ms, far more than maxWait below.
             val config = RateLimiterConfig(defaultCapacity = 1, defaultRefillPerSecond = 1.0)

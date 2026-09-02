@@ -77,7 +77,7 @@ class ResilientQueryEmbedderTest {
     }
 
     @Test
-    fun `a healthy delegate's vector passes through`() =
+    fun `a healthy delegate's vector passes through`(): Unit =
         runBlocking {
             val delegate = QueryEmbedder { listOf(0.1, 0.2, 0.3) }
             val result = embedder(delegate).embed(listOf(ContentPart.Text("hi")))
@@ -85,7 +85,7 @@ class ResilientQueryEmbedderTest {
         }
 
     @Test
-    fun `an OPEN circuit breaker degrades to an empty vector without calling the delegate`() =
+    fun `an OPEN circuit breaker degrades to an empty vector without calling the delegate`(): Unit =
         runBlocking {
             var called = false
             val delegate =
@@ -99,7 +99,7 @@ class ResilientQueryEmbedderTest {
         }
 
     @Test
-    fun `a rejecting rate limiter degrades to an empty vector without calling the delegate`() =
+    fun `a rejecting rate limiter degrades to an empty vector without calling the delegate`(): Unit =
         runBlocking {
             var called = false
             val delegate =
@@ -113,7 +113,7 @@ class ResilientQueryEmbedderTest {
         }
 
     @Test
-    fun `a failing delegate degrades to an empty vector and records a circuit breaker failure`() =
+    fun `a failing delegate degrades to an empty vector and records a circuit breaker failure`(): Unit =
         runBlocking {
             val delegate = QueryEmbedder { error("embedding provider unavailable") }
             val cb = circuitBreaker()
