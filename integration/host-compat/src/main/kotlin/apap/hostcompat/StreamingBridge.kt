@@ -18,6 +18,7 @@ import kotlinx.coroutines.runBlocking
  */
 object StreamingBridge {
     // docs:begin streaming-flow
+
     /**
      * 方式1: `Flow`のまま渡す。ホストがcoroutinesを受け入れられるなら最も素直で、
      * バックプレッシャ（2.10のpull型）もそのまま活きる。
@@ -39,6 +40,7 @@ object StreamingBridge {
     // docs:end streaming-flow
 
     // docs:begin streaming-callback
+
     /**
      * 方式2: コールバックで押し出す。非同期を持ち込みたくないホスト向け。
      *

@@ -7,12 +7,12 @@ import apap.domain.model.vo.CapabilityId
 import apap.gateway.json.GatewayJson
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
-import io.ktor.client.request.setBody
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import kotlinx.coroutines.CoroutineScope
@@ -88,7 +88,7 @@ class RateLimitAndIdempotencyTest {
         }
 
     @Test
-    fun `a second request reusing an in-flight Idempotency-Key is rejected with 409 rather than executed twice`(): Unit =
+    fun `a second request reusing an in-flight Idempotency-Key gets 409, not a second execution`(): Unit =
         testApplication {
             // 1件目が実行中の間に2件目を送るため、Adapterに滞留させる。
             val fixture =

@@ -72,12 +72,12 @@ class DocumentedSnippetTest {
                 region == null ->
                     mismatches +=
                         "$DOC_PATH:${block.startLine}: region '${marker.id}' not found in ${marker.sourcePath} " +
-                            "(expected `// docs:begin ${marker.id}` ... `// docs:end ${marker.id}`)"
+                        "(expected `// docs:begin ${marker.id}` ... `// docs:end ${marker.id}`)"
                 region != block.code ->
                     mismatches +=
                         "$DOC_PATH:${block.startLine}: the documented snippet has drifted from " +
-                            "${marker.sourcePath} region '${marker.id}'.\n" +
-                            "--- documentation ---\n${block.code}\n--- source ---\n$region"
+                        "${marker.sourcePath} region '${marker.id}'.\n" +
+                        "--- documentation ---\n${block.code}\n--- source ---\n$region"
             }
         }
 
@@ -129,15 +129,15 @@ class DocumentedSnippetTest {
         lines: List<String>,
         fenceIndex: Int,
     ): Marker? {
-        for (i in (fenceIndex - 1) downTo maxOf(0, fenceIndex - MARKER_LOOKBACK)) {
-            val line = lines[i].trim()
-            if (line.isEmpty()) continue
-            VERIFIED_MARKER.find(line)?.let { return Marker.Verified(it.groupValues[1], it.groupValues[2]) }
-            ILLUSTRATIVE_MARKER.find(line)?.let { return Marker.Illustrative(it.groupValues[1]) }
-            // マーカー以外の内容に当たったら、そこで探索を打ち切る（別ブロックのマーカーを拾わない）。
-            return null
-        }
-        return null
+        // 空行は読み飛ばし、最初に現れた非空行だけを見る。そこがマーカーでなければ
+        // このフェンスは未マーク（さらに上を探すと別ブロックのマーカーを拾ってしまう）。
+        val candidate =
+            (fenceIndex - 1 downTo maxOf(0, fenceIndex - MARKER_LOOKBACK))
+                .map { lines[it].trim() }
+                .firstOrNull { it.isNotEmpty() }
+                ?: return null
+        return VERIFIED_MARKER.find(candidate)?.let { Marker.Verified(it.groupValues[1], it.groupValues[2]) }
+            ?: ILLUSTRATIVE_MARKER.find(candidate)?.let { Marker.Illustrative(it.groupValues[1]) }
     }
 
     /**
@@ -157,7 +157,8 @@ class DocumentedSnippetTest {
                 .filter { it.isNotBlank() }
                 .minOfOrNull { line -> line.takeWhile { it == ' ' }.length }
                 ?: 0
-        return body.joinToString("\n") { line -> line.drop(minOf(indent, line.takeWhile { it == ' ' }.length)) }
+        return body
+            .joinToString("\n") { line -> line.drop(minOf(indent, line.takeWhile { it == ' ' }.length)) }
             .trim('\n')
     }
 

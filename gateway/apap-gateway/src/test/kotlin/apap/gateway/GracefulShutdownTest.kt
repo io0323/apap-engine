@@ -11,17 +11,16 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import io.ktor.server.engine.EmbeddedServer
 import java.net.ServerSocket
 import java.util.concurrent.TimeUnit
 
@@ -112,7 +111,11 @@ class GracefulShutdownTest {
                             tenantId = TEST_TENANT,
                             principal = "p",
                             capabilityId = CapabilityId("chat"),
-                            input = listOf(apap.domain.model.vo.ContentPart.Text("x")),
+                            input =
+                                listOf(
+                                    apap.domain.model.vo.ContentPart
+                                        .Text("x"),
+                                ),
                         ),
                     )
                 }

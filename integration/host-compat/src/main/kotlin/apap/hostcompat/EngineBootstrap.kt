@@ -18,6 +18,7 @@ import java.nio.file.Path
  */
 object EngineBootstrap {
     // docs:begin build-engine
+
     /**
      * 依存ゼロ構成でも`build()`自体は成功する。ただしProvider未登録のため、そのままでは
      * どの`execute()`呼出も候補解決（FR-RTE-001）で失敗する。実運用では
@@ -32,6 +33,7 @@ object EngineBootstrap {
     // docs:end build-engine
 
     // docs:begin build-engine-from-config
+
     /**
      * 03_基本設計.md 3.15の`application.yaml`形式でSPIを宣言的に選ぶ場合。
      * [ApapConfig]はファイル/Map/プログラマティックの3経路で構築できる。

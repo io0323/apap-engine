@@ -56,6 +56,7 @@ const val IDEMPOTENCY_KEY_HEADER = "Idempotency-Key"
  * HTTP層は薄いアダプタに徹し、ビジネスロジックは持たない——ルート定義は
  * 「DTO変換 → [ApapEngine]呼び出し → DTO変換」だけを行う。
  */
+@Suppress("LongParameterList")
 fun Application.apapGateway(
     engine: ApapEngine,
     config: GatewayConfig,
@@ -174,8 +175,10 @@ fun notImplemented(
  * 排出の対象に数えるリクエストか。opsルート（probe/scrape）は除く——これらを数えると
  * Kubernetesがprobeを打ち続ける限りin-flightが0にならず、排出が永久に終わらない。
  */
-private fun ApplicationCall.isTracked(): Boolean =
-    request.path().startsWith("/v1") || request.path().startsWith("/admin")
+private fun ApplicationCall.isTracked(): Boolean {
+    val path = request.path()
+    return path.startsWith("/v1") || path.startsWith("/admin")
+}
 
 private const val BEARER_PREFIX = "Bearer "
 private const val TOO_MANY_REQUESTS = 429

@@ -11,15 +11,16 @@ import apap.runtime.ApapEngine
 import kotlinx.coroutines.runBlocking
 import java.time.Duration
 
-/**
- * `docs/integration/prompt-engine.md` 2-b章のコード例の実体。
- *
- * ホスト側のPort（[ExecutionAdapter]）実装として`ApapEngine`を注入する推奨パターン。
- * **このファイルが実際にコンパイルされること自体が検証**である——P9では
- * `apap.execution.ExecutionFailedException`（ホストから見えない内部型）をimportする例を
- * 載せてしまい、ドキュメントが検査対象外だったため気づけなかった（ADR-0029）。
- */
+// `docs/integration/prompt-engine.md` 2-b章のコード例の実体。
+// このファイルがコンパイルされること自体が「ホストの依存だけで書けるか」の検証になる（ADR-0029）。
+
 // docs:begin execution-adapter
+
+/**
+ * ホスト側のPort（[ExecutionAdapter]）実装として`ApapEngine`を注入する推奨パターン。
+ * Ports & Adapters としては、ホストが既に持つ`ExecutionAdapter`がそのままPortであり、
+ * 新しいPortを足す必要はない。
+ */
 class ApapExecutionAdapter(
     private val apapEngine: ApapEngine,
     private val tenantId: TenantId,
@@ -73,6 +74,7 @@ class ApapExecutionAdapter(
 // docs:end execution-adapter
 
 // docs:begin error-mapping
+
 /**
  * 13.4のコード体系（`NormalizedError`が保持）からホスト側の分類へ写す。
  *

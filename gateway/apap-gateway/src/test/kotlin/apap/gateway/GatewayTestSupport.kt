@@ -39,9 +39,9 @@ import apap.runtime.ApapEngine
 import apap.runtime.ApapEngineBuilder
 import apap.runtime.ApapRepositories
 import io.opentelemetry.sdk.metrics.SdkMeterProvider
-import java.util.concurrent.CountDownLatch
 import java.math.BigDecimal
 import java.time.Instant
+import java.util.concurrent.CountDownLatch
 
 /**
  * ADR-0004: テストは**自己署名JWT相当のテストダブル**で行い、CIAP実体に依存しない。

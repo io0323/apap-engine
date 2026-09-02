@@ -136,6 +136,11 @@ prompt-engineは既に`ExecutionAdapter`という名のPortを持っているた
 
 <!-- docs:execution-adapter src=integration/host-compat/src/main/kotlin/apap/hostcompat/ApapExecutionAdapter.kt -->
 ```kotlin
+/**
+ * ホスト側のPort（[ExecutionAdapter]）実装として`ApapEngine`を注入する推奨パターン。
+ * Ports & Adapters としては、ホストが既に持つ`ExecutionAdapter`がそのままPortであり、
+ * 新しいPortを足す必要はない。
+ */
 class ApapExecutionAdapter(
     private val apapEngine: ApapEngine,
     private val tenantId: TenantId,

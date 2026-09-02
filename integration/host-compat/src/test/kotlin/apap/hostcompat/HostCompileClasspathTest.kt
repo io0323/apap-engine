@@ -29,7 +29,8 @@ class HostCompileClasspathTest {
         // 検証対象が本当に載っていることの確認: apap-runtimeが見えないなら読み取りが壊れている。
         assertTrue(
             entries.any { it.contains("apap-runtime") },
-            "apap-runtime is absent from the classpath, so the reader is broken rather than the dependency set: $entries",
+            "apap-runtime is absent from the classpath, so the reader is broken rather than " +
+                "the dependency set: $entries",
         )
 
         val leaked = FORBIDDEN_MODULES.filter { forbidden -> entries.any { it.matchesModule(forbidden) } }

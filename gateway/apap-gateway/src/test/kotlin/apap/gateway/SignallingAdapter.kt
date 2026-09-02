@@ -12,8 +12,8 @@ import apap.adapter.spi.ProviderCost
 import apap.adapter.spi.ProviderToolFormat
 import apap.adapter.spi.ProviderUsage
 import apap.adapter.spi.SecretAccessor
-import apap.adapter.spi.ValidationResult
 import apap.adapter.spi.ToolDefinition
+import apap.adapter.spi.ValidationResult
 import apap.domain.model.vo.CapabilityId
 import apap.domain.model.vo.ContentPart
 import apap.domain.model.vo.CredentialRef
@@ -57,8 +57,7 @@ class SignallingAdapter(
 
     override fun supportedCapabilities(): Set<CapabilityId> = delegate.supportedCapabilities()
 
-    override fun capabilityConstraints(capabilityId: CapabilityId): CapabilityConstraints =
-        delegate.capabilityConstraints(capabilityId)
+    override fun capabilityConstraints(id: CapabilityId): CapabilityConstraints = delegate.capabilityConstraints(id)
 
     override suspend fun authenticate(): AuthContext = delegate.authenticate()
 

@@ -30,6 +30,7 @@ import org.junit.jupiter.api.Test
  */
 class AdapterMockSubstitutionTest {
     // docs:begin adapter-mock-substitution
+
     /**
      * `ApapEngineBuilder.adapterRegistry(...)`へ任意の[AdapterRegistry]を渡すと、
      * 実Provider Pluginを配置せずに`ApapEngine`を動かせる。
