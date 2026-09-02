@@ -42,6 +42,15 @@ postgresql = "42.7.9"
 # prompt-engine側のRedisPromptCache（ADR-0033決定d）と同じ技術。バージョンはpostgresqlと同様、
 # Spring Boot BOM非依存のため明示固定（2026-08-29時点の最新安定版）。
 lettuce = "7.6.0.RELEASE"
+# P10 gateway/apap-gateway: HTTP/SSEサーバ。ADR-0003で対応トランスポートはREST/SSEのみと決定済み。
+# JSONはADR-0017に従いJacksonへ一本化する（ktor-serialization-jacksonを使い、
+# kotlinx-serializationは持ち込まない）。CLAUDE.md不変条件6はapap-runtimeとその依存に対する制約で、
+# Presentation層であるgatewayはこの制約の対象外（Gatewayはmodules/の外に置かれている）。
+ktor = "3.4.0"
+# CIAP発行JWTの検証（ADR-0004）。TokenVerifier interfaceの背後に閉じ込め、CIAP固有の詳細を
+# Gatewayの他の部分へ漏らさない。jwks-rsaはJWKS取得とキャッシュ（TTL/レートリミット）を提供する。
+auth0-java-jwt = "4.5.0"
+auth0-jwks-rsa = "0.22.1"
 
 [libraries]
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
@@ -59,6 +68,9 @@ jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", ver
 jackson-module-kotlin = { module = "com.fasterxml.jackson.module:jackson-module-kotlin", version.ref = "jackson" }
 # java.time.Instant等のJSR-310型はkotlin-moduleだけでは扱えない（別モジュール、Jackson側の仕様）。
 jackson-datatype-jsr310 = { module = "com.fasterxml.jackson.datatype:jackson-datatype-jsr310", version.ref = "jackson" }
+# OpenApiContractTestがdocs/openapi/apap-v1.yamlを読むためだけに使う（テスト専用）。
+# ADR-0017のJSONスタック一本化に沿って、YAMLもJacksonのdataformatで扱う。
+jackson-dataformat-yaml = { module = "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml", version.ref = "jackson" }
 opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version.ref = "opentelemetry" }
 opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version.ref = "opentelemetry" }
 opentelemetry-sdk-testing = { module = "io.opentelemetry:opentelemetry-sdk-testing", version.ref = "opentelemetry" }
@@ -66,6 +78,18 @@ flyway-core = { module = "org.flywaydb:flyway-core", version.ref = "flyway" }
 flyway-postgresql = { module = "org.flywaydb:flyway-database-postgresql", version.ref = "flyway" }
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
 lettuce-core = { module = "io.lettuce:lettuce-core", version.ref = "lettuce" }
+ktor-server-core = { module = "io.ktor:ktor-server-core", version.ref = "ktor" }
+ktor-server-netty = { module = "io.ktor:ktor-server-netty", version.ref = "ktor" }
+ktor-server-content-negotiation = { module = "io.ktor:ktor-server-content-negotiation", version.ref = "ktor" }
+ktor-serialization-jackson = { module = "io.ktor:ktor-serialization-jackson", version.ref = "ktor" }
+ktor-server-status-pages = { module = "io.ktor:ktor-server-status-pages", version.ref = "ktor" }
+ktor-server-call-id = { module = "io.ktor:ktor-server-call-id", version.ref = "ktor" }
+ktor-server-sse = { module = "io.ktor:ktor-server-sse", version.ref = "ktor" }
+ktor-server-test-host = { module = "io.ktor:ktor-server-test-host", version.ref = "ktor" }
+ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
+ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
+java-jwt = { module = "com.auth0:java-jwt", version.ref = "auth0-java-jwt" }
+jwks-rsa = { module = "com.auth0:jwks-rsa", version.ref = "auth0-jwks-rsa" }
 
 # build-logic（Convention Plugin）が implementation として使う、プラグイン本体の座標
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }

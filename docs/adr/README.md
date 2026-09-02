@@ -31,6 +31,12 @@ Architecture Decision Record。`docs/design/*.md` は一次情報として編集
 | [ADR-0025](ADR-0025-p8-infrastructure-technology-selection.md) | P8 apap-infrastructure/apap-plugin実装の技術選定（PostgreSQL+Flyway+素のJDBC、Redis+Lettuce、Plugin署名検証はjava.security.Signature自前実装） | Accepted | 補足（P8着手前レビュー、ADR-0001/ADR-0002の実装方式選定） |
 | [ADR-0026](ADR-0026-event-sourced-aggregate-reconstruction.md) | Event Sourcing対象Aggregateの再構築方式（apply/fold構造、イベントpayload拡張、スナップショット取得ポリシー） | Accepted | 補足（NFR-DAT-003、ADR-0014が委譲した未決定事項の解消） |
 
+| [ADR-0027](ADR-0027-gateway-endpoint-catalog-and-not-implemented-code.md) | 13.1のエンドポイントのうち提供していないものを明示的に区別する（EndpointCatalog + NOT_IMPLEMENTED） | Accepted | 補足（P10着手、13.1、13.4） |
+| [ADR-0028](ADR-0028-sse-message-end-omits-finish-reason.md) | SSEの`message_end`は`finish_reason`を省略する（エンジンが終了理由を伝播していないため） | Accepted | 補足（P10着手、13.3、2.10、FR-CAP-004） |
+
+| [ADR-0029](ADR-0029-host-compatibility-verification-module.md) | 埋込ホスト互換性を検証する専用モジュールを置き、統合ドキュメントのコード例をそこでコンパイルする | Accepted | 補足（P10後続、P9統合ガイドの不具合） |
+| [ADR-0030](ADR-0030-resource-not-found-error-code-for-admin-apis.md) | Admin系リソースの「存在しない」に汎用の `RESOURCE_NOT_FOUND` を追加する | Accepted | 補足（13.4、13.1 Admin系） |
+
 ## 命名規則
 
 `ADR-XXXX-kebab-case-title.md`。番号は4桁ゼロ埋め連番、欠番・再利用はしない（撤回する場合はステータスを `Superseded by ADR-YYYY` とし、ファイルは残す）。

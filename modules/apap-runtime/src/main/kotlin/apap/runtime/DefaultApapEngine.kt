@@ -15,6 +15,7 @@ import apap.execution.ExecutionEngine
 import apap.plugin.PluginManager
 import apap.provider.CapabilityDiscoveryQuery
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onStart
@@ -46,7 +47,7 @@ internal class DefaultApapEngine(
         rejectIfDraining()
         inFlight.incrementAndGet()
         try {
-            return executionEngine.execute(request.toCanonical(idGenerator)).toApi()
+            return normalizingFailures { executionEngine.execute(request.toCanonical(idGenerator)).toApi() }
         } finally {
             inFlight.decrementAndGet()
         }
@@ -60,10 +61,28 @@ internal class DefaultApapEngine(
                 inFlight.incrementAndGet()
             }.onCompletion { inFlight.decrementAndGet() }
             .map { it.toApi() }
+            .catch { throw it.toApapException() }
 
     override suspend fun capabilities(tenantId: TenantId): List<CapabilityDescriptor> =
         capabilityDiscoveryQuery.listCapabilities(tenantId).map {
             CapabilityDescriptor(it.capabilityId, it.name, it.streamable, it.inputSchema, it.outputSchema)
+        }
+
+    /**
+     * 実行系の内部例外を公開例外[ApapException]へ正規化する。埋込ホストからは
+     * `apap-execution`/`apap-routing`/`apap-context`が見えない（`implementation`スコープ）ため、
+     * 内部例外をそのまま投げるとホスト側で型として捕捉できない。
+     */
+    private inline fun <T> normalizingFailures(block: () -> T): T =
+        try {
+            block()
+        } catch (
+            // 内部例外を1つ残らず公開例外へ変換するのが目的なので、種別を絞ってはいけない
+            // （絞ると漏れた型がそのまま埋込ホストへ出て、ホスト側でcatchできない状態に戻る）。
+            // CancellationException等の素通しすべきものは toApapException が判別する。
+            @Suppress("TooGenericExceptionCaught") e: Throwable,
+        ) {
+            throw e.toApapException()
         }
 
     private fun rejectIfDraining() {

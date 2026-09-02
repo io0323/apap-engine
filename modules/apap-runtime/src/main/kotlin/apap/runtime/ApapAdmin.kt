@@ -8,6 +8,7 @@ import apap.domain.model.modelcatalog.ModelStatus
 import apap.domain.model.provider.Provider
 import apap.domain.model.routing.RoutingPolicy
 import apap.domain.model.vo.AliasId
+import apap.domain.model.vo.CapabilityId
 import apap.domain.model.vo.ModelId
 import apap.domain.model.vo.ProviderId
 import apap.domain.model.vo.TenantId
@@ -115,6 +116,8 @@ class ModelAdmin internal constructor(
     fun findById(modelId: ModelId): Model? = modelRepository.findById(modelId)
 
     fun findByProvider(providerId: ProviderId): List<Model> = modelRepository.findByProvider(providerId)
+
+    fun findByCapability(capabilityId: CapabilityId): List<Model> = modelRepository.findByCapability(capabilityId)
 
     fun findAlias(
         tenantId: TenantId,
