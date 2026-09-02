@@ -16,7 +16,7 @@ import java.io.File
 class VendorNeutralityTest {
     // "bin" はKonsistがスキャン時に生成する作業ディレクトリ（.gitignore対象、ソースではない）
     private val excludedDirNames = setOf("build", ".gradle", ".git", "bin")
-    private val scannedRoots = listOf("modules", "gateway", "adapters")
+    private val scannedRoots = listOf("modules", "gateway", "adapters", "integration")
 
     // "claude"はAI製品名として禁止語だが、本リポジトリの実装規約ファイル名（末尾".md"）への
     // 自己参照はAIベンダー名の言及ではないため誤検知として除外する。
@@ -29,6 +29,8 @@ class VendorNeutralityTest {
     @Test
     fun `modules and gateway sources contain no forbidden vendor or model names`() {
         val repoRoot = findRepoRoot(File(".").canonicalFile)
+        // 走査ルートが全モジュールを覆っているか（対象0件ではなく「モジュールごと対象外」の検出）。
+        ModuleScanCoverage.assertScanCoversAllModules("VendorNeutralityTest", repoRoot, scannedRoots)
         val forbiddenTerms = loadForbiddenTerms(File(repoRoot, "config/vendor-neutrality/forbidden-terms.txt"))
 
         val existingRoots = scannedRoots.map { File(repoRoot, it) }.filter { it.exists() }

@@ -23,7 +23,7 @@ import java.io.File
  */
 class ClockAndIdGeneratorDirectCallTest {
     private val excludedDirNames = setOf("build", ".gradle", ".git", "bin")
-    private val scannedRoots = listOf("modules", "gateway")
+    private val scannedRoots = listOf("modules", "gateway", "adapters", "integration")
 
     private val forbiddenPatterns =
         listOf(
@@ -57,6 +57,9 @@ class ClockAndIdGeneratorDirectCallTest {
     @Test
     fun `production code (src main) does not call the system clock or UUID directly`() {
         val repoRoot = findRepoRoot(File(".").canonicalFile)
+        // 走査ルートが全モジュールを覆っているか。adaptersとintegrationは本番コードを持つのに
+        // 対象外だった（Provider Adapterこそ実時刻を掴みやすい場所であり、漏れの影響が大きい）。
+        ModuleScanCoverage.assertScanCoversAllModules("ClockAndIdGeneratorDirectCallTest", repoRoot, scannedRoots)
         val existingRoots = scannedRoots.map { File(repoRoot, it) }.filter { it.exists() }
         val mainSourceFiles = existingRoots.flatMap { root -> mainSourceKotlinFiles(root) }
 
