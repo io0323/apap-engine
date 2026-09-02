@@ -6,9 +6,9 @@ import apap.domain.model.vo.ContentPart
 import apap.gateway.routes.writeSseStream
 import apap.gateway.sse.SseEventName
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -30,7 +30,7 @@ import java.io.StringWriter
 @OptIn(ExperimentalCoroutinesApi::class)
 class SseHeartbeatTest {
     @Test
-    fun `heartbeat is emitted once per configured interval while no chunk arrives`() =
+    fun `heartbeat is emitted once per configured interval while no chunk arrives`(): Unit =
         runTest {
             val writer = StringWriter()
             // しばらく黙り続け、その後1チャンクだけ流して終わるストリーム。
@@ -60,7 +60,7 @@ class SseHeartbeatTest {
         }
 
     @Test
-    fun `no heartbeat is emitted when chunks keep arriving within the interval`() =
+    fun `no heartbeat is emitted when chunks keep arriving within the interval`(): Unit =
         runTest {
             val writer = StringWriter()
             val chatty: Flow<ApapStreamChunk> =
@@ -93,6 +93,7 @@ class SseHeartbeatTest {
 
     private companion object {
         const val HEARTBEAT_SECONDS = 15L
+
         // 間隔の整数倍にしない: 整数倍だと最後のタイムアウトとチャンク送出が
         // 同一の仮想時刻で並び、どちらが先かが決まらない（実際にこれで揺れた）。
         const val SILENT_SECONDS = 50L

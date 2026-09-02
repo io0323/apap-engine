@@ -210,9 +210,14 @@ class GatewayEndToEndTest {
                 "unexpected SSE event names: ${eventNames.filterNot { it in apap.gateway.sse.SseEventName.all }}",
             )
             // 順序: message_startが最初、message_end（あれば）が最後。
-            assertEquals(apap.gateway.sse.SseEventName.MESSAGE_START, eventNames.first())
-            if (apap.gateway.sse.SseEventName.MESSAGE_END in eventNames) {
-                assertEquals(apap.gateway.sse.SseEventName.MESSAGE_END, eventNames.last())
+            // heartbeatは「チャンクが来ないまま間隔が過ぎた」ことだけを表す接続維持フレームで、
+            // 13.3上どこに現れてもよい（負荷の高いCIでは初回チャンクの前にも出る）。順序の
+            // 検査対象から外さないと、仕様上正しい出力でテストが落ちる。
+            val ordered = eventNames.filterNot { it == apap.gateway.sse.SseEventName.HEARTBEAT }
+            assertTrue(ordered.isNotEmpty(), "heartbeat以外のSSEイベントが1件も無い: $eventNames")
+            assertEquals(apap.gateway.sse.SseEventName.MESSAGE_START, ordered.first())
+            if (apap.gateway.sse.SseEventName.MESSAGE_END in ordered) {
+                assertEquals(apap.gateway.sse.SseEventName.MESSAGE_END, ordered.last())
             }
         }
 

@@ -36,7 +36,7 @@ import java.io.File
  */
 class TestMethodReturnTypeTest {
     private val excludedDirNames = setOf("build", ".gradle", ".git", "bin")
-    private val scannedRoots = listOf("modules", "gateway", "adapters")
+    private val scannedRoots = listOf("modules", "gateway", "adapters", "integration")
 
     @Test
     fun `every @Test function has a block body or an explicit Unit return type`() {
