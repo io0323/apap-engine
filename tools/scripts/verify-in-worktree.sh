@@ -44,7 +44,18 @@ fi
 GRADLE_USER_HOME_FOR_VERIFY="${GRADLE_USER_HOME:-$HOME/.gradle-apap}"
 
 echo "==> worktree内でverify.shを実行（JAVA_HOME=${JAVA_HOME_FOR_VERIFY}, GRADLE_USER_HOME=${GRADLE_USER_HOME_FOR_VERIFY}）"
+# verify.shの成否に関わらずテスト実行数を集計したいので、ここでは即時終了させない。
+set +e
 (
     cd "$WORKTREE_DIR"
     JAVA_HOME="$JAVA_HOME_FOR_VERIFY" GRADLE_USER_HOME="$GRADLE_USER_HOME_FOR_VERIFY" ./tools/scripts/verify.sh "$@"
 )
+VERIFY_STATUS=$?
+set -e
+
+# worktreeはcleanup（trap EXIT）で削除されるため、テスト結果はここで集計しておく。
+# リポジトリ側の build/test-results はこのworktree実行では更新されず、古い結果が残り続ける
+# ——それを実行数の根拠にすると誤った結論に至る（実際に一度これで誤判定した）。
+"$REPO_ROOT/tools/scripts/summarize-test-results.sh" "$WORKTREE_DIR" || true
+
+exit "$VERIFY_STATUS"

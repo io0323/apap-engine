@@ -9,7 +9,9 @@ dependencies {
     // docs/integration/prompt-engine.md参照）がこれらの型へコンパイル時に到達できる必要があるため。
     api(project(":modules:apap-domain"))
     api(project(":modules:apap-provider"))
-    implementation(project(":modules:apap-api"))
+    // `api`: ApapEngineのシグネチャ（ApapRequest/ApapResponse/ApapStreamChunk）と、
+    // 実行系が投げる公開例外ApapExceptionが apap-api にあるため、埋込ホストから到達できる必要がある。
+    api(project(":modules:apap-api"))
     implementation(project(":modules:apap-application"))
     implementation(project(":modules:apap-execution"))
     implementation(project(":modules:apap-routing"))

@@ -69,6 +69,17 @@ APAPは、AIを利用する全システム（AI Agent / Workflow Engine / Backen
    - 存在する場合（例: EventStoreRepositoryのsnapshotを誤って読み替え、NFR-DAT-003の「再構築時間の制御」が満たせなくなっていたADR-0014のケース）: 上記の通りADRを起票する。
    - 存在しない場合（命名・シグネチャの詳細など、どう決めても要件充足に影響しない純粋な実装判断）: ADRは起票せず、該当コードのKDocに根拠（参照した設計書の章節、なぜその形にしたか）を記す程度で足りる。
 
+9. **ガードは「落ちること」を確認して初めて完成**: 新しく追加する検査——アーキテクチャテスト、規約チェック、カバレッジゲート、契約テスト、スモークテスト等、**違反の不在を成功として報告するあらゆる仕組み**——は、意図的な違反を一時的に注入して**実際に落ちることを確認するまで完成とみなさない**。既存の検査を変更した場合も同様に再確認する。確認手順（何を注入したか）と結果を、その検査を追加・変更したコミットまたはPRの本文に記録すること。
+
+   **根拠（実際に起きた5件）**: いずれも「検査が存在すること」と「検査が機能すること」を混同したために、**赤くなるべき場面で緑のままだった**。
+   - `Konsist.scopeFromModule` の空スコープが沈黙して成功（対象0件の `assertFalse` は常に真）
+   - `typealias` による見かけ上の依存分離（ソースレベルのみで、バイナリ/依存グラフは分離されていない。ADR-0016）
+   - `ZeroCostEstimator` が静かにno-opとして機能（S_costが定数になりRouting比較が無意味化）
+   - `MetricsEngine` が本番配線から一度も生成されず、実装済みメトリクスが全て未接続
+   - 式本体（`fun \`x\`() = runBlocking { ... assertThrows(...) }`）のテストが戻り値型非Unitとなり、JUnit 5に実行されないまま緑
+   
+   共通する失敗の形は「シグナルの不在」を「問題の不在」と読むこと。**検査対象が0件でないことのアサート**（`ArchitectureScopeGuard.assertScopeNotEmpty`）、**検査が実際に呼ばれたことのアサート**、**実行件数の突き合わせ**のいずれかを、検査自身に組み込むこと。
+
 ## 実装規約
 
 - **エラー**: Adapterは必ず `AdapterException`（分類: TRANSIENT / RATE_LIMITED / INVALID_REQUEST / AUTH_ERROR / CONTENT_FILTERED / MODEL_ERROR / PROVIDER_UNAVAILABLE / UNSUPPORTED_CAPABILITY）を投げる。分類がRetry/Fallback挙動を決める（2.11の表が仕様）。コア側は `NormalizedError` に正規化してから利用側へ返す（13.4のコード体系）。

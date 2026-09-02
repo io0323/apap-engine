@@ -120,11 +120,11 @@ prompt-engineは既に`ExecutionAdapter`という名のPortを持っているた
 ```kotlin
 package promptengine.infrastructure.execution
 
+import apap.api.ApapException
 import apap.api.ApapRequest
 import apap.domain.model.vo.CapabilityId
 import apap.domain.model.vo.ContentPart
 import apap.domain.model.vo.TenantId
-import apap.execution.ExecutionFailedException as ApapExecutionFailedException
 import apap.runtime.ApapEngine
 import kotlinx.coroutines.runBlocking
 import promptengine.domain.execution.ExecutionAdapter
@@ -173,7 +173,7 @@ class ApapExecutionAdapter(
                     ),
                 latency = LatencyMs((System.nanoTime() - startNanos) / NANOS_PER_MILLI),
             )
-        } catch (e: ApapExecutionFailedException) {
+        } catch (e: ApapException) {
             throw ExecutionFailedException(e.error.toExecutionErrorType(), retryCount = 0, cause = e)
         }
     }
@@ -191,6 +191,19 @@ class ApapExecutionAdapter(
 コンストラクタ固定ではなくリクエスト単位で決まるのが自然だが、現在の
 `ExecutionAdapter.execute(prompt, policy)`シグネチャにはテナント識別子を運ぶ場所がない
 ——prompt-engine側の設計判断が必要な箇所として明記する。
+
+### 2-b-2. 実行系の失敗は `apap.api.ApapException` で受ける
+
+`ApapEngine.execute`/`executeStream`が投げる実行系の失敗は、すべて`apap.api.ApapException`へ
+正規化されている。**内部例外（`apap.execution.ExecutionFailedException`等）を直接catchしては
+ならない**——`apap-runtime`は`apap-execution`/`apap-routing`/`apap-context`を`implementation`
+スコープで依存しているため、それらの型は埋込ホストからそもそもコンパイル時に見えない
+（P10着手時にGatewayを実装して判明した。本ガイドの初版はこの点を誤っており、
+提示していたcatch節はホスト側でコンパイルできなかった）。
+
+`ApapException.error`は`NormalizedError`（`apap-domain`、`apap-runtime`が`api`スコープで公開）で、
+13.4のコード・`retryable`・`retry_after_ms`を保持する。**エラー分類はエンジン側で確定済み**
+なので、ホストはこれを読むだけでよく、例外型を見て分類をやり直さないこと。
 
 ### 2-c. `ExecutionErrorType`マッピング
 

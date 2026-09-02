@@ -23,6 +23,16 @@ import java.io.File
  * `ArchitectureScopeGuard`と同じ思想（空スコープ＝沈黙成功を許さない）で、構文上の規約
  * 「`@Test`関数は必ずブロック本体にするか、明示的に`: Unit`を書く」を機械検証する。
  * 型推論に頼らず構文だけで判定できるため、テキストスキャンで足りる。
+ *
+ * **一次的な防御はこのテストではなく JUnit 側の設定**である:
+ * `apap.kotlin-common.gradle.kts` で `junit.platform.discovery.issue.severity.critical=WARNING`
+ * を設定しており、実行不能な`@Test`メソッドはJUnitの発見時問題（DiscoveryIssue）として
+ * `DiscoveryIssueException`となりビルドを落とす（JUnit 6.1.3で実測確認済み）。そちらは
+ * 「実行不能」という条件そのものを検出するため、戻り値型以外の原因（privateメソッド、
+ * 不正な引数等）も捕捉できる点で本テストより網羅的。
+ *
+ * 本テストはそれを置き換えるものではなく、(1)違反箇所をファイル:行で即座に示す、
+ * (2)アーキテクチャテスト群の中で規約として明文化する、という補助的な役割で併置する。
  */
 class TestMethodReturnTypeTest {
     private val excludedDirNames = setOf("build", ".gradle", ".git", "bin")
