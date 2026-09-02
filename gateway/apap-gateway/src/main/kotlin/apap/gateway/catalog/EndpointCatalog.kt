@@ -11,7 +11,7 @@ package apap.gateway.catalog
  * 黙って501を返すのではなく、
  * - この表を単一の情報源として`GET /v1/_endpoints`で機械可読に公開し、
  * - 未提供エンドポイントには「何が無いから提供できないのか」を`detail`に載せた
- *   [apap.gateway.error.ApiErrorCode.NOT_IMPLEMENTED]を返し、
+ *   [apap.gateway.error.ApiError.NotImplemented]を返し、
  * - `EndpointCatalogTest`が「表と実際に登録されたルートが一致すること」を機械検証する。
  *
  * これにより「実装したつもりで未配線」「表からも実装からも漏れる」の両方を防ぐ
@@ -71,10 +71,6 @@ object EndpointCatalog {
     private const val NEEDS_ALIAS_LISTING =
         "AliasRepositoryにテナント単位の一覧取得（listByTenant相当）が無く、findByName(name)しか引けないため" +
             "一覧を組み立てられない。Portの追加が先に必要。"
-
-    private const val NEEDS_MODEL_LISTING =
-        "ModelRepositoryにfindAllが無く、findByProvider/findByCapabilityでの絞り込みしか引けない。" +
-            "絞り込み付きの一覧は provider_id / capability_id クエリで提供している。"
 
     private const val NEEDS_PROVIDER_UPDATE =
         "ProviderManagerに汎用の更新（PATCH）オペレーションが無い。状態遷移は:enable/:drain/:validateで提供済み。"

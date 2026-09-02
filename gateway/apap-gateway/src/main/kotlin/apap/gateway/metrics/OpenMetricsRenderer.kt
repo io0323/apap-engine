@@ -1,10 +1,11 @@
 package apap.gateway.metrics
 
+import io.opentelemetry.sdk.metrics.InstrumentType
 import io.opentelemetry.sdk.metrics.data.AggregationTemporality
 import io.opentelemetry.sdk.metrics.data.MetricData
 import io.opentelemetry.sdk.metrics.data.MetricDataType
-import io.opentelemetry.sdk.metrics.export.MetricReader
 import io.opentelemetry.sdk.metrics.export.CollectionRegistration
+import io.opentelemetry.sdk.metrics.export.MetricReader
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -38,9 +39,17 @@ class OpenMetricsRenderer(
     private fun StringBuilder.appendMetric(metric: MetricData) {
         val name = metric.name.replace('.', '_').replace('-', '_')
         val type = metric.openMetricsType()
-        append("# TYPE ").append(name).append(' ').append(type).append('\n')
+        append("# TYPE ")
+            .append(name)
+            .append(' ')
+            .append(type)
+            .append('\n')
         if (metric.description.isNotBlank()) {
-            append("# HELP ").append(name).append(' ').append(metric.description.singleLine()).append('\n')
+            append("# HELP ")
+                .append(name)
+                .append(' ')
+                .append(metric.description.singleLine())
+                .append('\n')
         }
         when (metric.type) {
             MetricDataType.LONG_SUM ->
@@ -66,7 +75,12 @@ class OpenMetricsRenderer(
                     appendSample("${name}_sum", labels, point.sum.toString())
                 }
             // 明示的に未対応と分かる形にする（黙って落とすと「メトリクスが無い」と誤読される）。
-            else -> append("# UNSUPPORTED ").append(name).append(' ').append(metric.type.name).append('\n')
+            else ->
+                append("# UNSUPPORTED ")
+                    .append(name)
+                    .append(' ')
+                    .append(metric.type.name)
+                    .append('\n')
         }
     }
 
@@ -117,13 +131,13 @@ class InMemoryCollectingReader : MetricReader {
 
     fun collectAll(): List<MetricData> = registration.get().collectAllMetrics().toList()
 
-    override fun getAggregationTemporality(
-        instrumentType: io.opentelemetry.sdk.metrics.InstrumentType,
-    ): AggregationTemporality = AggregationTemporality.CUMULATIVE
+    override fun getAggregationTemporality(instrumentType: InstrumentType) = AggregationTemporality.CUMULATIVE
 
     override fun forceFlush(): io.opentelemetry.sdk.common.CompletableResultCode =
-        io.opentelemetry.sdk.common.CompletableResultCode.ofSuccess()
+        io.opentelemetry.sdk.common.CompletableResultCode
+            .ofSuccess()
 
     override fun shutdown(): io.opentelemetry.sdk.common.CompletableResultCode =
-        io.opentelemetry.sdk.common.CompletableResultCode.ofSuccess()
+        io.opentelemetry.sdk.common.CompletableResultCode
+            .ofSuccess()
 }

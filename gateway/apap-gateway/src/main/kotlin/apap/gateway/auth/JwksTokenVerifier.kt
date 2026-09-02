@@ -59,6 +59,10 @@ class JwksTokenVerifier(
             }
         }
 
+    // 必須クレームごとに「無ければ401」を個別のメッセージで返したいため、throwが3箇所になる。
+    // まとめると「どのクレームが欠けているか」が分からなくなり、設定ミス（ADR-0004のクレーム名
+    // 不一致）の切り分けができなくなる。
+    @Suppress("ThrowsCount")
     private fun toVerifiedCaller(decoded: DecodedJWT): VerifiedCaller {
         val tenantRaw =
             decoded.getClaim(config.claims.tenant).asString()
@@ -80,14 +84,17 @@ class JwksTokenVerifier(
      */
     private fun extractScopes(decoded: DecodedJWT): Set<String> {
         val claim = decoded.getClaim(config.claims.scopes)
-        if (claim.isNull || claim.isMissing) return emptySet()
-        claim.asList(String::class.java)?.let { return it.toSet() }
-        return claim
-            .asString()
-            ?.split(' ')
-            ?.filter { it.isNotBlank() }
-            ?.toSet()
-            ?: emptySet()
+        return when {
+            claim.isNull || claim.isMissing -> emptySet()
+            claim.asList(String::class.java) != null -> claim.asList(String::class.java).toSet()
+            else ->
+                claim
+                    .asString()
+                    ?.split(' ')
+                    ?.filter { it.isNotBlank() }
+                    ?.toSet()
+                    .orEmpty()
+        }
     }
 
     private companion object {

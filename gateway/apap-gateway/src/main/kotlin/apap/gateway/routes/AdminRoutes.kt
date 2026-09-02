@@ -37,6 +37,17 @@ fun Route.adminRoutes(
     config: GatewayConfig,
     tokenVerifier: TokenVerifier,
 ) {
+    providerAdminRoutes(engine, config, tokenVerifier)
+    modelAdminRoutes(engine, config, tokenVerifier)
+    policyAdminRoutes(engine, config, tokenVerifier)
+    unavailableAdminRoutes()
+}
+
+private fun Route.providerAdminRoutes(
+    engine: ApapEngine,
+    config: GatewayConfig,
+    tokenVerifier: TokenVerifier,
+) {
     post("/admin/v1/providers") {
         call.admin(tokenVerifier, config)
         val command = call.receive<apap.provider.RegisterProviderCommand>()
@@ -87,7 +98,14 @@ fun Route.adminRoutes(
         engine.admin.providers.beginValidation(providerId)
         call.respond(engine.admin.providers.completeValidation(providerId))
     }
+}
 
+@Suppress("ThrowsCount")
+private fun Route.modelAdminRoutes(
+    engine: ApapEngine,
+    config: GatewayConfig,
+    tokenVerifier: TokenVerifier,
+) {
     post("/admin/v1/models") {
         call.admin(tokenVerifier, config)
         val command = call.receive<apap.provider.RegisterModelCommand>()
@@ -132,7 +150,9 @@ fun Route.adminRoutes(
         call.respond(
             engine.admin.models.assignAlias(
                 tenantId = caller.tenantId,
-                aliasId = apap.domain.model.vo.AliasId(body.aliasId),
+                aliasId =
+                    apap.domain.model.vo
+                        .AliasId(body.aliasId),
                 name = call.pathParam("name"),
                 targets = body.targets,
             ),
@@ -146,7 +166,13 @@ fun Route.adminRoutes(
                 ?: throw ApiException(ErrorCode.ALIAS_NOT_FOUND, "Alias not found")
         call.respond(alias)
     }
+}
 
+private fun Route.policyAdminRoutes(
+    engine: ApapEngine,
+    config: GatewayConfig,
+    tokenVerifier: TokenVerifier,
+) {
     post("/admin/v1/policies") {
         call.admin(tokenVerifier, config)
         val policy = call.receive<apap.domain.model.routing.RoutingPolicy>()
@@ -172,8 +198,10 @@ fun Route.adminRoutes(
         val result = engine.health.providerHealth()
         call.respond(mapOf("state" to result.state.name, "details" to result.details))
     }
+}
 
-    // 13.1にあるが本ビルドでは提供していない管理系（ADR-0027）。
+/** 13.1にあるが本ビルドでは提供していない管理系（ADR-0027）。 */
+private fun Route.unavailableAdminRoutes() {
     notImplementedRoutes(
         listOf(
             "/admin/v1/providers/{id}/credentials:rotate",

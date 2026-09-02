@@ -8,6 +8,7 @@ import apap.adapter.spi.SecretAccessor
 import apap.adapter.spi.SecretValue
 import apap.adapter.spi.plugin.PluginManifest
 import apap.adapter.spi.plugin.SemVerRange
+import apap.api.ApapException
 import apap.api.ApapRequest
 import apap.context.CompactionResult
 import apap.context.CompactionStrategy
@@ -37,7 +38,6 @@ import apap.domain.model.vo.TokenCount
 import apap.domain.service.routing.Candidate
 import apap.domain.service.routing.RoutingWeights
 import apap.domain.service.routing.ScoredCandidate
-import apap.execution.ExecutionFailedException
 import apap.execution.retry.RetryStrategy
 import apap.provider.AdapterRegistry
 import apap.provider.PluginNotFoundException
@@ -380,7 +380,9 @@ class ApapEngineBuilderTest {
                     ).build()
             setUpActiveProviderAndModel(nonRetryingEngine, nonRetryingRepositories, capabilityId)
 
-            assertThrows(ExecutionFailedException::class.java) {
+            // ApapEngine経由の失敗は公開例外へ正規化される（内部のExecutionFailedExceptionは
+            // 埋込ホストから見えないため、そのまま投げるとcatchできない）。
+            assertThrows(ApapException::class.java) {
                 runBlocking { nonRetryingEngine.execute(request(capabilityId)) }
             }
             assertTrue(nonRetryingInvocations > 0, "the injected RetryStrategy must be consulted before giving up")

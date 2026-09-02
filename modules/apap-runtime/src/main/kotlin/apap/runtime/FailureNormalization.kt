@@ -21,7 +21,11 @@ import kotlin.coroutines.cancellation.CancellationException
  *
  * [CancellationException]はコルーチンのキャンセル制御そのものなので変換せず素通しする
  * （握り潰すと`executeStream`のキャンセル伝播——2.10「切断時はProviderへキャンセル伝播」——が壊れる）。
+ *
+ * この`when`は「例外型 → 13.4コード」の対応表であり、分岐数がそのまま「対応済みの型の数」を表す。
+ * 分割すると対応表としての一覧性が失われるため、複雑度の閾値超過は許容する。
  */
+@Suppress("CyclomaticComplexMethod")
 internal fun Throwable.toApapException(): Throwable =
     when (this) {
         is CancellationException -> this

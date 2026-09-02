@@ -76,7 +76,12 @@ internal class DefaultApapEngine(
     private inline fun <T> normalizingFailures(block: () -> T): T =
         try {
             block()
-        } catch (e: Throwable) {
+        } catch (
+            // 内部例外を1つ残らず公開例外へ変換するのが目的なので、種別を絞ってはいけない
+            // （絞ると漏れた型がそのまま埋込ホストへ出て、ホスト側でcatchできない状態に戻る）。
+            // CancellationException等の素通しすべきものは toApapException が判別する。
+            @Suppress("TooGenericExceptionCaught") e: Throwable,
+        ) {
             throw e.toApapException()
         }
 

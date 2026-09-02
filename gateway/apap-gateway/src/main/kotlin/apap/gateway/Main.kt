@@ -16,7 +16,11 @@ import org.slf4j.LoggerFactory
 private val logger = LoggerFactory.getLogger("apap.gateway.Main")
 
 fun main() {
-    val config = GatewayConfig(port = envInt("APAP_GATEWAY_PORT", GatewayConfig.DEFAULT_PORT), auth = authConfigFromEnv())
+    val config =
+        GatewayConfig(
+            port = envInt("APAP_GATEWAY_PORT", GatewayConfig.DEFAULT_PORT),
+            auth = authConfigFromEnv(),
+        )
     val metricsReader = InMemoryCollectingReader()
     val meterProvider = SdkMeterProvider.builder().registerMetricReader(metricsReader).build()
 

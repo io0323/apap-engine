@@ -136,8 +136,7 @@ fun ApapStreamChunk.toSseEvent(responseId: String): SseEvent =
     }
 
 /** 13.3「異常時は`event: error`（bodyは13.4のエラー形式）で終端」。 */
-fun errorEvent(problem: ProblemDetails): SseEvent =
-    SseEvent(SseEventName.ERROR, GatewayJson.mapper.writeValueAsString(problem))
+fun errorEvent(problem: ProblemDetails): SseEvent = event(SseEventName.ERROR, problem)
 
 private fun ContentPart?.toDeltaDto(): DeltaDto =
     when (this) {

@@ -198,7 +198,11 @@ class GatewayEndToEndTest {
             assertEquals("no-store", response.headers[HttpHeaders.CacheControl], "13.5: streaming is no-store")
 
             val text = response.bodyAsText()
-            val eventNames = Regex("^event: (.+)$", RegexOption.MULTILINE).findAll(text).map { it.groupValues[1] }.toList()
+            val eventNames =
+                Regex("^event: (.+)$", RegexOption.MULTILINE)
+                    .findAll(text)
+                    .map { it.groupValues[1] }
+                    .toList()
             assertTrue(eventNames.isNotEmpty(), "the stream produced no SSE events at all")
             // 13.3のイベント名以外が混ざっていないこと。
             assertTrue(

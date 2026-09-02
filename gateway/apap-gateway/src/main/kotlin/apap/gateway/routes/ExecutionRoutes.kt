@@ -1,6 +1,5 @@
 package apap.gateway.routes
 
-import apap.api.ApapRequest
 import apap.api.ApapStreamChunk
 import apap.domain.model.vo.CapabilityId
 import apap.gateway.IDEMPOTENCY_KEY_HEADER
@@ -153,26 +152,27 @@ internal suspend fun Writer.writeSseStream(
     coroutineScope {
         val channel = chunks.produceIn(this)
         try {
-            while (true) {
+            var streaming = true
+            while (streaming) {
                 val received =
                     withTimeoutOrNull(heartbeatSeconds * MILLIS_PER_SECOND) {
                         runCatching { channel.receive() }
                     }
-                if (received == null) {
+                when {
                     // 間隔内にチャンクが来なかった -> 接続維持のためheartbeat。
-                    writeEvent(HEARTBEAT_EVENT)
-                    continue
+                    received == null -> writeEvent(HEARTBEAT_EVENT)
+                    // チャンネルが閉じた -> ストリーム正常終了。
+                    received.exceptionOrNull() is ClosedReceiveChannelException -> streaming = false
+                    received.isFailure -> throw received.exceptionOrNull()!!
+                    else -> writeEvent(received.getOrThrow().toSseEvent(responseId))
                 }
-                val chunk =
-                    received.getOrElse { failure ->
-                        if (failure is ClosedReceiveChannelException) break
-                        throw failure
-                    }
-                writeEvent(chunk.toSseEvent(responseId))
             }
-        } catch (e: Throwable) {
-            // 13.3「異常時はevent: errorで終端」。ここで握って正常終端させるのは、
-            // SSEは既に200で開始しており、HTTPステータスでは失敗を伝えられないため。
+        } catch (
+            // 13.3「異常時はevent: errorで終端」。SSEは既に200で開始しておりHTTPステータスでは
+            // 失敗を伝えられないため、**どの例外でも**errorフレームを出して終端する必要がある。
+            // 種別を絞ると、絞り漏れた例外がフレーム無しで接続だけ切れる形になり最も分かりにくい。
+            @Suppress("TooGenericExceptionCaught") e: Throwable,
+        ) {
             writeEvent(errorEvent(e.toProblemDetails(responseId)))
         } finally {
             channel.cancel()

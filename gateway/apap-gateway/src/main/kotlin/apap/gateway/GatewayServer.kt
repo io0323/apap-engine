@@ -1,5 +1,6 @@
 package apap.gateway
 
+import apap.domain.port.IdGenerator
 import apap.gateway.auth.TokenVerifier
 import apap.gateway.auth.VerifiedCaller
 import apap.gateway.config.GatewayConfig
@@ -12,7 +13,6 @@ import apap.gateway.routes.adminRoutes
 import apap.gateway.routes.discoveryRoutes
 import apap.gateway.routes.executionRoutes
 import apap.gateway.routes.opsRoutes
-import apap.domain.port.IdGenerator
 import apap.runtime.ApapEngine
 import apap.runtime.UlidIdGenerator
 import io.ktor.http.HttpHeaders
@@ -84,7 +84,10 @@ fun Application.apapGateway(
             // 13.5「429/503にはRetry-After」。秒単位の整数（RFC 9110）。
             if (problem.status == TOO_MANY_REQUESTS || problem.status == SERVICE_UNAVAILABLE) {
                 val retryAfterSeconds = problem.retryAfterMs?.let { (it + MILLIS_PER_SECOND - 1) / MILLIS_PER_SECOND }
-                call.response.header(HttpHeaders.RetryAfter, (retryAfterSeconds ?: DEFAULT_RETRY_AFTER_SECONDS).toString())
+                call.response.header(
+                    HttpHeaders.RetryAfter,
+                    (retryAfterSeconds ?: DEFAULT_RETRY_AFTER_SECONDS).toString(),
+                )
             }
             call.respondText(
                 text = GatewayJson.mapper.writeValueAsString(problem),
