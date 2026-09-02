@@ -65,7 +65,7 @@ class ProviderManagerTest {
     }
 
     @Test
-    fun `full lifecycle from register to enable succeeds when validation passes`() =
+    fun `full lifecycle from register to enable succeeds when validation passes`(): Unit =
         runBlocking {
             adapterRegistry.register("plugin-a", manifest(), FakeProviderAdapter())
             val provider = manager.register(registerCommand())
@@ -80,7 +80,7 @@ class ProviderManagerTest {
         }
 
     @Test
-    fun `completeValidation reverts to REGISTERED and never reaches ACTIVE when credential validation fails`() =
+    fun `completeValidation reverts to REGISTERED and never reaches ACTIVE when credential validation fails`(): Unit =
         runBlocking {
             val failingAdapter =
                 FakeProviderAdapter(
@@ -106,7 +106,7 @@ class ProviderManagerTest {
         }
 
     @Test
-    fun `completeValidation fails when declared capabilities do not match plugin manifest`() =
+    fun `completeValidation fails when declared capabilities do not match plugin manifest`(): Unit =
         runBlocking {
             adapterRegistry.register(
                 "plugin-a",

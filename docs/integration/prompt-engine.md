@@ -70,6 +70,46 @@ Provider未登録のためどの`execute()`呼出も`FR-RTE-001`の候補解決�
 本番投入前に`ApapEngine.admin`経由でProvider/Model登録を行う運用手順（Admin API相当）を
 別途prompt-engine側で用意すること（本ガイドの範囲外）。
 
+### 2-a-2. 設定ファイルでSPIを選ぶ（`ApapConfig`、設計書3.15）
+
+コードで直接インスタンスを渡す代わりに、03_基本設計.md 3.15の`application.yaml`形式で
+宣言的にSPIを選ぶこともできる。`ApapConfig`はファイル/Map/プログラマティックの3経路で
+構築でき、`ApapEngineBuilder.applyConfig(config)`で束縛する。
+
+```yaml
+# apap.yaml（3.15の形式。apap:直下にドット区切りの平坦なキーを並べる）
+apap:
+  routing.strategy: weighted-score
+  retry.strategy: exp-backoff-jitter
+  cache.store: in-memory
+  secret.store: env-var
+  compaction.strategy: truncate-oldest
+  plugin.signature.required: true
+```
+
+```kotlin
+@Bean(destroyMethod = "close")
+fun apapEngine(): ApapEngine =
+    ApapEngineBuilder()
+        .applyConfig(ApapConfig.fromYamlFile(Path.of("/etc/apap/apap.yaml")))
+        // Spring の Environment から組み立てるなら fromMap も使える:
+        // .applyConfig(ApapConfig.fromMap(mapOf("routing.strategy" to "weighted-score")))
+        .build()
+```
+
+**名前で選べるのは引数無しで構築できる組込み実装だけ**である。3.15の例示値のうち
+`cache.store: distributed-kvs`と`secret.store: vault-compatible`は接続情報（ホスト・認証情報）を
+名前だけでは決められないため名前解決の対象外で、`applyConfig`は例外を投げる
+（既定値へ黙ってfall backしない）。これらを使う場合は実装インスタンスを
+`cacheStore(...)`/`secretStore(...)`へ直接渡すこと。特に`distributed-kvs`
+（`RedisCacheStore`）は`apap-infrastructure-distributed`の実装であり、名前解決可能にすると
+`apap-runtime`が同モジュールへ依存してしまう（7章の「既定構成の依存グラフ」制約に反する）。
+
+`plugin.dir`を設定ファイルで指定した場合、署名検証の信頼鍵は設定ファイルに書けないため
+`pluginTrustedPublicKey(key)`で別途渡す必要がある。鍵を渡さずに`build()`すると例外になる
+（署名検証なしのPluginロードへ黙って縮退させない）。`plugin.signature.required: false`も
+同様に受け付けず例外とする（署名検証は無効化できない）。
+
 ### 2-b. `AiExecutionPort`パターン: prompt-engine側にPortを立て、APAP実装を注入する
 
 prompt-engineは既に`ExecutionAdapter`という名のPortを持っているため、**新たに
@@ -279,6 +319,33 @@ prompt-engine自身の規約に従い`FakeApapEngine`のように命名するこ
 - JSONスタックはプロジェクト全体でJacksonに一本化する方針（ADR-0017決定0-b）。
   `apap-domain`/`apap-adapter-spi`/`apap-provider`/`apap-runtime`（およびこれらが依存する
   他モジュール）へ`kotlinx-serialization`/Gson/`org.json`/Moshi等を追加しないこと。
+
+### 6-a. 宿主が`enforcedPlatform`を使う場合の注意
+
+apap-engineが要求するJacksonは**下限**要求である（`apap-provider`の
+`json-schema-validator:1.5.9`が2.x系を必要とし、apap-engineはこれを`libs.versions.toml`の
+`jackson`エントリで引き上げている）。上限は設けていないため、宿主がより新しい2.x系へ
+引き上げる分には問題ない。
+
+prompt-engineは現在`implementation(platform(...))`（Gradleネイティブの`platform`）でのみ
+Spring Boot BOMを適用しており、Gradleの既定解決戦略（同一classpath上の要求のうち最高
+バージョンを採用）に従うため、apap-engine側の要求と自動的に収束する（ADR-0017が
+「ハード強制していない」と確認した状態）。**この前提が崩れるのは宿主が
+`enforcedPlatform`（または`resolutionStrategy.force` / `strictly()`）へ切り替えた場合**で、
+このときBOMの指定値が上限としても強制され、Gradleは高い方へ収束しなくなる:
+
+- Spring Boot BOMのJacksonがapap-engineの要求を**下回る**場合、
+  ビルドは通るが実行時に`NoSuchMethodError`/`NoClassDefFoundError`として現れる
+  （コンパイル時には検出されない。ADR-0017が「最頻出の実行時障害」として挙げている形）。
+- したがって`enforcedPlatform`へ切り替える場合は、切替時に
+  `./gradlew :modules:prompt-engine-bootstrap:dependencies --configuration runtimeClasspath`
+  で`jackson-databind`の解決結果を確認し、apap-engine側の`libs.versions.toml`の
+  `jackson`値以上であることを確かめること。下回る場合は、宿主側で
+  `jackson-databind`への明示的な`constraints`を追加して引き上げる
+  （apap-engine側を下げるのではなく宿主側で上げる——apap-engineの下限要求は
+  `json-schema-validator`の都合で決まっており、下げると別の不整合を招くため）。
+- Jacksonのメジャー分裂（2.x対3.x）が起きた場合は互換方針の対象外であり、
+  ADR-0017が「見直す条件」として挙げるShade導入（案A）の検討対象になる。
 
 ## 7. 永続化の選択肢と既定（In-Memory）を使った場合の性質
 

@@ -6,12 +6,12 @@ import java.nio.file.Path
 /**
  * 03_基本設計.md 3.15 `application.yaml`の宣言的SPIバインド部分を表す設定値。
  * [routingStrategy]/[retryStrategy]/[cacheStore]/[secretStore]/[compactionStrategy]は、
- * [ApapEngineBuilder.KNOWN_STRATEGY_NAMES]（既知の名前のみ）に一致すればビルド時に対応する
- * 組込み実装を選択する。3.15例の値のうち、外部システム接続を要するもの
- * （`distributed-kvs`/`vault-compatible`）は本タスクの範囲では未実装の識別子であり、
- * `ApapEngineBuilder.build()`は未知の名前に対して例外を投げる（黙って既定値へfall backしない）。
- * 未知の名前・より高度な設定を要する実装は、[ApapConfig]経由ではなく[ApapEngineBuilder]の
- * 対応するメソッド（`cacheStore(...)`等）へ実装インスタンスを直接渡すこと。
+ * [ApapEngineBuilder.applyConfig]が[ApapEngineBuilder.KNOWN_ROUTING_STRATEGIES]等の既知名表と
+ * 突き合わせて対応する組込み実装を選択する。3.15例の値のうち外部システム接続を要するもの
+ * （`distributed-kvs`/`vault-compatible`）は接続情報を名前だけで決められないため名前解決の
+ * 対象外であり、[ApapEngineBuilder.applyConfig]は未知の名前に対して例外を投げる
+ * （黙って既定値へfall backしない）。これらは[ApapConfig]経由ではなく[ApapEngineBuilder]の
+ * 対応するメソッド（`cacheStore(...)`/`secretStore(...)`等）へ実装インスタンスを直接渡すこと。
  *
  * 3.15の例はYAMLのネストではなく`apap:`直下にドット区切りの平坦なキーを並べる形式のため、
  * 本実装は最小限の専用パーサ（`apap-plugin`の`PluginManifestParser`と同じ判断: 新規外部依存を

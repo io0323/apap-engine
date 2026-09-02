@@ -220,7 +220,7 @@ class CapabilitySmokeTest {
     }
 
     @Test
-    fun `chat capability returns a response and records both turns`() =
+    fun `chat capability returns a response and records both turns`(): Unit =
         runBlocking {
             val capabilityId = CapabilityId("chat")
             val harness = Harness()
@@ -258,7 +258,7 @@ class CapabilitySmokeTest {
      * Capability固有の副作用しか検証していなかったために見逃されていた——この1テストがその空白を埋める。
      */
     @Test
-    fun `chat capability also records metrics, an audit trail, and delivers events to subscribers`() =
+    fun `chat capability also records metrics, an audit trail, and delivers events to subscribers`(): Unit =
         runBlocking {
             val capabilityId = CapabilityId("chat")
             val harness = Harness()
@@ -310,7 +310,7 @@ class CapabilitySmokeTest {
      * （[InMemorySpanExporter]、テスト専用。本体はAPIのみに依存、CLAUDE.md不変条件6）で検証する。
      */
     @Test
-    fun `chat capability exports the expected span hierarchy via a real Tracer`() =
+    fun `chat capability exports the expected span hierarchy via a real Tracer`(): Unit =
         runBlocking {
             val capabilityId = CapabilityId("chat")
             val harness = Harness()
@@ -365,7 +365,7 @@ class CapabilitySmokeTest {
 
     @Suppress("LongMethod")
     @Test
-    fun `streaming chat capability returns chunks, confirms usage, and records both turns`() =
+    fun `streaming chat capability returns chunks, confirms usage, and records both turns`(): Unit =
         runBlocking {
             val capabilityId = CapabilityId("chat")
             val harness = Harness()
@@ -415,7 +415,7 @@ class CapabilitySmokeTest {
         }
 
     @Test
-    fun `embedding capability is deterministic and its response gets cached`() =
+    fun `embedding capability is deterministic and its response gets cached`(): Unit =
         runBlocking {
             val capabilityId = CapabilityId("embedding")
             val harness = Harness()

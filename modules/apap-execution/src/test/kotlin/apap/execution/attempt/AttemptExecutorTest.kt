@@ -140,7 +140,7 @@ class AttemptExecutorTest {
         )
 
     @Test
-    fun `TRANSIENT retries up to maxAttempts then fails`() =
+    fun `TRANSIENT retries up to maxAttempts then fails`(): Unit =
         runBlocking {
             val category = AdapterErrorCategory.TRANSIENT
             val adapter = scriptedAdapter(category, category, category)
@@ -150,7 +150,7 @@ class AttemptExecutorTest {
         }
 
     @Test
-    fun `TRANSIENT succeeds after one retry`() =
+    fun `TRANSIENT succeeds after one retry`(): Unit =
         runBlocking {
             val adapter = scriptedAdapter(AdapterErrorCategory.TRANSIENT)
             val result = run(executorFor(adapter, RetryConfig(baseBackoffMs = 1)))
@@ -162,7 +162,7 @@ class AttemptExecutorTest {
      * テスト専用）で、リトライ毎に別Spanが作られ、失敗はERROR・成功はOKになることを検証する。
      */
     @Test
-    fun `each retry attempt is exported as its own Span with the correct status`() =
+    fun `each retry attempt is exported as its own Span with the correct status`(): Unit =
         runBlocking {
             val spanExporter = InMemorySpanExporter.create()
             val tracerProvider =
@@ -201,7 +201,7 @@ class AttemptExecutorTest {
         }
 
     @Test
-    fun `INVALID_REQUEST does not retry`() =
+    fun `INVALID_REQUEST does not retry`(): Unit =
         runBlocking {
             val category = AdapterErrorCategory.INVALID_REQUEST
             val result = run(executorFor(scriptedAdapter(category, category)))
@@ -210,7 +210,7 @@ class AttemptExecutorTest {
         }
 
     @Test
-    fun `AUTH_ERROR does not retry`() =
+    fun `AUTH_ERROR does not retry`(): Unit =
         runBlocking {
             val category = AdapterErrorCategory.AUTH_ERROR
             val result = run(executorFor(scriptedAdapter(category, category)))
@@ -218,7 +218,7 @@ class AttemptExecutorTest {
         }
 
     @Test
-    fun `CONTENT_FILTERED does not retry`() =
+    fun `CONTENT_FILTERED does not retry`(): Unit =
         runBlocking {
             val category = AdapterErrorCategory.CONTENT_FILTERED
             val result = run(executorFor(scriptedAdapter(category, category)))
@@ -226,7 +226,7 @@ class AttemptExecutorTest {
         }
 
     @Test
-    fun `PROVIDER_UNAVAILABLE does not retry within the same candidate`() =
+    fun `PROVIDER_UNAVAILABLE does not retry within the same candidate`(): Unit =
         runBlocking {
             val category = AdapterErrorCategory.PROVIDER_UNAVAILABLE
             val result = run(executorFor(scriptedAdapter(category, category)))
@@ -234,7 +234,7 @@ class AttemptExecutorTest {
         }
 
     @Test
-    fun `RATE_LIMITED retries with Retry-After honored`() =
+    fun `RATE_LIMITED retries with Retry-After honored`(): Unit =
         runBlocking {
             val adapter = scriptedAdapter(AdapterErrorCategory.RATE_LIMITED)
             val result = run(executorFor(adapter, RetryConfig(baseBackoffMs = 1)))
@@ -242,7 +242,7 @@ class AttemptExecutorTest {
         }
 
     @Test
-    fun `MODEL_ERROR corrects and succeeds within the correction budget`() =
+    fun `MODEL_ERROR corrects and succeeds within the correction budget`(): Unit =
         runBlocking {
             val adapter = scriptedAdapter(AdapterErrorCategory.MODEL_ERROR)
             val result =
@@ -254,7 +254,7 @@ class AttemptExecutorTest {
         }
 
     @Test
-    fun `MODEL_ERROR stops once the correction budget is exhausted, even below maxAttempts`() =
+    fun `MODEL_ERROR stops once the correction budget is exhausted, even below maxAttempts`(): Unit =
         runBlocking {
             val category = AdapterErrorCategory.MODEL_ERROR
             val adapter = scriptedAdapter(category, category, category)
@@ -270,7 +270,7 @@ class AttemptExecutorTest {
         }
 
     @Test
-    fun `returns immediate failure without attempting when the timeout budget is already exhausted`() =
+    fun `returns immediate failure without attempting when the timeout budget is already exhausted`(): Unit =
         runBlocking {
             val adapter = scriptedAdapter(AdapterErrorCategory.TRANSIENT)
             // A 1-second budget that has already elapsed by the time execute() runs is functionally exhausted.
@@ -296,7 +296,7 @@ class AttemptExecutorTest {
         }
 
     @Test
-    fun `CB Open candidate is rejected without calling the adapter`() =
+    fun `CB Open candidate is rejected without calling the adapter`(): Unit =
         runBlocking {
             val cb = defaultCb()
             val key = CbKey(providerId, modelId)
@@ -316,7 +316,7 @@ class AttemptExecutorTest {
      * （AcquireResultへの型変更で「利用側の契約」が壊れていないことの回帰テスト）。
      */
     @Test
-    fun `local RateLimiter rejection maps to RATE_LIMIT_EXCEEDED and publishes RateLimitExceeded`() =
+    fun `local RateLimiter rejection maps to RATE_LIMIT_EXCEEDED and publishes RateLimitExceeded`(): Unit =
         runBlocking {
             val restrictiveLimiter =
                 TokenBucketRateLimiter(

@@ -76,7 +76,7 @@ class StreamingEngineTest {
     }
 
     @Test
-    fun `normalizes a full stream and closes with MESSAGE_END`() =
+    fun `normalizes a full stream and closes with MESSAGE_END`(): Unit =
         runBlocking {
             val stream =
                 FakeAdapterStream(
@@ -94,7 +94,7 @@ class StreamingEngineTest {
         }
 
     @Test
-    fun `failure before the first chunk is thrown for the caller to fall back`() =
+    fun `failure before the first chunk is thrown for the caller to fall back`(): Unit =
         runBlocking {
             val stream = FakeAdapterStream(throwOnCall = 1)
             val engine = StreamingEngine(clock, events, ids, StreamingConfig())
@@ -104,7 +104,7 @@ class StreamingEngineTest {
         }
 
     @Test
-    fun `failure after the first chunk ends with an ERROR chunk, not an exception`() =
+    fun `failure after the first chunk ends with an ERROR chunk, not an exception`(): Unit =
         runBlocking {
             val stream =
                 FakeAdapterStream(mutableListOf(AdapterChunk(AdapterChunkType.MESSAGE_START, 0)), throwOnCall = 2)
@@ -116,7 +116,7 @@ class StreamingEngineTest {
         }
 
     @Test
-    fun `idle timeout aborts the stream with an ERROR chunk and cancels the adapter`() =
+    fun `idle timeout aborts the stream with an ERROR chunk and cancels the adapter`(): Unit =
         runBlocking {
             val config = StreamingConfig(heartbeatSeconds = 1, idleTimeoutSeconds = 2, overallTimeoutSeconds = 300)
             val startChunks = mutableListOf(AdapterChunk(AdapterChunkType.MESSAGE_START, 0))
@@ -138,7 +138,7 @@ class StreamingEngineTest {
         }
 
     @Test
-    fun `assembles a ToolCall delta split across multiple chunks before emitting it`() =
+    fun `assembles a ToolCall delta split across multiple chunks before emitting it`(): Unit =
         runBlocking {
             val stream =
                 FakeAdapterStream(
@@ -165,7 +165,7 @@ class StreamingEngineTest {
         }
 
     @Test
-    fun `braces inside a string literal argument do not confuse the balance heuristic`() =
+    fun `braces inside a string literal argument do not confuse the balance heuristic`(): Unit =
         runBlocking {
             // P6着手前レビューの指摘例そのもの: {"text": "use } carefully"}
             val stream =
@@ -193,7 +193,7 @@ class StreamingEngineTest {
         }
 
     @Test
-    fun `escaped quotes inside the argument do not confuse the balance heuristic`() =
+    fun `escaped quotes inside the argument do not confuse the balance heuristic`(): Unit =
         runBlocking {
             // Argument text: {"quote": "she said \"hi } there\""}
             val stream =
@@ -223,7 +223,7 @@ class StreamingEngineTest {
         }
 
     @Test
-    fun `multiple tool calls arriving interleaved are assembled independently`() =
+    fun `multiple tool calls arriving interleaved are assembled independently`(): Unit =
         runBlocking {
             val stream =
                 FakeAdapterStream(
@@ -261,7 +261,7 @@ class StreamingEngineTest {
         }
 
     @Test
-    fun `stream ending with an unterminated tool call is an ERROR, not a silent partial result`() =
+    fun `stream ending with an unterminated tool call is an ERROR, not a silent partial result`(): Unit =
         runBlocking {
             val stream =
                 FakeAdapterStream(
@@ -284,7 +284,7 @@ class StreamingEngineTest {
         }
 
     @Test
-    fun `an explicit toolCallComplete signal completes the call immediately, ADR-0019`() =
+    fun `an explicit toolCallComplete signal completes the call immediately, ADR-0019`(): Unit =
         runBlocking {
             val stream =
                 FakeAdapterStream(
@@ -309,7 +309,7 @@ class StreamingEngineTest {
         }
 
     @Test
-    fun `backpressure suspends the producer once the buffer capacity is reached`() =
+    fun `backpressure suspends the producer once the buffer capacity is reached`(): Unit =
         runTest {
             // A tiny byte budget forces a small buffer capacity (~1 item).
             val config = StreamingConfig(backpressureBufferBytes = 1)
@@ -347,7 +347,7 @@ class StreamingEngineTest {
         }
 
     @Test
-    fun `byte budget holds across a mix of small and large chunk sizes, not just item count`() =
+    fun `byte budget holds across a mix of small and large chunk sizes, not just item count`(): Unit =
         runTest {
             // A fixed-item-count buffer (the pre-fix bug: bytes/256, coerced to >=1) would admit
             // this many items regardless of their actual size. A byte-accumulating gate must not.
