@@ -2,7 +2,9 @@ package apap.execution.mapping
 
 import apap.adapter.spi.AdapterRequest
 import apap.adapter.spi.AuthContext
+import apap.domain.model.conversation.TurnRole
 import apap.domain.model.execution.CanonicalRequest
+import apap.domain.model.execution.InputMessage
 import apap.domain.model.execution.ProcessedPrompt
 import apap.domain.model.vo.ContentPart
 import java.time.Duration
@@ -48,15 +50,21 @@ object RequestMapper {
     fun withCorrectionNote(
         prompt: ProcessedPrompt,
         violationDetail: String,
-    ): ProcessedPrompt =
-        prompt.copy(
-            input =
-                prompt.input +
-                    ContentPart.Text(
-                        "The previous response violated the required output schema: $violationDetail. " +
-                            "Correct the response so it strictly conforms to the schema.",
-                    ),
+    ): ProcessedPrompt {
+        val note =
+            ContentPart.Text(
+                "The previous response violated the required output schema: $violationDetail. " +
+                    "Correct the response so it strictly conforms to the schema.",
+            )
+        // `input`だけに足すとAdapterへは届かない——Provider固有形式への変換は`messages`を読むため
+        // （AdapterRequest.messagesのKDoc）。是正指示が届かなければ同一プロンプトの単純再送になり、
+        // ADR-0011 決定5が成り立たない（P14のリクエスト忠実性検査で検出）。
+        // roleはUSER: 利用側からの新しい指示であり、SYSTEM（＝利用側が設定した前提）ではない。
+        return prompt.copy(
+            input = prompt.input + note,
+            messages = prompt.messages + InputMessage(TurnRole.USER, listOf(note)),
         )
+    }
 
     private fun mapParams(p: apap.domain.model.execution.GenerationParams): apap.adapter.spi.GenerationParams =
         apap.adapter.spi.GenerationParams(
