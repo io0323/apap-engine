@@ -18,7 +18,10 @@ import apap.execution.retry.RetryStrategy
 import apap.infrastructure.eventbus.SynchronousEventBus
 import apap.infrastructure.secret.EnvVarSecretStore
 import apap.infrastructure.secret.SecretStoreAccessor
+import apap.observability.audit.AuditConfig
+import apap.observability.audit.AuditEngine
 import apap.observability.health.HealthCheckService
+import apap.observability.health.ProviderHealthAggregator
 import apap.observability.metrics.OpenTelemetryMetricsRecorder
 import apap.plugin.PluginManager
 import apap.plugin.PluginSignatureVerifier
@@ -26,6 +29,7 @@ import apap.provider.AdapterRegistry
 import apap.provider.CapabilityDiscoveryQuery
 import apap.provider.ModelManager
 import apap.provider.PluginNotFoundException
+import apap.provider.ProviderHealthCheckTask
 import apap.provider.ProviderManager
 import apap.provider.ResolvedPlugin
 import apap.routing.spi.LoadBalancer
@@ -69,6 +73,17 @@ class ApapEngineBuilder(
     private var retryStrategy: RetryStrategy? = null,
     private var compactionStrategy: CompactionStrategy = TruncateOldestCompactionStrategy(),
     private var rateLimiterConfig: RateLimiterConfig = RateLimiterConfig(),
+    /**
+     * 2.19のメトリクス記録口。既定は[meter]から作る[OpenTelemetryMetricsRecorder]。
+     * テストや、独自の計測基盤を持つ埋込ホストが差し替えられるようにする。
+     */
+    private var metricsRecorderOverride: MetricsRecorder? = null,
+    /**
+     * 監査ログの設定（ADR-0005: 本文保存は既定OFF、opt-in時はMaskingStrategy必須）。
+     * P11-F1: `AuditEngine`自体がどこからも構築されておらず、監査ログが1件も
+     * 記録されていなかった。[build]で構築し、[ApapEngine.close]で停止する。
+     */
+    private var auditConfig: AuditConfig = AuditConfig(),
     private var clock: Clock = SystemClock(),
     private var idGenerator: IdGenerator = UlidIdGenerator(),
     /**
@@ -146,6 +161,12 @@ class ApapEngineBuilder(
 
     fun meter(meter: Meter) = apply { this.meter = meter }
 
+    /** [MetricsRecorder]を明示的に差し替える（既定は[meter]から作る）。 */
+    fun metricsRecorder(recorder: MetricsRecorder) = apply { this.metricsRecorderOverride = recorder }
+
+    /** 監査ログの設定（本文保存のopt-inとマスキング戦略）。 */
+    fun auditConfig(config: AuditConfig) = apply { this.auditConfig = config }
+
     fun tracer(tracer: Tracer) = apply { this.tracer = tracer }
 
     fun routingStrategy(
@@ -163,11 +184,14 @@ class ApapEngineBuilder(
     /**
      * Rate Limiterの既定トークンバケット設定（FR-EXE-003）。
      *
-     * 既定は容量60・毎秒1トークン補充で、**バースト60件のあとは毎秒1リクエスト**に絞られる。
-     * `RateLimiter.configure(scope, ...)`は本番配線から呼ばれておらず、登録済みProviderの
-     * `rateLimits`（rpm/tpm/concurrent）はレート制限へ一切反映されない（P11-F10）。
-     * そのため現状はこの既定値がすべてのスコープに適用される。スループットを要する構成では
-     * 埋込ホストがここで明示的に上書きすること。
+     * ここで設定するのは**明示設定の無いスコープ**に適用される既定バケットである。
+     * Providerスコープは`Provider.rateLimits`の`rpm`から`ProviderRateLimitConfigurer`が
+     * 自動設定するため、通常この既定値を触る必要は無い。
+     *
+     * テナントスコープにはドメイン上の設定元が無く（ADR-0035）、現状は既定バケットが
+     * そのまま適用される。テナント別に絞りたい場合はここで上限を指定すること。
+     * 既定は実質無制限——絞る根拠の無いスコープを既定値で絞ると、意図しない全体スロットルになる
+     * （P11-F10でこれが出荷時 4.7 req/s の原因だった）。
      *
      * 引数を`RateLimiterConfig`型ではなくプリミティブにしているのは、`apap-cache`が
      * `implementation`スコープで埋込ホストから見えないため（`HostCompileClasspathTest`が
@@ -188,7 +212,7 @@ class ApapEngineBuilder(
     @Suppress("LongMethod")
     fun build(): ApapEngine {
         val resolvedAdapterRegistry = resolveAdapterRegistry()
-        val metricsRecorder: MetricsRecorder = OpenTelemetryMetricsRecorder(meter)
+        val metricsRecorder: MetricsRecorder = metricsRecorderOverride ?: OpenTelemetryMetricsRecorder(meter)
         val effectiveCacheStore = cacheStore ?: InMemoryCacheStore(clock)
 
         val composer =
@@ -253,9 +277,35 @@ class ApapEngineBuilder(
                 resolvedAdapterRegistry,
                 SecretStoreAccessor(secretStore),
             )
-        val health = DefaultApapHealth(HealthCheckService())
+        // ProviderHealthAggregatorはEvent Busを購読してProvider別状態を保持する（P11-F2で未配線と判明）。
+        // ProviderHealthCheckTaskが発火するProviderHealthChangedを受け取り、/health/providersへ反映する。
+        val providerHealthAggregator = ProviderHealthAggregator(eventBus.subscriber)
+        val health = DefaultApapHealth(HealthCheckService(providerHealthIndicator = providerHealthAggregator))
         val capabilityDiscoveryQuery =
             CapabilityDiscoveryQuery(repositories.capabilityRepository, repositories.policyRepository)
+
+        // FR-PRV-006 / ADR-0032: 周期実行タスク。ここでは**生成するだけで実行しない**
+        // （埋込ライブラリが常駐スレッドを起こさない）。駆動は宿主かGatewayが行う。
+        val scheduledTasks =
+            listOf(
+                ProviderHealthCheckTask(
+                    providerRepository = repositories.providerRepository,
+                    adapterRegistry = resolvedAdapterRegistry,
+                    eventPublisher = eventBus.publisher,
+                    clock = clock,
+                    idGenerator = idGenerator,
+                ),
+            )
+
+        // FR-OBS-001 / FR-SEC-006（P11-F1）: 監査ログの記録。initでEvent Busを購読し、
+        // 単一のデーモンスレッドで書き込む。close()で確実に止めるためDefaultApapEngineへ渡す。
+        val auditEngine =
+            AuditEngine(
+                eventSubscriber = eventBus.subscriber,
+                auditRepository = repositories.auditRepository,
+                config = auditConfig,
+                idGenerator = idGenerator,
+            )
 
         return DefaultApapEngine(
             executionEngine = composer.build(),
@@ -263,6 +313,9 @@ class ApapEngineBuilder(
             idGenerator = idGenerator,
             admin = admin,
             health = health,
+            metrics = metricsRecorder,
+            scheduledTasks = scheduledTasks,
+            auditEngine = auditEngine,
             pluginManager = pluginManagerOrNull,
         )
     }

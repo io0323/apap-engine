@@ -57,8 +57,11 @@ fun startGateway(
         embeddedServer(Netty, port = config.port) {
             apapGateway(engine, config, tokenVerifier, metricsRenderer, lifecycle = lifecycle)
         }
+    // ADR-0032: 周期タスクの駆動主体。APAPは自分でスレッドを起こさないので、
+    // 常駐プロセスであるGatewayが回す。これが無いとProviderの健全性監視は動かない。
+    val scheduledTasks = ScheduledTaskRunner(engine.scheduledTasks).apply { start() }
     Runtime.getRuntime().addShutdownHook(
-        Thread { runBlocking { shutdownGateway(server, engine, config, lifecycle) } },
+        Thread { runBlocking { shutdownGateway(server, engine, config, lifecycle, scheduledTasks) } },
     )
     server.start(wait = true)
 }
@@ -84,9 +87,13 @@ suspend fun shutdownGateway(
     engine: ApapEngine,
     config: GatewayConfig,
     lifecycle: GatewayLifecycle,
+    scheduledTasks: AutoCloseable? = null,
 ) {
     logger.info("shutdown signal received; draining in-flight requests")
     lifecycle.beginDraining()
+    // 周期タスクを先に止める。排出中に新しい健全性チェックが走ると、
+    // 「停止処理が終わらない」ではなく「停止中に新しい仕事が増える」形の遅延になる。
+    scheduledTasks?.close()
 
     val drained = lifecycle.awaitQuiescence(config.shutdown.streamingGraceSeconds * MILLIS_PER_SECOND)
     if (!drained) {

@@ -1,6 +1,7 @@
 package apap.runtime
 
 import apap.domain.port.AliasRepository
+import apap.domain.port.AuditRepository
 import apap.domain.port.BudgetRepository
 import apap.domain.port.CapabilityRepository
 import apap.domain.port.ConversationRepository
@@ -15,6 +16,7 @@ import apap.domain.port.QuotaSnapshotRepository
 import apap.domain.port.TenantEntitlementRepository
 import apap.domain.port.UsageRepository
 import apap.infrastructure.persistence.inmemory.InMemoryAliasRepository
+import apap.infrastructure.persistence.inmemory.InMemoryAuditRepository
 import apap.infrastructure.persistence.inmemory.InMemoryBudgetRepository
 import apap.infrastructure.persistence.inmemory.InMemoryCapabilityRepository
 import apap.infrastructure.persistence.inmemory.InMemoryConversationRepository
@@ -51,4 +53,11 @@ data class ApapRepositories(
     val budgetRepository: BudgetRepository = InMemoryBudgetRepository(),
     val usageRepository: UsageRepository = InMemoryUsageRepository(),
     val quotaPolicyRepository: QuotaPolicyRepository = InMemoryQuotaPolicyRepository(),
+    /**
+     * 監査ログの保存先（FR-OBS-001 / FR-SEC-006）。既定はIn-Memoryで、プロセス再起動で失われる。
+     * 監査要件を満たすには`apap-infrastructure-jdbc`の`JdbcAuditRepository`（追記専用）へ
+     * 差し替えること。P11時点ではこのPort自体が`ApapRepositories`に無く、`AuditEngine`が
+     * どこからも構築されていなかった（P11-F1）。
+     */
+    val auditRepository: AuditRepository = InMemoryAuditRepository(),
 )

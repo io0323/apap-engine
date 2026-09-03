@@ -11,7 +11,10 @@ import apap.domain.model.execution.StreamChunkType
 import apap.domain.model.vo.RequestId
 import apap.domain.model.vo.TenantId
 import apap.domain.port.IdGenerator
+import apap.domain.port.MetricsRecorder
+import apap.domain.port.ScheduledTask
 import apap.execution.ExecutionEngine
+import apap.observability.audit.AuditEngine
 import apap.plugin.PluginManager
 import apap.provider.CapabilityDiscoveryQuery
 import kotlinx.coroutines.flow.Flow
@@ -36,6 +39,13 @@ internal class DefaultApapEngine(
     private val idGenerator: IdGenerator,
     override val admin: ApapAdmin,
     override val health: ApapHealth,
+    override val metrics: MetricsRecorder,
+    override val scheduledTasks: List<ScheduledTask>,
+    /**
+     * 監査ログ書き込み（FR-OBS-001）。デーモンスレッドを1本持つため、[close]で確実に止める
+     * ——埋込ライブラリが宿主のプロセスにスレッドを残さないため（CLAUDE.md不変条件6の趣旨）。
+     */
+    private val auditEngine: AuditEngine,
     private val pluginManager: PluginManager?,
     private val drainTimeout: Duration = DEFAULT_DRAIN_TIMEOUT,
 ) : ApapEngine {
@@ -98,6 +108,11 @@ internal class DefaultApapEngine(
         pluginManager?.let { manager ->
             manager.loadedPluginIds().forEach { pluginId -> runCatching { manager.unload(pluginId) } }
         }
+        // 監査ログは非同期に書かれるため、**書き終えてから**スレッドを止める。
+        // 先にshutdownすると、停止直前のリクエストの監査記録が失われる
+        // ——監査要件（FR-SEC-006）では「落ちたときの記録」こそ重要になる。
+        runCatching { auditEngine.awaitQuiescence() }
+        runCatching { auditEngine.close() }
         closed.set(true)
     }
 
@@ -117,6 +132,7 @@ private fun ApapRequest.toCanonical(idGenerator: IdGenerator): CanonicalRequest 
         input = input,
         params = params,
         tools = tools,
+        toolResults = toolResults,
         outputSchema = outputSchema,
         conversationId = conversationId,
         sessionId = sessionId,
