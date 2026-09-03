@@ -21,6 +21,7 @@ import apap.domain.model.cost.QuotaPolicy
 import apap.domain.model.execution.CanonicalRequest
 import apap.domain.model.execution.CanonicalResponse
 import apap.domain.model.execution.ExecutionContext
+import apap.domain.model.execution.InputMessage
 import apap.domain.model.execution.ProcessedPrompt
 import apap.domain.model.execution.StreamChunk
 import apap.domain.model.vo.AdapterErrorCategory
@@ -429,15 +430,34 @@ class DefaultExecutionEngine(
         modelId: ModelId,
     ): ProcessedPrompt {
         val conversation = request.conversationId?.let { conversationRepository.findById(it, request.tenantId) }
+        // リクエストが持つSYSTEM発話をContext Managerへ渡す。P11-F4以前はここが
+        // `emptyList()`固定で、System Promptの供給経路がそもそも存在しなかった。
+        val systemPrompt = prompt.messages.filter { it.role == TurnRole.SYSTEM }.flatMap { it.content }
         val assembled =
             try {
-                contextManager.build(request, systemPrompt = emptyList(), conversation, modelId)
+                contextManager.build(request, systemPrompt, conversation, modelId)
             } catch (e: ContextLengthExceededException) {
                 throw ExecutionFailedException(contextLengthExceededError(e))
             }
-        val historyContent = assembled.turns.flatMap { it.contentParts }
-        val mergedInput = assembled.systemPrompt + assembled.memoryInjection + historyContent + prompt.input
-        return ProcessedPrompt(input = mergedInput, estimatedTokens = assembled.estimatedTokens)
+
+        // roleを保ったまま合成する（ADR-0031）。履歴のTurnはそれぞれの発話者を保持し、
+        // Memory注入はSYSTEM相当の文脈として扱う。平坦化するとProviderからは
+        // すべてが1人の発話に見え、マルチターンの意味が失われる。
+        val messages =
+            buildList {
+                if (assembled.systemPrompt.isNotEmpty()) add(InputMessage(TurnRole.SYSTEM, assembled.systemPrompt))
+                if (assembled.memoryInjection.isNotEmpty()) {
+                    add(InputMessage(TurnRole.SYSTEM, assembled.memoryInjection))
+                }
+                assembled.turns.forEach { turn -> add(InputMessage(turn.role, turn.contentParts)) }
+                // 今回の入力はSYSTEM分を除いた残り（SYSTEMは上でsystemPromptとして先頭に置いた）。
+                addAll(prompt.messages.filter { it.role != TurnRole.SYSTEM })
+            }
+        return ProcessedPrompt(
+            input = messages.flatMap { it.content },
+            estimatedTokens = assembled.estimatedTokens,
+            messages = messages,
+        )
     }
 
     /**

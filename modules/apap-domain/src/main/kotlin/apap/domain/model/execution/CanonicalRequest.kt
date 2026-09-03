@@ -69,6 +69,11 @@ data class CanonicalRequest(
     val idempotencyKey: String? = null,
     val timeoutBudget: Duration,
     val traceId: String,
+    /**
+     * role付きの発話列（13.2 `messages[]`、ADR-0031）。既定は[input]を単一USER発話とみなしたもの。
+     * System Promptや過去のassistant応答を渡すにはこちらを使う。
+     */
+    val messages: List<InputMessage> = InputMessage.userOnly(input),
 ) {
     init {
         require(principal.isNotBlank()) { "CanonicalRequest.principal must not be blank" }

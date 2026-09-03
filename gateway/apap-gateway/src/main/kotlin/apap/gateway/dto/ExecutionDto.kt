@@ -2,14 +2,18 @@ package apap.gateway.dto
 
 import apap.api.ApapRequest
 import apap.api.ApapResponse
+import apap.domain.model.conversation.TurnRole
 import apap.domain.model.execution.GenerationParams
+import apap.domain.model.execution.InputMessage
 import apap.domain.model.execution.ToolDefinition
 import apap.domain.model.execution.ToolResult
 import apap.domain.model.vo.CapabilityId
 import apap.domain.model.vo.ContentPart
 import apap.domain.model.vo.ConversationId
+import apap.domain.model.vo.ErrorCode
 import apap.domain.model.vo.SessionId
 import apap.domain.model.vo.TenantId
+import apap.gateway.error.ApiException
 import apap.gateway.json.GatewayJson
 
 /**
@@ -49,7 +53,24 @@ data class EmbeddingRequestDto(
 data class MessageDto(
     val role: String,
     val content: List<ContentPartDto>,
-)
+) {
+    /**
+     * 13.2の`role`を[TurnRole]へ写す。未知のroleは**黙って無視せず**`INVALID_REQUEST`で弾く
+     * ——同ファイルが`ContentPart.type`に対して既に採っている方針と揃える。
+     * 黙って落とすと「送ったのに効かない」という最も分かりにくい失敗になる。
+     */
+    fun toInputMessage(): InputMessage {
+        val turnRole =
+            when (role.lowercase()) {
+                "system" -> TurnRole.SYSTEM
+                "user" -> TurnRole.USER
+                "assistant" -> TurnRole.ASSISTANT
+                "tool" -> TurnRole.TOOL
+                else -> throw ApiException(ErrorCode.INVALID_REQUEST, "unsupported message role: $role")
+            }
+        return InputMessage(turnRole, content.map { it.toContentPart() })
+    }
+}
 
 /**
  * 13.2の`content`はContentPart配列（`text` / `image` / `audio`）。
@@ -156,6 +177,9 @@ fun ChatRequestDto.toApapRequest(
         principal = principal,
         capabilityId = capabilityId,
         input = messages.flatMap { message -> message.content.map { it.toContentPart() } },
+        // 13.2の`role`を保持する。P11-F4以前はここで平坦化してroleを捨てており、
+        // System Promptもマルチターンの発話者も区別されないままProviderへ渡っていた。
+        messages = messages.map { it.toInputMessage() },
         modelAlias = modelAlias,
         params = params?.toGenerationParams() ?: GenerationParams(),
         tools = tools?.map { it.toToolDefinition() },

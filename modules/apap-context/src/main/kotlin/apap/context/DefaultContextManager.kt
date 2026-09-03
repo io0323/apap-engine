@@ -92,15 +92,30 @@ class DefaultContextManager(
         val margin = TokenEstimationService.safetyMarginFor(counter.mode, estimationConfig)
         val budget = ContextAssemblyService.computeBudget(model.contextWindow, model.maxOutputTokens, margin)
 
-        var remaining = prompt.input
-        while (remaining.size > 1 && counter.count(remaining).value > budget) {
+        // 2段階で切り詰める（ADR-0031）。
+        // 1) まず古い**発話ごと**落とす。ContentPart単位で跨いで落とすとメッセージ境界が壊れ、
+        //    残った断片の発話者が分からなくなる。
+        // 2) 1発話まで減らしてもなお入らなければ、その発話の**中で**古いContentPartを落とす。
+        //    ここはrole境界を跨がないので発話者の情報は失われない。
+        var remaining = prompt.messages
+        while (remaining.size > 1 && counter.count(remaining.flatMap { it.content }).value > budget) {
             remaining = remaining.drop(1)
         }
-        val finalTokens = counter.count(remaining)
+        val last = remaining.lastOrNull()
+        if (last != null && counter.count(remaining.flatMap { it.content }).value > budget) {
+            var parts = last.content
+            while (parts.size > 1 && counter.count(parts).value > budget) {
+                parts = parts.drop(1)
+            }
+            remaining = listOf(last.copy(content = parts))
+        }
+
+        val remainingInput = remaining.flatMap { it.content }
+        val finalTokens = counter.count(remainingInput)
         if (finalTokens.value > budget) {
             throw ContextLengthExceededException(TokenCount(budget), finalTokens)
         }
-        return ProcessedPrompt(input = remaining, estimatedTokens = finalTokens)
+        return ProcessedPrompt(input = remainingInput, estimatedTokens = finalTokens, messages = remaining)
     }
 
     private suspend fun resolveMemoryInjection(request: CanonicalRequest): List<ContentPart> {

@@ -18,6 +18,8 @@ object SpiSurface {
         mapOf(
             "CapabilityId" to "apap.domain.model.vo.CapabilityId",
             "ContentPart" to "apap.domain.model.vo.ContentPart",
+            "InputMessage" to "apap.domain.model.execution.InputMessage",
+            "TurnRole" to "apap.domain.model.conversation.TurnRole",
             "TextContentPart" to "apap.domain.model.vo.ContentPart.Text",
             "ImageContentPart" to "apap.domain.model.vo.ContentPart.Image",
             "AudioContentPart" to "apap.domain.model.vo.ContentPart.Audio",

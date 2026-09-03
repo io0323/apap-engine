@@ -28,6 +28,7 @@ object RequestMapper {
             capabilityId = req.capabilityId,
             modelName = modelName,
             input = prompt.input,
+            messages = prompt.messages,
             params = mapParams(req.params),
             tools = req.tools?.map(::mapTool),
             toolResults = req.toolResults.map(::mapToolResult),
