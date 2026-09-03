@@ -560,3 +560,94 @@ Gatewayだけ直しても2と3で落ちるため、**縦に全部通す必要が
 |---|---|---|
 | NFR-PRF-003 | **判定不能**。分離環境での再計測が前提（3.6.1）。ロック競合のCAS化はADR-0036で「単独では採らない」と決定 |
 | NFR-PRF-004 / 005 | 未計測。004（Cache Hit p99）は計測経路の追加のみ。005（同時Streaming 10,000接続）は単一マシンでは検証できない |
+
+---
+
+## 9. リクエスト忠実性（Request Fidelity）の網羅検査（P14）
+
+F4（role脱落）とF3（outputSchema未検証）は同じ構造の欠落だった。既存のテストは
+「応答が返る」「イベントが飛ぶ」という**結果**を見ており、**Adapterが何を受け取ったか**を
+見ていなかった。APAPの中核機能は共通リクエストをProviderリクエストへ変換することなので、
+そこが最も検証されるべき地点である。2件出た以上、他のフィールドにも同じ穴があると考え、
+公開リクエスト型の全フィールドを網羅的に検査した。
+
+### 9.1 分類表（クローズドセット）
+
+`modules/apap-runtime/src/test/kotlin/apap/runtime/fidelity/RequestFidelityContract.kt` に、
+`ApapRequest`(16フィールド) / `CanonicalRequest`(18フィールド) の**全フィールド**を
+次の3分類で宣言した。分類は単一の場所にあり、`RequestFidelityContractTest` が
+`MetricsCoverageTest` / `DomainEventCoverageTest` と同じクローズドセット方式で機械検証する。
+
+| 分類 | 対象フィールド |
+|---|---|
+| Adapterへ到達すべき（変換後の形も宣言） | `capabilityId` / `input` / `params` / `tools` / `toolResults` / `outputSchema` / `timeoutBudget`→`timeout`（残予算） / `traceId`→`traceHeaders["traceparent"]` / `messages` |
+| Adapterへ到達してはならない | `tenantId` / `principal` / `sessionId` |
+| APAP内部で消費される | `modelAlias`（Routing→物理名） / `conversationId` / `idempotencyKey` / `requestId` / `constraints` / `preferences` |
+
+`RequestFidelityContractTest` が落とすのは次の場合である。
+
+1. リクエスト型にフィールドを足したのに分類を書かなかった（＝F4/F3が生まれた形）
+2. 分類表に実在しないフィールドが残っている
+3. 到達先として実在しない`AdapterRequest`フィールドを書いた
+4. **どのリクエストフィールドからも埋まらない`AdapterRequest`フィールドがある**
+   （`modelName`/`authContext`のようにAdapter側で作るものは理由付きで明示登録する）
+5. 到達しないと宣言したフィールドに見張り値（probe）が無い
+   （文字列として追えない場合は理由の明示を必須にし、黙って対象外にできないようにした）
+
+### 9.2 到達性の実測
+
+`RequestFidelityE2ETest`（21件）が、全フィールドを区別可能な見張り値で埋めたリクエストを
+**本番の入口（`ApapEngineBuilder`）で組んだエンジン**へ通し、`adapter-mock`をデコレートした
+`RecordingAdapter`が受け取った`AdapterRequest`を直接読む。検査は非Streaming／Streamingの
+両方で行う——F4では`DefaultPromptEngine`と`ContextManager.refit`が**別々に**roleを
+落としており、片方の経路だけでは両方は見つからなかった。
+
+| 検査 | 非Streaming | Streaming |
+|---|---|---|
+| 「到達すべき」全フィールドが正しい値で届く | ✔ | ✔ |
+| 「到達してはならない」値が1つも含まれない（`AdapterRequest`全文を走査） | ✔ | ✔ |
+| `messages`のroleと順序 | ✔ | ✔（System Prompt） |
+| ContentPartの各modality（text / image / audio） | ✔ | — |
+| Conversation履歴がroleを保って届く | ✔ | — |
+| Memory注入がSYSTEMとして届く | ✔ | — |
+| Fallback後（次候補）も同じ内容が届く | ✔ | — |
+| Credentialの実値が含まれない | ✔ | — |
+
+### 9.3 検出した脱落（3件、いずれも修正済み）
+
+| # | 脱落 | 影響していた要件 | 症状 |
+|---|---|---|---|
+| **1** | Structured Outputの**是正指示が`messages`に入っていなかった**（`RequestMapper.withCorrectionNote`が`input`にだけ追記） | FR-CAP-003 / ADR-0011 決定5 | Adapterは`messages`を読んでProvider形式へ変換するため、是正指示が届かない。**是正リトライが同一プロンプトの単純再送**になっていた（ADR-0011が「無意味なため避ける」と明記した挙動そのもの） |
+| **2** | 会話履歴のuser turnに`request.input`（System Promptや利用側指定のassistant発話を含む平坦列）を丸ごと書いていた | FR-CTX-002 / ADR-0031 | 次のターンで履歴として読み戻すと「ユーザがシステムプロンプトを喋った」ことになる。F4で入口のroleを直しても、**履歴経由で発話者が壊れ続ける** |
+| **3** | 実`QueryEmbedder`を供給する口が本番の入口に無かった | FR-CTX-004 | `ExecutionEngineComposer`はファクトリ引数を持つが`ApapEngineBuilder`が露出しておらず、ホストからMemory注入を有効化できない。実装済みだが到達不能——F1/F3と同じ形 |
+
+いずれも「応答は正常に返る」ため、結果だけを見るテストでは検出できない種類の欠落である。
+
+**脱落が無かったフィールド**（検証済みであることを明示する）:
+`capabilityId` / `input` / `params`の5項目すべて（temperature / maxTokens / topP / stop / seed）/
+`tools` / `toolResults` / `outputSchema` / `timeoutBudget` / `traceId` / `messages`のrole・順序・modality。
+到達してはならない側も `tenantId` / `principal` / `sessionId` / `modelAlias` / `conversationId` /
+`idempotencyKey` / `requestId` / `constraints` の見張り値がAdapterへ届いていないことを実測で確認した
+（`preferences`だけは`OptimizeFor`列挙のみで見張り値を置けないため、`RequestMapper`に対する
+直接検証と分類表のクローズドセットで担保する）。
+
+### 9.4 不変条件9: 違反注入による確認
+
+| 注入 | 結果 |
+|---|---|
+| 分類表から`params`の項目を削る | `RequestFidelityContractTest` の3テストが失敗（「ApapRequest/CanonicalRequestに分類されていないフィールドがあります: [params]」「どのリクエストフィールドからも埋まらないAdapterRequestフィールドがあります: [params]」） |
+| `RequestMapper`で`tools`の伝播を切る（`tools = null`） | `RequestFidelityE2ETest` の3テストが失敗（非Streaming / Streaming / Fallback後、いずれも「toolsが届いていません（FR-CAP-005）」） |
+| `withCorrectionNote`を修正前（`input`のみ）へ戻す | 是正指示の到達テストが失敗し、届いたmessagesが1回目と同一であることを表示 |
+| `queryEmbedding`のフックを無効化（P14前の状態） | Memory注入の到達テストが失敗 |
+
+注入はいずれも一時的なもので、確認後に元へ戻している。
+
+### 9.5 残る限界
+
+- **ADR-0023のResilience経路がMemoryに適用できていない**: `QueryEmbedder.embed`は`parts`しか
+  受け取らず、`ResilientQueryEmbedder`が要求するtenantId/traceId/providerId/modelIdを渡す口が
+  無い。`ApapEngineBuilder.queryEmbedding`で渡した実装は**保護なしにそのまま呼ばれる**。
+  KDocに明示してあり、黙って縮退させてはいない。解消には`embed`のシグネチャ拡張が要る
+- **実ベクトル化の実体は引き続きAPAP側に無い**（FR-CTX-004の「未達」は変わらない）。
+  今回の修正は「ホストが供給すれば実行経路に乗る」ところまでで、APAP自身は埋め込みを作らない
+- `RenderingStage`はパススルーのまま（F13、8.2）
