@@ -49,9 +49,22 @@ dependencies {
     // 停止時の挙動を検証できないため）。
     testImplementation(lib("ktor-client-cio"))
     testImplementation(lib("jackson-dataformat-yaml"))
+    // CredentialLeakageTestがログ本文を実際に読むために必要（テスト専用。本番のログ実装は埋込先が選ぶ）。
+    testImplementation(lib("logback-classic"))
     testImplementation(project(":adapters:adapter-mock"))
     // adapter-mockのシグネチャに現れるSPI型（AdapterConfig/SecretAccessor/PluginManifest等）を
     // テストから直接組み立てるため。本番コードはSPIに触れない（HTTP層はApapEngineだけを見る）。
     testImplementation(project(":modules:apap-adapter-spi"))
     testImplementation(lib("kotlinx-coroutines-test"))
+}
+
+// PerformanceBenchmark（NFR-PRF-001/002/003の実測）は`-Dapap.benchmark=true`のときだけ動く。
+// Gradle自身のJVMに渡された`-D`はテストJVMへ自動では伝わらないため、明示的に引き渡す
+// （伝わらないと`@EnabledIfSystemProperty`でSKIPPEDになり、「測ったつもりで測っていない」状態になる）。
+val benchmarkFlag = providers.systemProperty("apap.benchmark").orElse("false")
+
+tasks.withType<Test>().configureEach {
+    systemProperty("apap.benchmark", benchmarkFlag.get())
+    // 計測結果はprintlnで出す。標準出力を握り潰すと数値が読めない。
+    testLogging { showStandardStreams = benchmarkFlag.get().toBoolean() }
 }

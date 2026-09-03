@@ -110,10 +110,15 @@ object ModuleScanCoverage {
      */
     fun includedModulePaths(repoRoot: File): List<String> {
         val settings = File(repoRoot, "settings.gradle.kts")
-        if (!settings.exists()) return emptyList()
-        val text = settings.readText()
-        val includeBlock = INCLUDE_BLOCK.find(text)?.groupValues?.get(1) ?: return emptyList()
-        return QUOTED.findAll(includeBlock)
+        val includeBlock =
+            settings
+                .takeIf { it.exists() }
+                ?.let { INCLUDE_BLOCK.find(it.readText()) }
+                ?.groupValues
+                ?.get(1)
+                .orEmpty()
+        return QUOTED
+            .findAll(includeBlock)
             .map { it.groupValues[1].replace(':', '/') }
             .filter { it.isNotBlank() }
             .toList()

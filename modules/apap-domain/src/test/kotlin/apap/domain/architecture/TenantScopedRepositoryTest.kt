@@ -33,6 +33,25 @@ class TenantScopedRepositoryTest {
             "QuotaSnapshotRepository.kt" to setOf("remaining"),
             "BudgetRepository.kt" to setOf("findByTenant"),
             "TenantEntitlementRepository.kt" to setOf("isPermitted"),
+            "UsageRepository.kt" to setOf("aggregate"),
+        )
+
+    /**
+     * `TenantId`に言及するがテナント境界の引数検証対象**ではない**Portと、その理由。
+     * 理由を書けない除外は「検査し忘れ」と区別できないため、空文字は許可しない
+     * （`ModuleScanCoverage.ScanExclusion`と同じ考え方）。
+     */
+    private val exclusions =
+        mapOf(
+            "MetricsRecorder.kt" to
+                "Repositoryではなく計測用Port。TenantIdはメトリクスラベルとして受け取るのみで、" +
+                "他テナントのデータへ到達する読み取り経路を持たない",
+            "PolicyRepository.kt" to
+                "findEffectiveのtenantIdはTenantId?（PLATFORMスコープはtenant_idを持たないため、" +
+                "12_ER図.mdでもnullable）。非nullを強制すると設計と矛盾する",
+            "SessionRepository.kt" to
+                "findByIdは「このsessionIdは誰のものか」を判定する入口そのものであり、" +
+                "事前にtenantIdを渡せない（そのKDoc参照）",
         )
 
     @Test
@@ -58,6 +77,48 @@ class TenantScopedRepositoryTest {
         }
 
         assertTrue(violations.isEmpty()) { violations.joinToString("\n") }
+    }
+
+    /**
+     * 検査対象リストそのものの網羅性を検証する。
+     *
+     * 対象ファイル名を手で書き並べる方式は、**新しいテナント境界付きPortを足したときに
+     * 黙って対象外になる**（`scannedRoots`にintegrationが無かったのと同じ失敗の形）。
+     * `TenantId`に言及するPortは、検証対象か、理由付きの除外か、必ずどちらかであることを強制する。
+     */
+    @Test
+    fun `every port mentioning TenantId is either checked or excluded with a reason`() {
+        val repoRoot = findRepoRoot(File(".").canonicalFile)
+        val portDir = File(repoRoot, "modules/apap-domain/src/main/kotlin/apap/domain/port")
+        val portFiles = portDir.listFiles { f: File -> f.extension == "kt" }?.toList().orEmpty()
+
+        assertTrue(portFiles.isNotEmpty()) {
+            "Portファイルを1件も読み取れませんでした（$portDir）。この状態では網羅性を検証できません。"
+        }
+
+        exclusions.forEach { (fileName, reason) ->
+            assertTrue(reason.isNotBlank()) { "$fileName: 除外理由が空です" }
+            assertTrue(File(portDir, fileName).exists()) {
+                "$fileName: 除外に書かれていますが実在しません（改名・削除の取り残し）"
+            }
+        }
+
+        val mentioningTenantId =
+            portFiles.filter { it.readText().contains("TenantId") }.map { it.name }.sorted()
+        val accountedFor = expectedTenantScopedMethods.keys + exclusions.keys
+        val unaccounted = mentioningTenantId.filterNot { it in accountedFor }
+
+        assertTrue(unaccounted.isEmpty()) {
+            "TenantIdに言及するのに、テナント境界検査の対象にも除外にも入っていないPortがあります:\n" +
+                unaccounted.joinToString("\n") { "  - $it" } +
+                "\n対処: expectedTenantScopedMethodsへ検証対象メソッドを足すか、exclusionsへ理由付きで宣言してください。"
+        }
+
+        // 対象・除外の側に、TenantIdへ言及しなくなった取り残しが無いこと。
+        val stale = accountedFor.filterNot { it in mentioningTenantId }
+        assertTrue(stale.isEmpty()) {
+            "TenantIdへ言及しなくなったPortが検査対象/除外に残っています: $stale"
+        }
     }
 
     /** `fun name(...)`をシグネチャ全体（複数行にまたがる括弧を含む）として抽出する。 */
