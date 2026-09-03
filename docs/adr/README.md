@@ -39,6 +39,7 @@ Architecture Decision Record。`docs/design/*.md` は一次情報として編集
 | [ADR-0033](ADR-0033-audit-search-requires-tenant-scope.md) | 監査ログ検索はテナントスコープを必須にする | Accepted | 補足（P11総合検証、FR-SEC-003、FR-SEC-006） |
 | [ADR-0034](ADR-0034-gateway-phase-overhead-measurement-point.md) | Gateway層に付加レイテンシの計測点を置く | Accepted | 補足（P11総合検証、NFR-PRF-001/002、2.19） |
 | [ADR-0035](ADR-0035-tenant-rate-limit-has-no-source-of-truth.md) | テナント別レート制限に設定元が無い（既定バケットは絞らない） | Accepted | 補足（P12是正、FR-EXE-003、NFR-PRF-003） |
+| [ADR-0036](ADR-0036-lock-free-rate-limiter-and-circuit-breaker.md) | Rate LimiterとCircuit Breakerのロック競合への対処方針（CAS化は単独では採らない） | Accepted | 補足（P13、NFR-PRF-003、2.4/2.12） |
 
 ## 命名規則
 

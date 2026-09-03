@@ -483,6 +483,70 @@ Spring Boot BOMを適用しており、Gradleの既定解決戦略（同一class
   Hit率を共有したい場合は分散KVS実装（`apap-infrastructure-distributed`）への差替えが必要
   （同上、追加依存が要る）。
 
+## 7-b. 組み込んだだけでは動かないこと（必読）
+
+APAPを組み込んでも、**宿主が明示的に設定・駆動しないと動かない**機能がある。
+実装は存在するので「動いているはず」と誤解しやすい。P11の総合検証では、この誤解によって
+「実装済みだが本番配線に無い」問題が繰り返し見つかっている。
+
+| 項目 | 既定の挙動 | 宿主がやること |
+|---|---|---|
+| **周期タスク**（Provider健全性監視・FR-PRV-006） | **動かない。** APAPは常駐スレッドを勝手に起こさない（ADR-0032） | `engine.scheduledTasks` を自分のスケジューラで回す。回さないと `/health/providers` は初期値のままで、Routingのヘルスフィルタも効かない |
+| **テナント別レート制限** | **掛からない。** 根拠の無いスコープは絞らない方針（ADR-0035） | 絞る場合は `ApapEngineBuilder.rateLimits(capacity, refillPerSecond)` で明示。Providerの`rpm`は登録値が自動反映される |
+| **監査ログの保存先** | In-Memory。**プロセス再起動で消える** | 監査要件（FR-SEC-006）を満たすなら `JdbcAuditRepository` へ差し替える |
+| **Provider/Model登録の永続化** | In-Memory。再起動で構成が失われる | `apap-infrastructure-jdbc` の各Repositoryへ差し替える（7章参照） |
+
+<!-- docs:illustrative reason=宿主側のスケジューラ実装例であり、APAPのコードではない（ADR-0032: 駆動は宿主の責務） -->
+```kotlin
+// 周期タスクの駆動例（宿主がコルーチンを持つ場合）。close()で必ず止めること。
+engine.scheduledTasks.forEach { task ->
+    scope.launch {
+        while (isActive) {
+            runCatching { task.runOnce() }.onFailure { log.warn("scheduled task {} failed", task.name, it) }
+            delay(task.interval.toMillis())
+        }
+    }
+}
+```
+
+## 7-c. System Prompt とマルチターンの渡し方
+
+`ApapRequest.input`（`List<ContentPart>`）だけを使うと、**すべて単一のUSER発話として扱われる**。
+System Promptや過去のassistant応答を効かせるには `messages` を使うこと。
+
+<!-- docs:illustrative reason=呼び出し側のリクエスト組立て例。到達検証はMessageRoleE2ETestが実コードで行う -->
+```kotlin
+ApapRequest(
+    tenantId = tenantId,
+    principal = principal,
+    capabilityId = CapabilityId("chat"),
+    input = emptyList(), // messagesを使う場合はこちらは空でよい
+    messages = listOf(
+        InputMessage(TurnRole.SYSTEM, listOf(ContentPart.Text("あなたは簡潔に答える"))),
+        InputMessage(TurnRole.USER, listOf(ContentPart.Text("前回の質問"))),
+        InputMessage(TurnRole.ASSISTANT, listOf(ContentPart.Text("前回の回答"))),
+        InputMessage(TurnRole.USER, listOf(ContentPart.Text("続きの質問"))),
+    ),
+)
+```
+
+roleはAdapterまで保たれる（`MessageRoleE2ETest`が到達内容を検証している）。
+P11時点では3箇所で脱落しており、System Promptは供給経路そのものが無かった——
+`docs/verification-report.md` 5.5参照。
+
+**未対応**: PromptTemplate（FR-PMT-004）は実行経路に入っていない。
+`RenderingStage`はパススルーで、テンプレート描画は行われない。
+
+## 7-d. 既知の性能上限
+
+- HTTP（Gateway）経由の観測値は **605 req/s**（並列度64、同一JVM上のクライアント）。
+  これは**APAPの上限ではなく計測環境の上限**で、負荷生成側が先に飽和している。
+  分離環境での再計測が必要（`docs/verification-report.md` 3.6.1）
+- **同一プロセス内（埋込利用）での上限は未計測**
+- 付加レイテンシは p50 0.335ms / p99 2.295ms（Gateway受信〜Adapter送信）
+
+低流量の埋込利用でスループット上限が問題になる可能性は低いが、既知の上限として記載する。
+
 ## 8. 未確定のまま残る事項（この文書のスコープ外）
 
 - 3章のStreamingブリッジ設計（どちらの選択肢を採るか）

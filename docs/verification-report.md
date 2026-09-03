@@ -6,6 +6,8 @@
   問題を「設計の不備」（ADR起票）と「実装の不備」（修正タスク）に分けた
 - P12（是正）: 2026-09-03。統合前の必須項目を解消し、性能を測り直した。
   **P11の性能数値は破棄し、3章を全面的に差し替えた**
+- P13（是正の続き）: 2026-09-03。F4の影響範囲を確定して修正し、F3を解消。
+  残る未解決項目に対応時期を割り当てた（8章）
 - 検証者による自己評価ではなく、**テスト名と計測値を根拠**として記載する
 
 ## 0. この文書の読み方 —「動作している」と「検証されている」の区別
@@ -30,16 +32,19 @@
 再分類した。従来使っていた「実装中」（48件）は、「Domain層だけ揃った」状態と
 「E2Eで動く」状態を区別できず、まさに上記の問題を隠す表現だったため廃止した。
 
-| 状態 | P11時点 | P12是正後 |
-|---|---|---|
-| 実装済 | 37 | **43** |
-| 部分実装 | 46 | 41 |
-| 未実装 | 9 | 8 |
-| 対象外 | 3 | 3 |
+| 状態 | P11時点 | P12是正後 | P13是正後 |
+|---|---|---|---|
+| 実装済 | 37 | 43 | **47** |
+| 部分実装 | 46 | 41 | 38 |
+| 未実装 | 9 | 8 | 7 |
+| 対象外 | 3 | 3 | 3 |
 
 P12で「実装済」へ移ったのは FR-PRV-006（健全性監視）/ FR-OBS-001・FR-SEC-006・FR-RTE-006（監査）/
-FR-CAP-005（Tool Calling）/ NFR-PRF-001（付加レイテンシ）。いずれも**本番配線からの到達と
-その経路を通るテスト**が揃ったことによる。
+FR-CAP-005（Tool Calling）/ NFR-PRF-001（付加レイテンシ）。
+P13ではさらに FR-CAP-001（role脱落の修正）/ FR-CTX-002（履歴の発話者帰属）/
+FR-CAP-003（Structured Output）/ FR-CAP-017・NFR-EXT-003（CapabilityRegistry配線）/
+FR-PMT-002（入力検証の正規化）。いずれも**本番配線からの到達とその経路を通るテスト**が
+揃ったことによる。
 
 「対象外」の3件は、リポジトリ内の検査では充足を判定できないもの:
 
@@ -200,6 +205,38 @@ BLOCKEDスレッドが並列度とともに増え（0 → 93 → 1046）、そ�
 - 判定には**クライアントとサーバを別マシンへ分離した再計測**が必要。それまでは
   「605 req/s は本構成での観測値であって、APAPの上限ではない」とだけ言える。
 
+### 3.6.1 再計測に必要な条件（P13で明記）
+
+現環境では **NFR-PRF-003 は判定不能**である。判定するには次を満たす計測が要る。
+
+**必須条件**
+
+1. **負荷生成側とサーバを別マシンに分離する。** 現在はクライアントとサーバが
+   同一の8コアJVMを共有しており、エンジンを通さない素のKtorルートでも
+   400 req/s 程度で頭打ちになる。この構成では「1,000 req/s に届かない」が
+   実装由来か負荷生成由来かを原理的に区別できない。
+2. **負荷生成側の飽和判定を計測に含める。** 分離後も、負荷側のCPU使用率と
+   「エンジンを通さない対照ルート」のスループットを同時に記録し、
+   対照が目標値を十分上回っていることを確認してからエンジン側の数値を読む。
+3. **サーバ側のスペックを記録する。** コア数・メモリ・JVMヒープ設定
+   （現在は`-Xmx`未指定の既定値）。
+
+**測定すべき指標**
+
+| 指標 | 目的 |
+|---|---|
+| スループット（req/s） | NFR-PRF-003 の判定 |
+| レイテンシ分布（p50 / p90 / p99 / max） | 平均値では飽和の兆候が見えない。飽和点では p99 が先に跳ねる |
+| **ロック競合率**（BLOCKEDスレッド比率、および `DefaultQuotaManager` / `CircuitBreaker` フレームの出現率） | ADR-0036の判断材料。並列度を変えて競合率が超線形に増えるかを見る |
+| `apap_overhead_duration_seconds` の phase 別分布 | どの段が伸びるかの内訳（ADR-0034で計測点を整備済み） |
+| GC統計（回数・停止時間） | max値の跳ねがGC由来かの切り分け |
+
+**ロック競合について**: 現在4.5%（BLOCKED 1,046 / 全23,140サンプル）で律速とは言えないが、
+競合は負荷に対して超線形に増えるため高負荷では律速になり得る。
+CAS化の可否を検討し、**単独では採らない**という結論を [ADR-0036](adr/ADR-0036-lock-free-rate-limiter-and-circuit-breaker.md) に記録した
+（競合がスコープ単位の単一ホットキーへ集中するため、CASはスピンして悪化しうる。
+効くのはストライピングとクリティカルセクション削減で、CAS化はその後）。
+
 ### 3.7 埋込利用（低流量）への影響
 
 prompt-engineのような埋込利用では、レート制限が明示設定されない限り絞りは掛からず
@@ -240,6 +277,16 @@ prompt-engineのような埋込利用では、レート制限が明示設定さ�
 収集経路が壊れていても緑にならないよう、テストは検査本体の前に
 「収集した出力が一定量あること」「プローブのログ行が含まれること」「応答ボディが含まれること」を
 先にアサートする。
+
+**P13での修正（待ち時間の上限）**: フルビルドの並列実行下でこのテストが
+`UncompletedCoroutinesError`（`runTest`の既定60秒）で落ちた。単独実行では2回連続で緑、
+`--rerun-tasks`でのフル再実行でも緑であり、**漏洩の検出そのものではなく実時間の上限**が
+原因だった。本テストは8往復のHTTP（うち2本はSSEで、本文の読み切りにheartbeat周期分待つ）を
+行い、フルビルド中は他モジュールのテストと同じマシンを奪い合う。待ち時間の上限は検査対象では
+ないため、`runTest(timeout = 5.minutes)` + `runTestApplication` へ変更して負荷に左右されない
+余裕を取った（既定60秒は他のテストではそのまま）。変更後、意図的にsentinelをログへ注入して
+**タイムアウトではなく漏洩アサーション**（`CredentialLeakageTest.kt:112`）で落ちることを
+確認している（不変条件9）。
 
 ### 4.2 Vendor Neutrality の走査範囲
 
@@ -330,8 +377,8 @@ Port契約がテナント横断の読み出しを許している（ADR-0033 / F9
 |---|---|---|---|
 | **F1** | **`AuditEngine`が本番配線に存在せず、監査ログが1件も記録されない**。単体テストと`CapabilitySmokeTest`は**テストハーネスが明示的に配線**して緑になっていた | FR-OBS-001, FR-SEC-006, FR-SEC-007, FR-RTE-006 | **解消**。`ApapRepositories`に`AuditRepository`を追加し、`ApapEngineBuilder.build()`で`AuditEngine`を構築。`close()`は書き込み完了を待ってからスレッドを止める（停止直前の監査記録を失わないため）。`ProductionWiringTest`が検証 |
 | **F2** | **Provider健全性の周期監視が起動されない**。`ProviderHealthAggregator`が構築されず、Schedulerも無いため`ProviderHealthChanged`が一度も発火しない | FR-PRV-006, FR-OBS-006 | **解消**。`ProviderHealthCheckTask`（30秒周期、5.10準拠）を新設し`ApapEngine.scheduledTasks`で公開、`ProviderHealthAggregator`を`/health/providers`へ配線。`SequenceFlowE2ETest`が検証 |
-| **F3** | **`CapabilityRegistry`が本番配線に存在しない**。参照側は到達可能だが、スキーマ登録側が機能しない | FR-CAP-017, NFR-EXT-003 | **未解消**（統合をブロックしない。Capability定義の追加は現状Adapter申告とModel登録で足りる） |
-| **F4** | **Gatewayが`messages[].role`を黙って捨てる**。System PromptとUser Promptを区別できない | FR-CAP-001 | **未解消**（ADR-0031。ドメインの`CanonicalRequest`にroleが無く、実装だけでは決められない） |
+| **F3** | **`CapabilityRegistry`が本番配線に存在しない**。参照側は到達可能だが、スキーマ登録側が機能せず、P7で自前バリデータからjson-schema-validatorへ差し替えた作業も実行経路に乗っていなかった | FR-CAP-017, NFR-EXT-003, FR-CAP-003 | **解消**（P13）。`ApapEngineBuilder`で構築し`ApapAdmin.capabilities`として公開。併せて`JsonSchemaValidator`を切り出し、リクエスト単位の`outputSchema`検証（FR-CAP-003）にも使う。`SchemaValidationE2ETest`が検証 |
+| **F4** | **roleが3箇所で失われる**（下記5.5参照）。System Promptは供給経路そのものが無く、マルチターン履歴は発話者不明の平坦な連結としてProviderへ渡っていた | FR-CAP-001, FR-CTX-002 | **解消**（P13、ADR-0031）。`InputMessage`をドメイン・SPI・公開API・Gateway DTOへ通し、Context組立てとrefitでrole境界を保つ。`MessageRoleE2ETest`が到達内容を検証 |
 | **F5** | `SessionManager`が本番配線に存在しない | FR-CTX-001 | **未解消**（`/v1/sessions`はNOT_IMPLEMENTEDとして明示済み） |
 | **F6** | Gatewayの本番起動がIn-Memory既定のまま。複数Podでの水平スケールが成立しない | NFR-AVL-003, NFR-EXT-005 | **未解消** |
 | **F7** | **Tool Calling経路のテストが1件も無い**。往路・復路とも配線されているが動作は未検証。`tool_results`を表現する型も存在しない | FR-CAP-005 | **解消**。`ToolResult`をドメイン→SPI→公開API→Gateway DTOへ追加し、`ToolCallingE2ETest`で往復2回・Streaming組立て（文字列内ブレース／エスケープ引用符／複数call並行）・未終端のエラー化を検証 |
@@ -377,53 +424,89 @@ Port契約がテナント横断の読み出しを許している（ADR-0033 / F9
 注入ではなく**追加した時点で対象機能が動くことを実測**している（未終端tool callの
 エラー化、Fallback時の2つ目の候補呼び出し、健全性変化の`/health/providers`到達）。
 
-## 6. prompt-engine への統合を開始してよいか（P12 是正後の判断）
+### 5.5 F4の影響範囲の確定（P13 作業1）
 
-### 判断: **開始してよい。** P11で挙げた必須3件は解消し、追加された必須項目（Tool Calling）も解消した。
+「`messages[].role` は受け取っても効かない」の実際の影響を、コード経路を追って確定した。
+結論は**区別が失われる**——最も重い読みが正しかった。
 
-### 6.1 P11で「開始前に必須」とした項目の状態
+| 問い | 実際 |
+|---|---|
+| system / user / assistant の区別が失われているか | **失われていた。** 3箇所で独立に脱落する（下表） |
+| System Prompt は現在どう扱われていたか | **供給経路が存在しなかった。** `ExecutionEngine.buildContextualPrompt` が `contextManager.build(request, systemPrompt = emptyList(), ...)` とハードコードしており、Context Manager側にsystemPromptの受け口はあるのに常に空が渡っていた |
+| マルチターン履歴で発話者の帰属が保たれているか | **保たれていなかった。** `assembled.turns.flatMap { it.contentParts }` で `Turn.role`（SYSTEM/USER/ASSISTANT/TOOL）を捨てて平坦化していた。会話履歴は保存側では役割を持つが、Providerへ渡る時点で失われる |
+| Adapter へ渡る時点で role 情報がどうなっていたか | **型として存在しなかった。** `AdapterRequest.input: List<ContentPart>` で、Adapterは受け取りようがない |
+
+**脱落箇所（3つとも独立）**
+
+1. Gateway: `ChatRequestDto.toApapRequest` が `messages.flatMap { it.content }` で平坦化
+2. Engine: `buildContextualPrompt` の `systemPrompt = emptyList()` と履歴の `flatMap`
+3. SPI: `AdapterRequest.input` が `ContentPart[]`
+
+Gatewayだけ直しても2と3で落ちるため、**縦に全部通す必要があった**。
+
+**影響の性質**: 429のように騒がしく失敗せず、Providerには
+「区切りのない1人の発話」として届く。全チャットリクエストが静かに劣化する種類の欠陥であり、
+指示のとおり統合前の必須項目として修正した。
+
+**修正**（ADR-0031の決定1・2・4に沿う）:
+
+- `InputMessage(role: TurnRole, content: List<ContentPart>)` を追加し、
+  ドメイン → SPI → 公開API → Gateway DTO を縦に通した。`TurnRole` は
+  04_ドメイン設計.md 4.3.4 の既存enumを再利用している（role概念を二重に作らない）
+- `buildContextualPrompt` はリクエストのSYSTEM発話をContext Managerへ渡し、
+  履歴の各Turnを role 付きのまま合成する
+- `ContextManager.refit` は**発話単位**で切り詰め、1発話まで減らしてもなお入らない場合のみ
+  その発話**内**のContentPartを落とす（role境界を跨がない）
+- `PromptDraft` / `PromptOptimizer` も messages を一貫して更新する
+  （片方だけ最適化するとProviderへ渡る内容とトークン計上がずれる）
+- Gatewayは未知のroleを**黙って無視せず** `INVALID_REQUEST` で拒否する
+  （同ファイルが `ContentPart.type` に対して既に採っている方針と揃えた）
+- role未指定の入力（`input` のみ）は単一のUSER発話として扱う。
+  SYSTEMやASSISTANTへ昇格させるのは危険側の推測になるため
+
+**残る限定事項**: ADR-0031の決定3（PromptTemplate参照フィールド）は未実装。
+`RenderingStage` はパススルーのままで、FR-PMT-004は部分実装として残る。
+
+## 6. prompt-engine への統合を開始してよいか（P13 是正後の判断）
+
+### 判断: **開始してよい。** 統合前の必須項目はすべて解消した。
+
+### 6.1 必須としてきた項目の最終状態
 
 | # | 項目 | 状態 | 根拠 |
 |---|---|---|---|
-| 1 | F10: レート制限の既定値（毎秒1リクエスト） | **解消** | `ProviderRateLimitConfigurer`がProviderの`rpm`を反映。未設定スコープは絞らない（ADR-0035）。`ProductionWiringTest`が絞りの実効性を実測で検証 |
-| 2 | F1: AuditEngine未配線 | **解消** | `ApapEngineBuilder.build()`で構築・購読。`close()`は書き込み完了を待つ。`ProductionWiringTest`がAuditRecordの実在を検証 |
-| 3 | D2/F2: 周期実行 | **解消** | `ScheduledTask` Portで公開（ADR-0032）。Gatewayは`ScheduledTaskRunner`で駆動し、停止時に確実に止める。埋込ホストは`engine.scheduledTasks`を自分のスケジューラで回す |
-| 4 | Tool Calling / Function Calling（P12で追加された必須項目） | **解消** | `ToolResult`型を追加して往復を成立させ、`ToolCallingE2ETest`で往復2回・Streaming組立て・未終端のエラー化を検証 |
+| 1 | F10: レート制限の既定値（毎秒1リクエスト） | **解消**（P12） | `ProviderRateLimitConfigurer`。`ProductionWiringTest`が絞りの実効性を実測 |
+| 2 | F1: AuditEngine未配線 | **解消**（P12） | `ProductionWiringTest`がAuditRecordの実在を検証 |
+| 3 | D2/F2: 周期実行 | **解消**（P12） | `ScheduledTask` Port（ADR-0032）。`SequenceFlowE2ETest` |
+| 4 | Tool Calling / Function Calling | **解消**（P12） | `ToolResult`で往復成立。`ToolCallingE2ETest` |
+| 5 | **F4: role脱落** | **解消**（P13） | 3箇所の脱落を縦に修正。`MessageRoleE2ETest`がAdapter到達内容を検証（5.5） |
+| 6 | **F3: CapabilityRegistry未配線** | **解消**（P13） | 本番配線＋`outputSchema`検証。`SchemaValidationE2ETest` |
 
 ### 6.2 統合してよいと判断する根拠
 
-1. **ホスト互換性が機械検証されている**。`integration/host-compat`が、prompt-engineが実際に持つ
-   依存（`apap-runtime` + `apap-api`のみ）でコンパイルできることを検証し、
-   統合ドキュメントのコード例は実コードから生成される（ADR-0029）。
-2. **10本のシーケンスすべてにE2Eテストがある**（2章）。P11で欠落していた5本はP12で追加した。
-3. **本番の入口を通した配線検証がある**。`ProductionWiringTest`は`ApapEngineBuilder`経由でしか
-   検出できない不具合（監査・レート制限・周期タスク）を対象にしている。
-   P11で見つかった3件はいずれも「単体テストは緑・本番では動かない」型だった。
-4. **付加レイテンシは要件を大きく下回る**（p50 0.335ms / p99 2.295ms、目標15ms/50ms）。
-   計測区間が要件の定義区間と一致していることも3.1で確認済み。
+1. **ホスト互換性が機械検証されている**（`integration/host-compat`、ADR-0029）
+2. **10本のシーケンスすべてにE2Eテストがある**（2章）
+3. **本番の入口を通した配線検証がある**（`ProductionWiringTest`）。
+   P11で見つかった不具合はいずれも「単体テストは緑・本番では動かない」型だった
+4. **AACPが最初に使う機能が検証済み**: Chat（role区別込み）・Tool Calling（往復込み）・
+   Structured Output（是正リトライ込み）がいずれもビルダ経由のE2Eで通っている
+5. **付加レイテンシは要件を大きく下回る**（p50 0.335ms / p99 2.295ms、目標15ms/50ms）
 
 ### 6.3 統合時に必ず伝えるべきこと（ドキュメント必須事項）
 
-コードでは解決しておらず、**知らないと誤解する**もの。
-`docs/integration/prompt-engine.md` に記載する。
+コードでは解決しておらず、**知らないと誤解する**もの。`docs/integration/prompt-engine.md` に記載する。
 
 | 項目 | 内容 |
 |---|---|
-| 周期タスクの駆動 | `engine.scheduledTasks`を宿主が回さない限り、**Providerの健全性監視は動かない**（`/health/providers`は初期値のまま、Routingのヘルスフィルタも効かない） |
-| レート制限 | テナント別制限は既定で**掛からない**（ADR-0035）。絞りたい場合は`ApapEngineBuilder.rateLimits(...)`で明示すること。`tpm`/`concurrent`は未反映（F12） |
-| 監査ログの保存先 | 既定はIn-Memoryで**プロセス再起動で消える**。監査要件を満たすには`JdbcAuditRepository`へ差し替える |
-| 永続化 | Provider/Model登録も既定はIn-Memory。再起動で構成が失われる |
-| スループット | 605 req/s は同一JVM上のHTTP経由での観測値であり、**上限ではない**（3.6）。埋込利用（同一プロセス内呼び出し）の上限は未計測 |
-| System Prompt | `messages[].role`は現状**受け取っても効かない**（F4 / ADR-0031）。System Promptを使う機能はADR-0031の実装を待つこと |
+| 周期タスクの駆動 | `engine.scheduledTasks`を宿主が回さない限り、Providerの健全性監視は動かない |
+| レート制限 | テナント別制限は既定で掛からない（ADR-0035）。`tpm`/`concurrent`は未反映（F12） |
+| 監査ログの保存先 | 既定はIn-Memoryでプロセス再起動で消える。`JdbcAuditRepository`へ差し替えること |
+| 永続化 | Provider/Model登録も既定はIn-Memory |
+| スループット | 605 req/s は同一JVM上のHTTP経由での観測値であり**上限ではない**（3.6） |
+| System Prompt | `messages[].role` で渡すこと。`input` だけを使うと単一のUSER発話として扱われる |
+| PromptTemplate | `RenderingStage`はパススルー。テンプレート描画は実行経路に入らない（F13） |
 
-### 6.4 統合後に着手すべき項目（開始をブロックしない）
-
-- **F4/D1（role欠落）**: System Promptを使う機能を計画しているなら、それより前にADR-0031の実装が必要
-- **F3（CapabilityRegistry未配線）**: 新Capabilityをスキーマ登録だけで追加したくなった時点で必要
-- **F6（GatewayがIn-Memory既定）**: 埋込利用では直接影響しないが、Gatewayを本番運用する際に必要
-- **F8（Admin公開口の欠落）**: Credential rotation・Canary比率・analyticsを使う時点で必要
-- **NFR-PRF-003の再計測**: クライアントとサーバを別マシンへ分離した環境が必要（3.6）
-- **NFR-PRF-002のp99**（49.9ms > 30ms）: 分位点の基準を確定したうえで改善要否を判断する
+---
 
 ## 7. デプロイ時に別途確認すべき事項（リポジトリ外）
 
@@ -437,3 +520,43 @@ Port契約がテナント横断の読み出しを許している（ADR-0033 / F9
 - **NFR-EXT-005**: HPA の設定とスケール試験
 - **ADR-0033 の実装時**: `GET /admin/v1/audit` のテナントIDは認証済みトークンのクレームから取り、
   クエリパラメータで上書きできないようにすること
+
+---
+
+## 8. 未解決項目の対応時期（P13 作業3）
+
+「統合前 / 統合と並行 / Gateway運用開始前」で分類した。作業量は概算（実装＋テスト＋レビュー）。
+
+### 8.1 優先度: 情報漏洩に関わるもの
+
+| # | 項目 | 対応時期 | 判定理由 | 概算 |
+|---|---|---|---|---|
+| **F9** | `AuditRepository.search` がテナント横断の読み出しを許す（`AuditSearchCriteria.tenantId` がnullable既定null） | **Admin API実装前に必須**（他項目より先） | **他と同列に扱わない。** これは性能や利便性ではなく**テナント間の情報漏洩**の問題である。ただし現時点で到達経路は無い——`GET /admin/v1/audit` はNOT_IMPLEMENTEDで、`search` の本番呼び出し元も存在しない。したがって**今すぐ漏洩する状態ではない**が、Admin APIを実装した瞬間に境界の無いAPIができあがる。「実装してから直す」順序にしてはならない | 0.5〜1日（Port契約の変更とテスト。ADR-0033に方針あり） |
+
+**F9の扱いについて**: 統合そのものはブロックしない（埋込利用では`search`を呼ばない）。
+しかし `GET /admin/v1/audit` の実装チケットには**必ずF9の修正を先行タスクとして紐づける**こと。
+併せて、エンドポイント実装時にテナントIDを認証済みトークンのクレームから取り、
+クエリパラメータで上書きさせないこと（ADR-0033）。
+
+### 8.2 統合と並行でよいもの
+
+| # | 項目 | 判定理由 | 概算 |
+|---|---|---|---|
+| **F5** | SessionManager未配線（FR-CTX-001） | `/v1/sessions` はNOT_IMPLEMENTEDとして明示済みで、黙って壊れているわけではない。埋込利用ではセッション管理は宿主側（prompt-engine）が持つのが自然で、APAP側のSessionが要るかは統合設計で決まる。**要否が決まる前に実装すると、使われないコードが増える** | 1〜2日（要否確定後） |
+| **F12** | `tpm`/`concurrent` がレート制限へ未反映（FR-EXE-003） | `rpm`は反映済みで、レート制限そのものは機能する。`tpm`はトークン数を`cost`として消費すれば同じバケット機構に載る見込み。`concurrent`はセマフォ的な別機構が要る。実Providerを繋いで`tpm`超過を実際に踏むまで、正しい設計が決まらない | tpm: 1〜2日 / concurrent: 3〜5日（別機構） |
+| **F13** | PromptTemplate未配線（FR-PMT-004、ADR-0031の決定3） | `CanonicalRequest`にテンプレート参照フィールドが無く、`RenderingStage`はパススルー。テンプレートをリクエスト単位で指定するのかPolicy側で解決するのかが未決（ADR-0031の「未決定のまま残る事項」）。**設計判断が先** | 2〜3日（設計確定後） |
+| **NFR-PRF-002 p99** | 初回チャンク付加遅延 p99 49.853ms（目標30ms） | **原因は未特定。** p50 5.2ms / p90 12.5ms に対しp99だけが跳ねており、GCかスレッドスケジューリングの可能性が高いが**確認していない**。同一JVMにクライアントが同居する計測構成の影響も切り分けられていない。要件文に分位点の指定が無く、p50/p90基準なら満たす。分離環境での再計測（3.6.1）と同時に切り分けるのが効率的 | 切り分け0.5日＋対処は原因次第 |
+
+### 8.3 Gateway運用開始前でよいもの
+
+| # | 項目 | 判定理由 | 概算 |
+|---|---|---|---|
+| **F6** | GatewayがIn-Memory既定（NFR-AVL-003 / NFR-EXT-005） | **埋込利用（prompt-engine）には影響しない**——ホストが`ApapRepositories`を差し替えるため。Gatewayを常駐プロセスとして本番運用する段階で必須になる。複数Podでの水平スケールもここに依存する | 1〜2日（設定駆動化とJDBC/Redis配線、起動時の疎通確認） |
+| **F8** | Admin公開口の欠落（rotation / Canary比率 / analytics / plugins scan / quotas / cache invalidate） | 26エンドポイントが`EndpointCatalog`で理由付きNOT_IMPLEMENTED。**黙って501ではない**ため、利用側は何が無いか分かる。必要になった機能から個別に足せる。ただしCredential Rotation（FR-SEC-002）は運用上いずれ必須 | 各0.5〜1日 × 必要な数（rotationを最優先） |
+
+### 8.4 対応時期を割り当てていないもの
+
+| # | 項目 | 状況 |
+|---|---|---|
+| NFR-PRF-003 | **判定不能**。分離環境での再計測が前提（3.6.1）。ロック競合のCAS化はADR-0036で「単独では採らない」と決定 |
+| NFR-PRF-004 / 005 | 未計測。004（Cache Hit p99）は計測経路の追加のみ。005（同時Streaming 10,000接続）は単一マシンでは検証できない |
