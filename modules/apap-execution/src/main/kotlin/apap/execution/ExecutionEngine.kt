@@ -471,7 +471,19 @@ class DefaultExecutionEngine(
      */
     private fun recordUserTurn(request: CanonicalRequest) {
         val conversationId = request.conversationId ?: return
-        persistTurn(conversationId, request.tenantId, TurnRole.USER, request.input, modelUsed = null, usage = null)
+        // 今回のターンの**USER発話だけ**を記録する。`request.input`はmessagesを平坦化したもので
+        // System Promptや利用側が付けた過去のassistant発話まで含む（Gatewayの`toApapRequest`参照）。
+        // それを丸ごとUSER turnとして書くと、次のターンで履歴として読み戻したときに
+        // 「ユーザがシステムプロンプトを喋った」ことになり、roleを保ったまま渡す意味が失われる
+        // （ADR-0031 / P14のリクエスト忠実性検査で検出）。
+        val content =
+            if (request.messages.isEmpty()) {
+                request.input
+            } else {
+                request.messages.filter { it.role == TurnRole.USER }.flatMap { it.content }
+            }
+        if (content.isEmpty()) return
+        persistTurn(conversationId, request.tenantId, TurnRole.USER, content, modelUsed = null, usage = null)
     }
 
     /**
