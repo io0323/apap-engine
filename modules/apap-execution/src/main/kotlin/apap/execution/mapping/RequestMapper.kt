@@ -30,11 +30,15 @@ object RequestMapper {
             input = prompt.input,
             params = mapParams(req.params),
             tools = req.tools?.map(::mapTool),
+            toolResults = req.toolResults.map(::mapToolResult),
             outputSchema = req.outputSchema,
             timeout = timeout,
             traceHeaders = mapOf(TRACE_HEADER to req.traceId),
             authContext = authContext,
         )
+
+    private fun mapToolResult(result: apap.domain.model.execution.ToolResult) =
+        apap.adapter.spi.ToolResult(callId = result.callId, content = result.content, isError = result.isError)
 
     /**
      * ADR-0011 決定5: 是正時のプロンプトにSchema違反の具体的内容を追記する

@@ -2,6 +2,7 @@ package apap.api
 
 import apap.domain.model.execution.GenerationParams
 import apap.domain.model.execution.ToolDefinition
+import apap.domain.model.execution.ToolResult
 import apap.domain.model.vo.CapabilityId
 import apap.domain.model.vo.ContentPart
 import apap.domain.model.vo.ConversationId
@@ -31,6 +32,11 @@ data class ApapRequest(
     val modelAlias: String? = null,
     val params: GenerationParams = GenerationParams(),
     val tools: List<ToolDefinition>? = null,
+    /**
+     * 直前の応答で返った`toolCalls`に対する実行結果（05_シーケンス設計.md 5.4後半）。
+     * Toolの実行自体は利用側の責務で、APAPは結果をProviderへ中継するだけ。
+     */
+    val toolResults: List<ToolResult> = emptyList(),
     val outputSchema: String? = null,
     val conversationId: ConversationId? = null,
     val sessionId: SessionId? = null,
