@@ -17,6 +17,7 @@ import apap.domain.model.vo.NormalizedError
 import apap.domain.port.Clock
 import apap.domain.port.DomainEventPublisher
 import apap.domain.port.IdGenerator
+import apap.domain.port.MetricsRecorder
 import apap.domain.port.ModelRepository
 import apap.domain.port.ProviderRepository
 import apap.domain.service.routing.Candidate
@@ -37,6 +38,7 @@ import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.context.Context
 import kotlinx.coroutines.delay
 import java.time.Duration
+import java.time.Instant
 
 /**
  * 03_基本設計.md 3.3.5 `AttemptExecutor`: 1候補への試行（Retry内包）。
@@ -62,6 +64,13 @@ class AttemptExecutor(
     private val retryStrategy: RetryStrategy = ExponentialBackoffJitterStrategy(retryConfig),
     private val rateLimiterMaxWait: Duration = Duration.ofSeconds(RATE_LIMITER_MAX_WAIT_SECONDS),
     private val tracer: Tracer = OpenTelemetry.noop().getTracer(TRACER_NAME),
+    /**
+     * `apap_overhead_duration_seconds{phase="dispatch"}`（ADR-0034）。
+     * CB取得・レート制限・Provider/Model解決・RequestMapperまでの**Adapter送信前の**時間を記録する。
+     * Adapter呼び出しそのものはAPAPの付加分ではないため記録しない——ここを含めてしまうと
+     * NFR-PRF-001（Gateway受信〜Adapter送信）の区間を超える。
+     */
+    private val metricsRecorder: MetricsRecorder? = null,
 ) {
     @Suppress("NestedBlockDepth", "ReturnCount", "LongParameterList")
     suspend fun execute(
@@ -169,6 +178,7 @@ class AttemptExecutor(
         ctx: ExecutionContext,
         remainingBudget: Duration,
     ): AttemptOutcome {
+        val attemptStartedAt = clock.now()
         val permit =
             try {
                 circuitBreaker.tryAcquire(cbKey, ctx.traceId)
@@ -205,6 +215,9 @@ class AttemptExecutor(
         val authContext = adapter.authenticate()
         val adapterRequest = RequestMapper.map(prompt, req, model.modelName, authContext, remainingBudget)
 
+        // ここまでがAdapter送信前の付加分。次行のadapter.executeはProviderの時間なので含めない。
+        recordDispatchOverhead(attemptStartedAt)
+
         return try {
             val response = adapter.execute(adapterRequest)
             circuitBreaker.recordSuccess(permit, ctx.traceId)
@@ -214,6 +227,13 @@ class AttemptExecutor(
             circuitBreaker.recordFailure(permit, error.cbRecordable, ctx.traceId)
             AttemptOutcome.Failed(error, e.retryAfter)
         }
+    }
+
+    /** `dispatch` phase: attempt開始からAdapter送信直前まで（ADR-0034）。 */
+    private fun recordDispatchOverhead(startedAt: Instant) {
+        val recorder = metricsRecorder ?: return
+        val elapsed = Duration.between(startedAt, clock.now())
+        recorder.recordOverheadDuration(DISPATCH_PHASE, elapsed.toNanos() / NANOS_PER_SECOND)
     }
 
     private fun publishRetryExecuted(
@@ -289,6 +309,10 @@ class AttemptExecutor(
     private companion object {
         const val RATE_LIMITER_MAX_WAIT_SECONDS = 5L
         const val TRACER_NAME = "apap-execution"
+
+        /** 2.19 `apap_overhead_duration_seconds` の phase ラベル（ADR-0034）。 */
+        const val DISPATCH_PHASE = "dispatch"
+        const val NANOS_PER_SECOND = 1_000_000_000.0
         val ATTR_PROVIDER: AttributeKey<String> = AttributeKey.stringKey("provider")
         val ATTR_MODEL: AttributeKey<String> = AttributeKey.stringKey("model")
         val ATTR_ATTEMPT: AttributeKey<Long> = AttributeKey.longKey("attempt")

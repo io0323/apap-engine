@@ -13,6 +13,7 @@ import apap.gateway.dto.EmbeddingRequestDto
 import apap.gateway.dto.toApapRequest
 import apap.gateway.dto.toChatResponseDto
 import apap.gateway.error.toProblemDetails
+import apap.gateway.finishGatewayPhase
 import apap.gateway.notImplemented
 import apap.gateway.sse.HEARTBEAT_EVENT
 import apap.gateway.sse.SseEvent
@@ -69,6 +70,8 @@ fun Route.executionRoutes(
                     requestId = call.requestId(),
                     idempotencyKey = call.request.header(IDEMPOTENCY_KEY_HEADER),
                 )
+            // ここまでがGateway層の付加分（NFR-PRF-001の区間の前半、ADR-0034）。
+            call.finishGatewayPhase(engine.metrics)
             if (body.stream) {
                 call.respondSse(engine.executeStream(request), request.requestId.orEmpty(), config)
             } else {
@@ -90,6 +93,7 @@ fun Route.executionRoutes(
                 requestId = call.requestId(),
                 idempotencyKey = call.request.header(IDEMPOTENCY_KEY_HEADER),
             )
+        call.finishGatewayPhase(engine.metrics)
         call.response.header(REQUEST_ID_HEADER, request.requestId.orEmpty())
         call.respond(engine.execute(request).toChatResponseDto(body.modelAlias))
     }
