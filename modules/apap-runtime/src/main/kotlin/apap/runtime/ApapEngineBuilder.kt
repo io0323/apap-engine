@@ -2,6 +2,7 @@ package apap.runtime
 
 import apap.cache.CacheStore
 import apap.cache.InMemoryCacheStore
+import apap.cache.ratelimit.RateLimiterConfig
 import apap.context.CompactionStrategy
 import apap.context.TruncateOldestCompactionStrategy
 import apap.domain.model.execution.CanonicalResponse
@@ -18,7 +19,6 @@ import apap.infrastructure.eventbus.SynchronousEventBus
 import apap.infrastructure.secret.EnvVarSecretStore
 import apap.infrastructure.secret.SecretStoreAccessor
 import apap.observability.health.HealthCheckService
-import apap.observability.metrics.MetricsEngine
 import apap.observability.metrics.OpenTelemetryMetricsRecorder
 import apap.plugin.PluginManager
 import apap.plugin.PluginSignatureVerifier
@@ -68,6 +68,7 @@ class ApapEngineBuilder(
     private var loadBalancer: LoadBalancer = WeightedRoundRobinLoadBalancer(),
     private var retryStrategy: RetryStrategy? = null,
     private var compactionStrategy: CompactionStrategy = TruncateOldestCompactionStrategy(),
+    private var rateLimiterConfig: RateLimiterConfig = RateLimiterConfig(),
     private var clock: Clock = SystemClock(),
     private var idGenerator: IdGenerator = UlidIdGenerator(),
     /**
@@ -159,6 +160,27 @@ class ApapEngineBuilder(
 
     fun compactionStrategy(strategy: CompactionStrategy) = apply { compactionStrategy = strategy }
 
+    /**
+     * Rate Limiterの既定トークンバケット設定（FR-EXE-003）。
+     *
+     * 既定は容量60・毎秒1トークン補充で、**バースト60件のあとは毎秒1リクエスト**に絞られる。
+     * `RateLimiter.configure(scope, ...)`は本番配線から呼ばれておらず、登録済みProviderの
+     * `rateLimits`（rpm/tpm/concurrent）はレート制限へ一切反映されない（P11-F10）。
+     * そのため現状はこの既定値がすべてのスコープに適用される。スループットを要する構成では
+     * 埋込ホストがここで明示的に上書きすること。
+     *
+     * 引数を`RateLimiterConfig`型ではなくプリミティブにしているのは、`apap-cache`が
+     * `implementation`スコープで埋込ホストから見えないため（`HostCompileClasspathTest`が
+     * その分離を検証している）。設定値だけを受け取り、内部で組み立てる。
+     *
+     * @param capacity バケット容量（＝瞬間的に許容するバースト件数）
+     * @param refillPerSecond 毎秒のトークン補充数（＝定常状態の許容レート）
+     */
+    fun rateLimits(
+        capacity: Int,
+        refillPerSecond: Double,
+    ) = apply { this.rateLimiterConfig = RateLimiterConfig(capacity, refillPerSecond) }
+
     fun clock(clock: Clock) = apply { this.clock = clock }
 
     fun idGenerator(idGenerator: IdGenerator) = apply { this.idGenerator = idGenerator }
@@ -196,8 +218,13 @@ class ApapEngineBuilder(
                 loadBalancer = loadBalancer,
                 compactionStrategy = compactionStrategy,
                 cacheStore = effectiveCacheStore,
+                rateLimiterConfig = rateLimiterConfig,
             )
-        MetricsEngine(eventBus.subscriber, metricsRecorder, repositories.providerRepository)
+        // MetricsEngineはExecutionEngineComposer.build()の中で構築・購読される。
+        // ここでも構築すると同じEvent Busへ2つのMetricsEngineが購読し、
+        // IdempotentEventHandlerの重複排除は**インスタンスごと**なので
+        // 全イベントが2回処理される（＝イベント起因のメトリクスが2倍になる）。
+        // ExecutionEngineComposerTestが二重購読の再発を検出する。
 
         val providerManager =
             ProviderManager(
