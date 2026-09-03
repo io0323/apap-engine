@@ -33,3 +33,19 @@ data class ToolCall(
 data class ProviderToolFormat(
     val payload: Any,
 )
+
+/**
+ * 05_シーケンス設計.md 5.4後半: Agentが実行したToolの結果をProviderへ返すための入力。
+ * [ToolCall]と同じく、SPIの公開面はドメイン型をそのまま晒さず、この層の型として定義する
+ * （変換は`apap.execution.mapping.RequestMapper`が行う）。
+ */
+data class ToolResult(
+    val callId: String,
+    val content: String,
+    /** Tool実行が失敗したことをProviderへ伝える。Provider固有の表現へはAdapterが変換する。 */
+    val isError: Boolean = false,
+) {
+    init {
+        require(callId.isNotBlank()) { "ToolResult.callId must not be blank" }
+    }
+}

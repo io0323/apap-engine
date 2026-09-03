@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  テスト実行時のログ設定。CredentialLeakageTestはSLF4Jのバインディングを必要とする
+  （バインディング不在だとログは破棄され「漏れていない」と誤判定するため）。
+  コンソールへは WARN 以上のみ出す。検査自体は ListAppender をプログラム的に
+  取り付けて行うので、ここでの出力レベルとは独立している。
+-->
+<configuration>
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+    <root level="WARN">
+        <appender-ref ref="STDOUT"/>
+    </root>
+</configuration>

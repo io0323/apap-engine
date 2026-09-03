@@ -1,6 +1,7 @@
 package apap.gateway
 
 import apap.domain.port.IdGenerator
+import apap.domain.port.MetricsRecorder
 import apap.gateway.auth.TokenVerifier
 import apap.gateway.auth.VerifiedCaller
 import apap.gateway.config.GatewayConfig
@@ -72,7 +73,13 @@ fun Application.apapGateway(
     // 長く続く応答も「送り終わるまで実行中」と正しく数えられる。
     install(
         createApplicationPlugin(name = "InFlightTracking") {
-            on(CallSetup) { call -> if (call.isTracked()) lifecycle.requestStarted() }
+            on(CallSetup) { call ->
+                if (call.isTracked()) lifecycle.requestStarted()
+                // NFR-PRF-001の計測区間「Gateway受信〜Adapter送信」の**始点**。
+                // CallSetupはKtorのパイプライン最初のフェーズで、認証・JSON解析・DTO変換より前に走る
+                // （ADR-0034）。終点はエンジン呼び出し直前で、finishGatewayPhaseが記録する。
+                call.attributes.put(RECEIVED_AT_NANOS, System.nanoTime())
+            }
             on(ResponseSent) { call -> if (call.isTracked()) lifecycle.requestFinished() }
         },
     )
@@ -179,6 +186,25 @@ private fun ApplicationCall.isTracked(): Boolean {
     val path = request.path()
     return path.startsWith("/v1") || path.startsWith("/admin")
 }
+
+/** [RECEIVED_AT_NANOS]: リクエスト受信時刻（`System.nanoTime()`）。`gateway` phaseの起点。 */
+val RECEIVED_AT_NANOS: AttributeKey<Long> = AttributeKey("apap.gateway.receivedAtNanos")
+
+/**
+ * `apap_overhead_duration_seconds{phase="gateway"}` を記録する（2.19 / ADR-0034）。
+ *
+ * 受信からエンジン呼び出し直前までのGateway層の処理——Bearer検証・JSON解析・
+ * Idempotency判定・DTO変換——がここに含まれる。この区間はエンジン内部の計測点では
+ * 覆えないため、HTTP層が自分で記録する必要がある。計測はビジネスロジックではなく
+ * 横断的関心事であり、「Gatewayにビジネスロジックを置かない」制約には抵触しない。
+ */
+fun ApplicationCall.finishGatewayPhase(metrics: MetricsRecorder) {
+    val startedAt = attributes.getOrNull(RECEIVED_AT_NANOS) ?: return
+    metrics.recordOverheadDuration(GATEWAY_PHASE, (System.nanoTime() - startedAt) / NANOS_PER_SECOND)
+}
+
+const val GATEWAY_PHASE = "gateway"
+private const val NANOS_PER_SECOND = 1_000_000_000.0
 
 private const val BEARER_PREFIX = "Bearer "
 private const val TOO_MANY_REQUESTS = 429

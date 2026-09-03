@@ -3,6 +3,7 @@ package apap.gateway
 import apap.adapter.mock.MockAdapterConfig
 import apap.adapter.mock.MockProviderAdapter
 import apap.adapter.spi.AdapterConfig
+import apap.adapter.spi.ProviderAdapter
 import apap.adapter.spi.SecretAccessor
 import apap.adapter.spi.SecretValue
 import apap.adapter.spi.plugin.PluginManifest
@@ -23,6 +24,7 @@ import apap.domain.model.vo.Region
 import apap.domain.model.vo.RegionCodeTable
 import apap.domain.model.vo.SemVer
 import apap.domain.model.vo.TenantId
+import apap.domain.port.MetricsRecorder
 import apap.gateway.auth.TokenVerificationException
 import apap.gateway.auth.TokenVerifier
 import apap.gateway.auth.VerifiedCaller
@@ -60,6 +62,15 @@ class FakeTokenVerifier(
     }
 }
 
+/**
+ * テストのRate Limiter既定値。出荷時の`RateLimiterConfig()`と同じ（容量60・毎秒1補充）。
+ * これを上げないと、バースト60件のあとは毎秒1リクエストに絞られる（P11-F10）。
+ */
+const val DEFAULT_PROVIDER_RPM = 600
+
+const val DEFAULT_RATE_LIMIT_CAPACITY = 60
+const val DEFAULT_RATE_LIMIT_REFILL_PER_SECOND = 1.0
+
 const val VALID_TOKEN = "valid-token"
 const val VALID_ADMIN_TOKEN = "valid-admin-token"
 val TEST_TENANT = TenantId("01ARZ3NDEKTSV4RRFFQ69G5FD0")
@@ -95,6 +106,28 @@ fun testMetricsRenderer(): Pair<OpenMetricsRenderer, SdkMeterProvider> {
 /** adapter-mockだけで動くエンジン（依存ゼロ構成、apap-runtimeのApapEngineBuilderTestと同じ考え方）。 */
 class TestEngineFixture(
     adapterConfig: MockAdapterConfig = MockAdapterConfig(supportedCapabilities = setOf(CapabilityId("chat"))),
+    /**
+     * Adapterへ渡すCredential解決口。既定はダミー値。`CredentialLeakageTest`は
+     * ここへ見張り文字列（sentinel）を流し込み、出口に現れないことを検証する。
+     */
+    private val secretAccessor: SecretAccessor =
+        object : SecretAccessor {
+            override fun resolve(ref: CredentialRef): SecretValue = SecretValue("secret".toCharArray())
+        },
+    /**
+     * Adapterを包む任意のデコレータ。`PerformanceBenchmark`が`execute`到達時刻の採取に使う。
+     * 既定は素通し。
+     */
+    adapterDecorator: (ProviderAdapter) -> ProviderAdapter = { it },
+    /**
+     * Rate Limiterの既定は容量60・毎秒1トークン補充のため、バースト60件のあとは毎秒1件に絞られる。
+     * 付加レイテンシやスループットを測る`PerformanceBenchmark`ではここを上げないと
+     * 「レート制限の待ち時間」を測ることになる（P11で実際にそうなった）。
+     */
+    rateLimitCapacity: Int = DEFAULT_RATE_LIMIT_CAPACITY,
+    rateLimitRefillPerSecond: Double = DEFAULT_RATE_LIMIT_REFILL_PER_SECOND,
+    /** 記録内容を直接検証したいテスト（`OverheadPhaseCoverageTest`）が差し替える。 */
+    metricsRecorder: MetricsRecorder? = null,
 ) {
     val repositories = ApapRepositories()
 
@@ -105,11 +138,13 @@ class TestEngineFixture(
     val adapterEntered = CountDownLatch(1)
 
     private val region = Region.of("jp-east", RegionCodeTable(setOf("jp-east")))
-    private val adapter = SignallingAdapter(MockProviderAdapter(adapterConfig), adapterEntered)
+    private val adapter = adapterDecorator(SignallingAdapter(MockProviderAdapter(adapterConfig), adapterEntered))
 
     val engine: ApapEngine =
         ApapEngineBuilder(repositories = repositories)
             .adapterRegistry(registry(adapterConfig.supportedCapabilities))
+            .rateLimits(rateLimitCapacity, rateLimitRefillPerSecond)
+            .apply { metricsRecorder?.let { metricsRecorder(it) } }
             .build()
 
     init {
@@ -120,9 +155,7 @@ class TestEngineFixture(
                 RateLimits(600, 100_000, 10),
                 setOf(region),
             ),
-            object : SecretAccessor {
-                override fun resolve(ref: CredentialRef): SecretValue = SecretValue("secret".toCharArray())
-            },
+            secretAccessor,
         )
     }
 
@@ -145,8 +178,16 @@ class TestEngineFixture(
             }
         }
 
-    /** Provider/ModelをACTIVEにし、単価も登録する（ADR-0021: 単価未登録Modelは候補から除外される）。 */
-    suspend fun registerActiveModel(capabilityId: CapabilityId) {
+    /**
+     * Provider/ModelをACTIVEにし、単価も登録する（ADR-0021: 単価未登録Modelは候補から除外される）。
+     *
+     * @param rpm Providerのレート上限。P12でこの値が実際にRateLimiterへ反映されるようになったため、
+     * 性能計測ではレート制限が測定対象を覆い隠さないよう高い値を渡すこと。
+     */
+    suspend fun registerActiveModel(
+        capabilityId: CapabilityId,
+        rpm: Int = DEFAULT_PROVIDER_RPM,
+    ) {
         val provider =
             engine.admin.providers.register(
                 RegisterProviderCommand(
@@ -156,7 +197,7 @@ class TestEngineFixture(
                     endpoints = listOf(Endpoint("ep1", region, "https://example.internal", 100)),
                     authType = "api_key",
                     credentialRefs = listOf(CredentialRef("secret-ref", 1, CredentialState.STANDBY)),
-                    rateLimits = RateLimits(600, 100_000, 10),
+                    rateLimits = RateLimits(rpm, 100_000, 10),
                     priority = 50,
                     regions = setOf(region),
                 ),

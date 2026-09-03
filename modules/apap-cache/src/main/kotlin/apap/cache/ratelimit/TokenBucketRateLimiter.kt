@@ -16,15 +16,28 @@ import kotlin.math.ceil
 import kotlin.math.min
 
 /**
- * CLAUDE.md不変条件7に従い設定可能。未[RateLimiter.configure]のスコープに適用する既定バケット。
+ * [RateLimiter.configure]で明示設定されていないスコープに適用する既定バケット。
+ * CLAUDE.md不変条件7に従い設定可能。
+ *
  * [defaultMaxWait]は呼び出し側が[RateLimiter.acquire]の`maxWait`に迷った際の参考値
  * （呼び出し側は本来「残タイムアウト予算とこの値の小さいほう」を渡すべきだが、その計算をしない
  * 呼び出し元向けの妥当な既定値として提供する）。[apap.execution.retry.RetryConfig.backoffCapMs]
  * と同じ桁（数秒）に揃える。
+ *
+ * **既定は「実質無制限」にする。** 以前の既定（容量60・毎秒1補充）は、Providerの`rateLimits`が
+ * リミッタへ反映されていなかったこと（P11-F10）と相まって、全リクエストを**毎秒1件**に
+ * 絞っていた。出荷時スループットが 4.7 req/s だった直接の原因である。
+ *
+ * 絞るべき対象はProviderの実際の制限であり、それは`Provider.rateLimits`から
+ * `ProviderRateLimitConfigurer`が設定する。テナント別制限（FR-EXE-003）は
+ * **ドメインに設定元が無い**——設計書はProviderの`rate_limits{rpm,tpm,concurrent}`は
+ * 定義するが、テナント側の値をどこに持つかを定めていない（ADR-0035）。
+ * 設定元が無いまま既定値で絞ると、意図しない全体スロットルになり、
+ * しかも「レート制限が効いている」と誤認させる。設定元ができるまでは絞らない。
  */
 data class RateLimiterConfig(
-    val defaultCapacity: Int = 60,
-    val defaultRefillPerSecond: Double = 1.0,
+    val defaultCapacity: Int = DEFAULT_CAPACITY,
+    val defaultRefillPerSecond: Double = DEFAULT_REFILL_PER_SECOND,
     val defaultMaxWait: Duration = Duration.ofSeconds(DEFAULT_MAX_WAIT_SECONDS),
 ) {
     init {
@@ -35,6 +48,10 @@ data class RateLimiterConfig(
 
     private companion object {
         const val DEFAULT_MAX_WAIT_SECONDS = 5L
+
+        /** 未設定スコープを絞らないための値（実質無制限）。 */
+        const val DEFAULT_CAPACITY = 100_000
+        const val DEFAULT_REFILL_PER_SECOND = 100_000.0
     }
 }
 

@@ -56,6 +56,11 @@ data class CanonicalRequest(
     val input: List<ContentPart>,
     val params: GenerationParams = GenerationParams(),
     val tools: List<ToolDefinition>? = null,
+    /**
+     * 直前の応答で返した[ToolCall]に対する実行結果（5.4後半）。
+     * Tool自体の実行はAPAPの対象外で、実行するのは利用側（Agent）。
+     */
+    val toolResults: List<ToolResult> = emptyList(),
     val outputSchema: String? = null,
     val constraints: RoutingConstraints = RoutingConstraints(),
     val preferences: RoutingPreferences = RoutingPreferences(),

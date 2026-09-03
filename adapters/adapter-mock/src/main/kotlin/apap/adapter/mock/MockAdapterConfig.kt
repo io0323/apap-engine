@@ -6,6 +6,7 @@ import apap.adapter.spi.CapabilityId
 import apap.adapter.spi.HealthResult
 import apap.adapter.spi.ProviderHealthStatus
 import apap.adapter.spi.TokenCount
+import apap.adapter.spi.ToolCall
 import apap.adapter.spi.Usage
 import java.time.Duration
 
@@ -43,6 +44,12 @@ data class MockAdapterConfig(
     /** [MockProviderAdapter.execute]に追加する遅延（ミリ秒）。`AdapterRequest.timeout`超過の再現に使う。 */
     val extraDelayMillis: Long = 0,
     val scriptedOutcomes: List<ScriptedOutcome> = emptyList(),
+    /**
+     * `execute`が`finishReason=TOOL_CALL`とともに返すToolCall（05_シーケンス設計.md 5.4前半）。
+     * **`AdapterRequest.toolResults`が空のときだけ**返す。結果が返ってきた2回目の呼出では
+     * 通常の完了応答にする——これが5.4の往復そのもの。
+     */
+    val toolCallsOnFirstTurn: List<ToolCall> = emptyList(),
 ) {
     init {
         require(!latency.isNegative) { "latency must not be negative: $latency" }

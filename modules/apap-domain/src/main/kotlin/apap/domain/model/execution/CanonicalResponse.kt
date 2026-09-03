@@ -9,6 +9,24 @@ import apap.domain.model.vo.RequestId
 import apap.domain.model.vo.Usage
 
 /**
+ * 05_シーケンス設計.md 5.4 Tool Calling の後半——Agentが実行したToolの結果をAPAPへ返す往路。
+ *
+ * P11時点ではこの型がリポジトリのどこにも存在せず、`tool_calls`を受け取ることはできても
+ * **結果を返せなかった**（往復が成立しない、P11-F7）。[callId]は先行する
+ * [ToolCall.callId]と対応し、Provider側で呼出と結果を紐づけるために使う。
+ */
+data class ToolResult(
+    val callId: String,
+    val content: String,
+    /** Tool実行が失敗したことをProviderへ伝える。Provider側の表現へはAdapterが変換する。 */
+    val isError: Boolean = false,
+) {
+    init {
+        require(callId.isNotBlank()) { "ToolResult.callId must not be blank" }
+    }
+}
+
+/**
  * 03_基本設計.md 3.3.1 ToolCall（Provider応答からの正規化後）。[CanonicalResponse.toolCalls] /
  * [StreamChunk.toolCallDelta] 専用。
  */

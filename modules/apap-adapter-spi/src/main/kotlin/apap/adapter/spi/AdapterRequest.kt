@@ -19,6 +19,11 @@ data class AdapterRequest(
     val input: List<ContentPart>,
     val params: GenerationParams = GenerationParams(),
     val tools: List<ToolDefinition>? = null,
+    /**
+     * Tool実行結果（5.4後半）。既定は空なので、既存Adapterはこのフィールドを無視しても
+     * コンパイル・動作とも影響を受けない（ADR-0016: 省略可能フィールドの追加はマイナー更新）。
+     */
+    val toolResults: List<ToolResult> = emptyList(),
     val outputSchema: String? = null,
     val timeout: Duration,
     val traceHeaders: Map<String, String> = emptyMap(),

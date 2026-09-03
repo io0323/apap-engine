@@ -41,6 +41,9 @@ class TestMethodReturnTypeTest {
     @Test
     fun `every @Test function has a block body or an explicit Unit return type`() {
         val repoRoot = findRepoRoot(File(".").canonicalFile)
+        // 走査ルートが全モジュールを覆っているか。integrationの漏れを許したのがこの検査であり、
+        // 同じ漏れを二度と沈黙させないための機械検証（ModuleScanCoverageのKDoc参照）。
+        ModuleScanCoverage.assertScanCoversAllModules("TestMethodReturnTypeTest", repoRoot, scannedRoots)
         val testSources =
             scannedRoots
                 .map { File(repoRoot, it) }

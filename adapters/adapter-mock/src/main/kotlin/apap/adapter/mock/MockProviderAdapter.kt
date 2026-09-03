@@ -90,11 +90,21 @@ class MockProviderAdapter(
         return try {
             withTimeout(request.timeout.toMillis()) {
                 simulateLatencyAndFailure()
-                AdapterResponse(
-                    output = listOf(TextContentPart("mock response for ${request.capabilityId.value}")),
-                    finishReason = FinishReason.COMPLETED,
-                    usage = config.usage,
-                )
+                // 5.4 Tool Calling: 1回目はToolCall指示を返し、tool_resultsが付いた2回目で完了する。
+                if (config.toolCallsOnFirstTurn.isNotEmpty() && request.toolResults.isEmpty()) {
+                    AdapterResponse(
+                        output = emptyList(),
+                        finishReason = FinishReason.TOOL_CALL,
+                        usage = config.usage,
+                        toolCalls = config.toolCallsOnFirstTurn,
+                    )
+                } else {
+                    AdapterResponse(
+                        output = listOf(TextContentPart(mockText(request))),
+                        finishReason = FinishReason.COMPLETED,
+                        usage = config.usage,
+                    )
+                }
             }
         } catch (e: TimeoutCancellationException) {
             throw AdapterException(
@@ -114,6 +124,14 @@ class MockProviderAdapter(
         val chunks = config.streamChunks.ifEmpty { defaultStreamChunks() }
         return MockAdapterStream(chunks, config.latency.toMillis())
     }
+
+    /** tool結果を受け取った2回目であることが応答から分かるようにする（往復の検証用）。 */
+    private fun mockText(request: AdapterRequest): String =
+        if (request.toolResults.isEmpty()) {
+            "mock response for ${request.capabilityId.value}"
+        } else {
+            "mock response after tools: " + request.toolResults.joinToString(",") { it.content }
+        }
 
     override fun translateTools(tools: List<ToolDefinition>): ProviderToolFormat =
         ProviderToolFormat(

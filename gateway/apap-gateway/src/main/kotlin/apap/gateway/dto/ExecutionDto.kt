@@ -4,6 +4,7 @@ import apap.api.ApapRequest
 import apap.api.ApapResponse
 import apap.domain.model.execution.GenerationParams
 import apap.domain.model.execution.ToolDefinition
+import apap.domain.model.execution.ToolResult
 import apap.domain.model.vo.CapabilityId
 import apap.domain.model.vo.ContentPart
 import apap.domain.model.vo.ConversationId
@@ -24,6 +25,11 @@ data class ChatRequestDto(
     val modelAlias: String? = null,
     val params: ParamsDto? = null,
     val tools: List<ToolDto>? = null,
+    /**
+     * 05_シーケンス設計.md 5.4後半: Agentが実行したToolの結果。
+     * これを受け付けないと`tool_calls`を返しても往復が閉じない（P11-F7）。
+     */
+    val toolResults: List<ToolResultDto>? = null,
     val outputSchema: String? = null,
     val stream: Boolean = false,
     val conversationId: String? = null,
@@ -71,6 +77,15 @@ data class ToolDto(
     val description: String,
     val inputSchema: String,
 )
+
+/** 13.2のリクエストに載せるTool実行結果。`callId`は直前の応答の`tool_calls[].id`と対応する。 */
+data class ToolResultDto(
+    val callId: String,
+    val content: String,
+    val isError: Boolean = false,
+) {
+    fun toToolResult() = ToolResult(callId = callId, content = content, isError = isError)
+}
 
 /** 13.3「200 OK（Chat）」。 */
 data class ChatResponseDto(
@@ -144,6 +159,7 @@ fun ChatRequestDto.toApapRequest(
         modelAlias = modelAlias,
         params = params?.toGenerationParams() ?: GenerationParams(),
         tools = tools?.map { it.toToolDefinition() },
+        toolResults = toolResults?.map { it.toToolResult() }.orEmpty(),
         outputSchema = outputSchema,
         conversationId = conversationId?.let { ConversationId(it) },
         sessionId = sessionId?.let { SessionId(it) },

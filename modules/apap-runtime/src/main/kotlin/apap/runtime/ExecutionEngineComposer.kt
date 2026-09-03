@@ -221,6 +221,12 @@ class ExecutionEngineComposer(
             )
         val quotaManager: QuotaManager = DefaultQuotaManager(idGenerator, clock, eventPublisher, quotaManagerConfig)
 
+        // FR-EXE-003 / P11-F10: 登録済みProviderのrateLimitsをバケット設定へ反映する。
+        // これが無いと`RateLimiterConfig`の既定（毎秒1トークン）が全Providerに適用される。
+        val rateLimitConfigurer = ProviderRateLimitConfigurer(rateLimiter)
+        rateLimitConfigurer.applyExisting(providerRepository)
+        eventSubscriber.subscribe(rateLimitConfigurer::onEvent)
+
         val promptEngine: PromptEngine = DefaultPromptEngine()
         val conversationManager = ConversationManager(conversationRepository, clock, idGenerator, eventPublisher)
         val memoryManager = MemoryManager(memoryRepository, clock, idGenerator, eventPublisher)
@@ -278,6 +284,7 @@ class ExecutionEngineComposer(
                 retryConfig,
                 retryStrategy,
                 tracer = tracer,
+                metricsRecorder = metricsRecorder,
             )
         val fallbackEngine =
             FallbackEngine(

@@ -275,7 +275,7 @@ class DefaultExecutionEngine(
         val startedAt = clock.now()
 
         val result =
-            phases.time("execution", rootSpan) { executionSpan ->
+            phases.time("execution", rootSpan, recordOverhead = false) { executionSpan ->
                 fallbackEngine.executeWithChain(decision.chain, contextualPrompt, request, ctx, executionSpan)
             }
 
@@ -591,9 +591,15 @@ private class PhaseTimings(
     private val metricsRecorder: MetricsRecorder,
 ) {
     @Suppress("TooGenericExceptionCaught")
+    /**
+     * @param recordOverhead `apap_overhead_duration_seconds`へ記録するかどうか。
+     * Provider呼び出しを内包する区間（`execution`）は**APAPの付加分ではない**ため`false`にする。
+     * Spanは常に作る（トレース上は実行区間として見えてほしいため）。ADR-0034参照。
+     */
     suspend fun <T> time(
         phase: String,
         parentSpan: Span,
+        recordOverhead: Boolean = true,
         block: suspend (Span) -> T,
     ): T {
         val span = tracer.spanBuilder(phase).setParent(Context.root().with(parentSpan)).startSpan()
@@ -608,7 +614,7 @@ private class PhaseTimings(
             span.setStatus(StatusCode.ERROR)
             throw e
         } finally {
-            recordDuration(phase, start)
+            if (recordOverhead) recordDuration(phase, start)
             span.end()
         }
     }
