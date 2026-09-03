@@ -6,6 +6,7 @@ import apap.adapter.spi.AdapterResponse
 import apap.adapter.spi.ProviderAdapter
 import apap.domain.model.vo.CapabilityId
 import io.ktor.client.HttpClient
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -18,6 +19,9 @@ import io.ktor.http.contentType
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.get
+import io.ktor.server.routing.routing
 import io.ktor.utils.io.readUTF8Line
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -27,6 +31,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty
 import java.net.ServerSocket
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToLong
@@ -107,25 +112,6 @@ class PerformanceBenchmark {
         }
     }
 
-    /**
-     * 出荷時の既定構成（`RateLimiterConfig()`）でのスループット。
-     *
-     * 他の計測はレート制限を外して**APAP自身の処理コスト**を測るが、この1本だけは
-     * 既定値のままで測る。`RateLimiter.configure(...)`が本番配線から呼ばれておらず
-     * Providerの`rateLimits`が反映されないため（P11-F10）、埋込ホストが
-     * `rateLimiterConfig`を上書きしない限りこれが実際に出る値だからである。
-     */
-    @Test
-    fun `NFR-PRF-003 throughput with the shipped default rate limiter config`() {
-        withGateway(
-            rateLimitCapacity = SHIPPED_DEFAULT_CAPACITY,
-            rateLimitRefillPerSecond = SHIPPED_DEFAULT_REFILL,
-        ) { port, client ->
-            val succeeded = drive(client, port, THROUGHPUT_SECONDS)
-            println("NFR-PRF-003（既定構成）: ${format(succeeded.second)} req/s (成功${succeeded.first}件)")
-        }
-    }
-
     /** 分布として出力する。単一の平均値は測定として意味を持たない。 */
     private fun report(
         label: String,
@@ -160,7 +146,7 @@ class PerformanceBenchmark {
                 rateLimitCapacity = rateLimitCapacity,
                 rateLimitRefillPerSecond = rateLimitRefillPerSecond,
             )
-        runBlocking { fixture.registerActiveModel(CapabilityId("chat")) }
+        runBlocking { fixture.registerActiveModel(CapabilityId("chat"), rpm = BENCHMARK_PROVIDER_RPM) }
         val (renderer, _) = testMetricsRenderer()
         val server =
             embeddedServer(Netty, port = port) {
@@ -180,22 +166,67 @@ class PerformanceBenchmark {
         }
     }
 
-    /** [seconds]秒間、[CONCURRENCY]並列でリクエストを流し、(成功件数, req/s) を返す。 */
+    /**
+     * NFR-PRF-003のボトルネック切り分け（P12 作業2）。
+     *
+     * 227 req/s という数値だけでは「実装が遅い」のか「計測ハーネスが飽和している」のか
+     * 区別できない。次の3つを同じクライアント・同じ並列度で測って比較する。
+     *
+     * 1. **ハーネス上限**: エンジンを通さない素のKtorルート。クライアントとloopbackの限界。
+     * 2. **並列度スケーリング**: 並列度を変えて頭打ちの有無を見る。
+     *    頭打ちなら直列化（ロック競合等）、伸びるならクライアント側の不足。
+     * 3. **サンプリング**: 負荷中のスレッド状態を採取し、BLOCKED比率と頻出フレームを出す。
+     */
+    @Test
+    fun `NFR-PRF-003 bottleneck breakdown`() {
+        // 1. ハーネス上限（エンジンなし）。
+        val port = freePort()
+        val bare = embeddedServer(Netty, port = port) { routing { get("/ping") { call.respondText("ok") } } }
+        bare.start(wait = false)
+        val client = HttpClient()
+        CONCURRENCY_LEVELS.forEach { level ->
+            val (count, rps) = drive(client, port, WARMUP_SECONDS, level) { it.ping(port) }
+            val measured = drive(client, port, THROUGHPUT_SECONDS, level) { it.ping(port) }
+            println(
+                "NFR-PRF-003 ハーネス上限（エンジンなし、並列度=$level）: ${format(measured.second)} req/s " +
+                    "(warmup ${count}件)",
+            )
+        }
+        client.close()
+        bare.stopQuietly()
+
+        // 2. エンジン経由を並列度別に。
+        withGateway { enginePort, engineClient ->
+            repeat(WARMUP_REQUESTS) { runBlocking { engineClient.chat(enginePort, stream = false) } }
+            CONCURRENCY_LEVELS.forEach { level ->
+                val sampler = ThreadSampler()
+                sampler.start()
+                val (_, rps) = drive(engineClient, enginePort, THROUGHPUT_SECONDS, level) { it.chat(enginePort, false) }
+                val profile = sampler.stop()
+                println("NFR-PRF-003 エンジン経由（並列度=$level）: ${format(rps)} req/s")
+                println("  スレッド状態: $profile")
+            }
+        }
+    }
+
+    /** [seconds]秒間、[concurrency]並列で[call]を流し、(成功件数, req/s) を返す。 */
     private fun drive(
         client: HttpClient,
         port: Int,
         seconds: Long,
+        concurrency: Int = CONCURRENCY,
+        call: suspend (HttpClient) -> HttpResponse = { it.chat(port, stream = false) },
     ): Pair<Int, Double> {
         val succeeded = AtomicInteger(0)
         val startedAt = System.nanoTime()
         val deadline = startedAt + seconds * NANOS_PER_SECOND
         runBlocking {
             coroutineScope {
-                (1..CONCURRENCY)
+                (1..concurrency)
                     .map {
                         async(Dispatchers.IO) {
                             while (System.nanoTime() < deadline) {
-                                if (client.chat(port, stream = false).status == HttpStatusCode.OK) {
+                                if (call(client).status == HttpStatusCode.OK) {
                                     succeeded.incrementAndGet()
                                 }
                             }
@@ -205,6 +236,74 @@ class PerformanceBenchmark {
         }
         val elapsed = (System.nanoTime() - startedAt).toDouble() / NANOS_PER_SECOND
         return succeeded.get() to succeeded.get() / elapsed
+    }
+
+    private suspend fun HttpClient.ping(port: Int): HttpResponse = get("http://127.0.0.1:$port/ping")
+
+    /**
+     * 負荷中のスレッド状態を定期採取する簡易サンプラ。
+     *
+     * 外部プロファイラを持ち込まずに「直列化しているか」「どこで詰まっているか」の
+     * 一次情報を得るためのもの。精度は低いが、BLOCKEDの比率と頻出フレームは
+     * ロック競合の有無を判断するには十分な信号になる。
+     */
+    private class ThreadSampler {
+        private val states = ConcurrentHashMap<String, AtomicInteger>()
+        private val frames = ConcurrentHashMap<String, AtomicInteger>()
+        private var thread: Thread? = null
+
+        @Volatile
+        private var running = false
+
+        fun start() {
+            running = true
+            thread =
+                Thread {
+                    while (running) {
+                        Thread.getAllStackTraces().forEach { (t, stack) ->
+                            if (!isOfInterest(t.name)) return@forEach
+                            states.getOrPut(t.state.name) { AtomicInteger() }.incrementAndGet()
+                            stack.firstOrNull { it.className.startsWith("apap.") }?.let { frame ->
+                                frames
+                                    .getOrPut("${frame.className.substringAfterLast('.')}.${frame.methodName}") {
+                                        AtomicInteger()
+                                    }.incrementAndGet()
+                            }
+                        }
+                        Thread.sleep(SAMPLE_INTERVAL_MILLIS)
+                    }
+                }.apply {
+                    isDaemon = true
+                    start()
+                }
+        }
+
+        /** 計測に関係するスレッドだけを数える（Gradle/JUnit自身のスレッドを除く）。 */
+        private fun isOfInterest(name: String): Boolean = INTERESTING_THREAD_MARKERS.any { name.contains(it) }
+
+        fun stop(): String {
+            running = false
+            thread?.join(SAMPLE_JOIN_MILLIS)
+            val stateSummary =
+                states.entries
+                    .sortedByDescending { it.value.get() }
+                    .joinToString { "${it.key}=${it.value.get()}" }
+            val topFrames =
+                frames.entries
+                    .sortedByDescending { it.value.get() }
+                    .take(TOP_FRAMES)
+                    .joinToString { "${it.key}(${it.value.get()})" }
+            return "$stateSummary | 頻出フレーム: $topFrames"
+        }
+
+        private companion object {
+            const val SAMPLE_INTERVAL_MILLIS = 20L
+            const val SAMPLE_JOIN_MILLIS = 1_000L
+            const val TOP_FRAMES = 8
+
+            /** Ktor/Netty/コルーチンのワーカーとAPAP自身のスレッド。 */
+            val INTERESTING_THREAD_MARKERS = listOf("apap", "eventLoop", "Default", "nio")
+        }
     }
 
     private fun format(value: Double) = "%.1f".format(value)
@@ -270,16 +369,24 @@ class PerformanceBenchmark {
         const val THROUGHPUT_SECONDS = 10L
         const val CONCURRENCY = 64
 
+        /** ボトルネック切り分け用の並列度。頭打ちの有無を見る。 */
+        val CONCURRENCY_LEVELS = listOf(1, 8, 64)
+
+        /**
+         * 計測中にProviderのレート制限を効かせないための値。P12で`Provider.rateLimits`が
+         * 実際にRateLimiterへ反映されるようになったため、既定(600rpm=10/s)のままだと
+         * 「APAPの処理コスト」ではなく「レート制限の待ち時間」を測ってしまう。
+         */
+        const val BENCHMARK_PROVIDER_RPM = 6_000_000
+
+        const val WARMUP_SECONDS = 2L
+
         /**
          * 計測中にレート制限を効かせないための値。APAP自身の処理コストを測るのが目的で、
          * トークン待ちの時間を測ってしまうと計測の意味が失われる。
          */
         const val UNTHROTTLED_CAPACITY = 1_000_000
         const val UNTHROTTLED_REFILL = 1_000_000.0
-
-        /** `RateLimiterConfig`の既定値（出荷時の実力を測る1本で使う）。 */
-        const val SHIPPED_DEFAULT_CAPACITY = 60
-        const val SHIPPED_DEFAULT_REFILL = 1.0
 
         const val NANOS_PER_SECOND = 1_000_000_000L
         const val NANOS_PER_MILLI = 1_000_000.0

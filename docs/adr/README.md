@@ -38,6 +38,7 @@ Architecture Decision Record。`docs/design/*.md` は一次情報として編集
 | [ADR-0032](ADR-0032-scheduler-execution-host.md) | Schedulerの実行主体を埋込ホストへ委譲する（Port化） | Accepted | 補足（P11総合検証、FR-EXE-006とその従属要件） |
 | [ADR-0033](ADR-0033-audit-search-requires-tenant-scope.md) | 監査ログ検索はテナントスコープを必須にする | Accepted | 補足（P11総合検証、FR-SEC-003、FR-SEC-006） |
 | [ADR-0034](ADR-0034-gateway-phase-overhead-measurement-point.md) | Gateway層に付加レイテンシの計測点を置く | Accepted | 補足（P11総合検証、NFR-PRF-001/002、2.19） |
+| [ADR-0035](ADR-0035-tenant-rate-limit-has-no-source-of-truth.md) | テナント別レート制限に設定元が無い（既定バケットは絞らない） | Accepted | 補足（P12是正、FR-EXE-003、NFR-PRF-003） |
 
 ## 命名規則
 

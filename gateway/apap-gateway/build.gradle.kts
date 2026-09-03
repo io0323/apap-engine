@@ -52,6 +52,9 @@ dependencies {
     // CredentialLeakageTestがログ本文を実際に読むために必要（テスト専用。本番のログ実装は埋込先が選ぶ）。
     testImplementation(lib("logback-classic"))
     testImplementation(project(":adapters:adapter-mock"))
+    // OverheadPhaseCoverageTestがMetricsRecorderへの記録内容を直接検証するため
+    // （ADR-0015と同じ考え方: testソースセットのみapap-testkitへの依存を許可する）。
+    testImplementation(project(":modules:apap-testkit"))
     // adapter-mockのシグネチャに現れるSPI型（AdapterConfig/SecretAccessor/PluginManifest等）を
     // テストから直接組み立てるため。本番コードはSPIに触れない（HTTP層はApapEngineだけを見る）。
     testImplementation(project(":modules:apap-adapter-spi"))

@@ -24,6 +24,7 @@ import apap.domain.model.vo.Region
 import apap.domain.model.vo.RegionCodeTable
 import apap.domain.model.vo.SemVer
 import apap.domain.model.vo.TenantId
+import apap.domain.port.MetricsRecorder
 import apap.gateway.auth.TokenVerificationException
 import apap.gateway.auth.TokenVerifier
 import apap.gateway.auth.VerifiedCaller
@@ -65,6 +66,8 @@ class FakeTokenVerifier(
  * テストのRate Limiter既定値。出荷時の`RateLimiterConfig()`と同じ（容量60・毎秒1補充）。
  * これを上げないと、バースト60件のあとは毎秒1リクエストに絞られる（P11-F10）。
  */
+const val DEFAULT_PROVIDER_RPM = 600
+
 const val DEFAULT_RATE_LIMIT_CAPACITY = 60
 const val DEFAULT_RATE_LIMIT_REFILL_PER_SECOND = 1.0
 
@@ -123,6 +126,8 @@ class TestEngineFixture(
      */
     rateLimitCapacity: Int = DEFAULT_RATE_LIMIT_CAPACITY,
     rateLimitRefillPerSecond: Double = DEFAULT_RATE_LIMIT_REFILL_PER_SECOND,
+    /** 記録内容を直接検証したいテスト（`OverheadPhaseCoverageTest`）が差し替える。 */
+    metricsRecorder: MetricsRecorder? = null,
 ) {
     val repositories = ApapRepositories()
 
@@ -139,6 +144,7 @@ class TestEngineFixture(
         ApapEngineBuilder(repositories = repositories)
             .adapterRegistry(registry(adapterConfig.supportedCapabilities))
             .rateLimits(rateLimitCapacity, rateLimitRefillPerSecond)
+            .apply { metricsRecorder?.let { metricsRecorder(it) } }
             .build()
 
     init {
@@ -172,8 +178,16 @@ class TestEngineFixture(
             }
         }
 
-    /** Provider/ModelをACTIVEにし、単価も登録する（ADR-0021: 単価未登録Modelは候補から除外される）。 */
-    suspend fun registerActiveModel(capabilityId: CapabilityId) {
+    /**
+     * Provider/ModelをACTIVEにし、単価も登録する（ADR-0021: 単価未登録Modelは候補から除外される）。
+     *
+     * @param rpm Providerのレート上限。P12でこの値が実際にRateLimiterへ反映されるようになったため、
+     * 性能計測ではレート制限が測定対象を覆い隠さないよう高い値を渡すこと。
+     */
+    suspend fun registerActiveModel(
+        capabilityId: CapabilityId,
+        rpm: Int = DEFAULT_PROVIDER_RPM,
+    ) {
         val provider =
             engine.admin.providers.register(
                 RegisterProviderCommand(
@@ -183,7 +197,7 @@ class TestEngineFixture(
                     endpoints = listOf(Endpoint("ep1", region, "https://example.internal", 100)),
                     authType = "api_key",
                     credentialRefs = listOf(CredentialRef("secret-ref", 1, CredentialState.STANDBY)),
-                    rateLimits = RateLimits(600, 100_000, 10),
+                    rateLimits = RateLimits(rpm, 100_000, 10),
                     priority = 50,
                     regions = setOf(region),
                 ),
