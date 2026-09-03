@@ -68,9 +68,7 @@ class CapabilityRegistry(
             checkNotNull(capabilityRepository.findById(capabilityId)) {
                 "CapabilityDefinition not found: $capabilityId"
             }
-        val schema = SCHEMA_FACTORY.getSchema(schemaOf(definition))
-        val messages = schema.validate(json, InputFormat.JSON)
-        return SchemaValidationResult(valid = messages.isEmpty(), errors = messages.map { it.message })
+        return JsonSchemaValidator.validate(schemaOf(definition), json)
     }
 
     /**
@@ -124,4 +122,34 @@ class CapabilityRegistry(
                 Triple("batch", "非同期一括処理", false),
             )
     }
+}
+
+/**
+ * 任意のJSON Schemaに対する検証。[CapabilityRegistry]（登録済みCapabilityのスキーマ）と、
+ * リクエスト単位の`outputSchema`（FR-CAP-003 Structured Output）の両方が使う。
+ *
+ * 検証器を`com.networknt:json-schema-validator`へ委譲する理由は[CapabilityRegistry]のKDoc参照
+ * ——ここで扱うのは攻撃者が到達可能な入力境界であり、自前の簡易バリデータは
+ * 「検証していない」より危険（検証済みだと誤信させる）。
+ */
+object JsonSchemaValidator {
+    // TooGenericExceptionCaught: 検証器が投げうる例外は不正スキーマ・JSON構文エラー・
+    // 内部状態エラーと多岐にわたり、取りこぼすと「検証していない応答」を通してしまう。
+    // 種類ではなく「検証できなかった」という事実だけを見て、常に不適合として扱う。
+    @Suppress("TooGenericExceptionCaught")
+    fun validate(
+        schema: String,
+        json: String,
+    ): SchemaValidationResult =
+        try {
+            val messages = SCHEMA_FACTORY.getSchema(schema).validate(json, InputFormat.JSON)
+            SchemaValidationResult(valid = messages.isEmpty(), errors = messages.map { it.message })
+        } catch (e: RuntimeException) {
+            // スキーマ自体が不正、または検証対象がJSONとして壊れている場合。
+            // 「検証できなかった」を「検証に通った」と読み替えてはならない。
+            SchemaValidationResult(valid = false, errors = listOf(e.message ?: e::class.simpleName.orEmpty()))
+        }
+
+    private val SCHEMA_FACTORY: JsonSchemaFactory =
+        JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V202012)
 }

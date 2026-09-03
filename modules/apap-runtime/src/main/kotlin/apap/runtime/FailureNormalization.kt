@@ -9,6 +9,7 @@ import apap.domain.model.vo.NormalizedError
 import apap.execution.DuplicateRequestException
 import apap.execution.ExecutionFailedException
 import apap.execution.streaming.StreamAbortedBeforeFirstChunkException
+import apap.prompt.PromptValidationFailedException
 import apap.routing.NoCandidateAvailableException
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -23,9 +24,9 @@ import kotlin.coroutines.cancellation.CancellationException
  * （握り潰すと`executeStream`のキャンセル伝播——2.10「切断時はProviderへキャンセル伝播」——が壊れる）。
  *
  * この`when`は「例外型 → 13.4コード」の対応表であり、分岐数がそのまま「対応済みの型の数」を表す。
- * 分割すると対応表としての一覧性が失われるため、複雑度の閾値超過は許容する。
+ * 分割すると対応表としての一覧性が失われるため、複雑度・長さの閾値超過は許容する。
  */
-@Suppress("CyclomaticComplexMethod")
+@Suppress("CyclomaticComplexMethod", "LongMethod")
 internal fun Throwable.toApapException(): Throwable =
     when (this) {
         is CancellationException -> this
@@ -76,6 +77,19 @@ internal fun Throwable.toApapException(): Throwable =
             )
 
         // 入力値がドメインVOの不変条件を満たさない（ULID形式違反など）。
+        // 入力検証の失敗（FR-PMT-002）。ここに無いと`else -> this`へ落ち、
+        // apap-prompt（implementationスコープ）の例外型がそのまま出てホストは型で捕捉できず、
+        // Gatewayからは500 INTERNAL_ERRORに見える——実際には利用側の入力誤りで400が正しい。
+        is PromptValidationFailedException ->
+            ApapException(
+                normalizedError(
+                    this.errorCode,
+                    message ?: "Prompt validation failed",
+                    AdapterErrorCategory.INVALID_REQUEST,
+                ),
+                this,
+            )
+
         is IllegalArgumentException ->
             ApapException(
                 normalizedError(

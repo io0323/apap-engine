@@ -27,6 +27,7 @@ import apap.plugin.PluginManager
 import apap.plugin.PluginSignatureVerifier
 import apap.provider.AdapterRegistry
 import apap.provider.CapabilityDiscoveryQuery
+import apap.provider.CapabilityRegistry
 import apap.provider.ModelManager
 import apap.provider.PluginNotFoundException
 import apap.provider.ProviderHealthCheckTask
@@ -266,6 +267,9 @@ class ApapEngineBuilder(
                 clock,
                 idGenerator,
             )
+        // FR-CAP-017 / P11-F3: Capabilityスキーマの登録・検証。参照側（CapabilityDiscoveryQuery）
+        // だけが配線され、登録側が本番のどこからも生成されていなかった。
+        val capabilityRegistry = CapabilityRegistry(repositories.capabilityRepository)
         val admin =
             ApapAdmin(
                 providerManager,
@@ -275,6 +279,7 @@ class ApapEngineBuilder(
                 repositories.aliasRepository,
                 repositories.policyRepository,
                 resolvedAdapterRegistry,
+                capabilityRegistry,
                 SecretStoreAccessor(secretStore),
             )
         // ProviderHealthAggregatorはEvent Busを購読してProvider別状態を保持する（P11-F2で未配線と判明）。

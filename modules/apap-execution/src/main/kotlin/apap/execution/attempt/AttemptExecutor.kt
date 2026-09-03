@@ -12,6 +12,7 @@ import apap.domain.model.execution.ExecutionContext
 import apap.domain.model.execution.ProcessedPrompt
 import apap.domain.model.vo.AdapterErrorCategory
 import apap.domain.model.vo.CbKey
+import apap.domain.model.vo.ContentPart
 import apap.domain.model.vo.ErrorCode
 import apap.domain.model.vo.NormalizedError
 import apap.domain.port.Clock
@@ -30,6 +31,7 @@ import apap.execution.retry.RetryConfig
 import apap.execution.retry.RetryStrategy
 import apap.execution.structuredoutput.StructuredOutputCorrectionBudget
 import apap.provider.AdapterRegistry
+import apap.provider.JsonSchemaValidator
 import io.opentelemetry.api.OpenTelemetry
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.trace.Span
@@ -221,11 +223,49 @@ class AttemptExecutor(
         return try {
             val response = adapter.execute(adapterRequest)
             circuitBreaker.recordSuccess(permit, ctx.traceId)
-            AttemptOutcome.Success(response)
+            // FR-CAP-003 Structured Output: リクエストがoutputSchemaを指定していれば応答を検証する。
+            // 違反はMODEL_ERROR（2.11でリトライ可・CB非計上）として扱い、
+            // 呼び出し元の是正リトライ経路（ADR-0011）へ載せる。ここで通してしまうと
+            // 「スキーマ指定したのに従っていない応答」が正常応答として返る。
+            val violation = structuredOutputViolation(req, response)
+            if (violation == null) AttemptOutcome.Success(response) else violation
         } catch (e: AdapterException) {
             val error = ResponseMapper.normalizeError(e)
             circuitBreaker.recordFailure(permit, error.cbRecordable, ctx.traceId)
             AttemptOutcome.Failed(error, e.retryAfter)
+        }
+    }
+
+    /**
+     * 応答がリクエストの`outputSchema`に適合しない場合の[AttemptOutcome.Failed]。適合または
+     * スキーマ未指定ならnull。
+     *
+     * 検証対象は応答のテキスト部を連結したもの——Structured Outputは「JSONを返させる」機能であり、
+     * Providerはテキストとして返す。テキストが無い応答（画像等）は検証対象にしない。
+     */
+    private fun structuredOutputViolation(
+        req: CanonicalRequest,
+        response: AdapterResponse,
+    ): AttemptOutcome.Failed? {
+        val schema = req.outputSchema ?: return null
+        val text =
+            response.output
+                .filterIsInstance<ContentPart.Text>()
+                .joinToString(separator = "") { it.text }
+        // 違反していれば結果を、適合または検証対象外ならnull。
+        // 違反は2.11のMODEL_ERROR（リトライ可・CB非計上）として表現する。
+        val violation =
+            if (text.isBlank()) null else JsonSchemaValidator.validate(schema, text).takeIf { !it.valid }
+        return violation?.let {
+            AttemptOutcome.Failed(
+                ResponseMapper.normalizeError(
+                    AdapterException(
+                        AdapterErrorCategory.MODEL_ERROR,
+                        "output does not conform to the requested schema: " + it.errors.joinToString("; "),
+                    ),
+                ),
+                retryAfter = null,
+            )
         }
     }
 
