@@ -40,6 +40,10 @@ Architecture Decision Record。`docs/design/*.md` は一次情報として編集
 | [ADR-0034](ADR-0034-gateway-phase-overhead-measurement-point.md) | Gateway層に付加レイテンシの計測点を置く | Accepted | 補足（P11総合検証、NFR-PRF-001/002、2.19） |
 | [ADR-0035](ADR-0035-tenant-rate-limit-has-no-source-of-truth.md) | テナント別レート制限に設定元が無い（既定バケットは絞らない） | Accepted | 補足（P12是正、FR-EXE-003、NFR-PRF-003） |
 | [ADR-0036](ADR-0036-lock-free-rate-limiter-and-circuit-breaker.md) | Rate LimiterとCircuit Breakerのロック競合への対処方針（CAS化は単独では採らない） | Accepted | 補足（P13、NFR-PRF-003、2.4/2.12） |
+| [ADR-0037](ADR-0037-content-filtered-is-a-response-not-an-error.md) | コンテンツ拒否を例外側と応答側のどちらで表現するか | Proposed（実装は次フェーズ） | 補足（P15 SPI検証、FR-CAP-003） |
+| [ADR-0038](ADR-0038-adapter-credential-ref-resolution.md) | AdapterがどのCredentialRefを使うべきかをSPIが伝えていない | Proposed（実装は次フェーズ） | 補足（P15 SPI検証、FR-SEC-002） |
+| [ADR-0039](ADR-0039-modality-declaration-in-capability-constraints.md) | 対応modalityを申告する手段がSPIに無い | Proposed（実装は次フェーズ） | 補足（P15 SPI検証、FR-RTE-002） |
+| [ADR-0040](ADR-0040-required-and-unsupported-generation-params.md) | Provider必須パラメタと未対応パラメタをSPIが表現できない | Proposed（実装は次フェーズ） | 補足（P15 SPI検証、FR-CAP-001） |
 
 ## 命名規則
 
@@ -49,7 +53,10 @@ Architecture Decision Record。`docs/design/*.md` は一次情報として編集
 
 各ADRは以下の構成を持つ。
 
-- **ステータス**: Accepted / Superseded / Deprecated
+- **ステータス**: Accepted / Proposed / Superseded / Deprecated
+  （`Proposed` は「論点として確定したが、実装は後続フェーズ」。P15のSPI検証で起票した
+  ADR-0037〜0040がこれにあたる——1つのProviderの都合でSPIを変えると2つ目で歪むため、
+  2つ目のAdapterを別Providerで書いてから確定させる）
 - **コンテキスト**: 参照した `docs/design/*.md` の章節と、そこで何が未確定だったか
 - **決定**: 採用した方針
 - **影響（Consequences）**: この判断によって何が制約されるか、将来見直す条件、未決定のまま残る事項
