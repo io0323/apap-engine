@@ -18,6 +18,12 @@ typealias CapabilityId = apap.domain.model.vo.CapabilityId
 
 typealias ContentPart = apap.domain.model.vo.ContentPart
 
+/** 13.2 `messages[]`（role付きの1発話）。ADR-0031で追加。 */
+typealias InputMessage = apap.domain.model.execution.InputMessage
+
+/** [InputMessage.role]（system/user/assistant/tool）。04_ドメイン設計.md 4.3.4のTurn.roleと同じ。 */
+typealias TurnRole = apap.domain.model.conversation.TurnRole
+
 // Kotlinのtypealiasは、ネストしたクラスをエイリアス経由の修飾アクセス（`ContentPart.Text(...)`）で
 // 構築することをこのビルド構成では解決できなかったため、コンストラクタ用に個別のtypealiasを用意する。
 typealias TextContentPart = apap.domain.model.vo.ContentPart.Text

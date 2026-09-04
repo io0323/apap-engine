@@ -1,5 +1,6 @@
 package apap.prompt
 
+import apap.domain.model.execution.InputMessage
 import apap.domain.model.vo.CapabilityId
 import apap.domain.model.vo.ContentPart
 import apap.domain.model.vo.RequestId
@@ -15,4 +16,10 @@ data class PromptDraft(
     val input: List<ContentPart>,
     val outputSchema: String? = null,
     val templateVariables: Map<String, String> = emptyMap(),
+    /**
+     * role付きの発話列（ADR-0031）。[input]はこれを平坦化したもの。
+     * Stageは両方を一貫して更新すること——片方だけ変えるとProviderへ渡る内容と
+     * トークン計上がずれる。
+     */
+    val messages: List<InputMessage> = InputMessage.userOnly(input),
 )

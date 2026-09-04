@@ -2,10 +2,14 @@ package apap.runtime
 
 import apap.cache.CacheStore
 import apap.cache.InMemoryCacheStore
+import apap.cache.ratelimit.RateLimiter
 import apap.cache.ratelimit.RateLimiterConfig
 import apap.context.CompactionStrategy
+import apap.context.NoOpQueryEmbedder
+import apap.context.QueryEmbedder
 import apap.context.TruncateOldestCompactionStrategy
 import apap.domain.model.execution.CanonicalResponse
+import apap.domain.model.vo.ContentPart
 import apap.domain.model.vo.SemVer
 import apap.domain.port.Clock
 import apap.domain.port.DomainEventPublisher
@@ -13,6 +17,7 @@ import apap.domain.port.DomainEventSubscriber
 import apap.domain.port.IdGenerator
 import apap.domain.port.MetricsRecorder
 import apap.domain.port.SecretStore
+import apap.execution.circuitbreaker.CircuitBreaker
 import apap.execution.retry.ExponentialBackoffJitterStrategy
 import apap.execution.retry.RetryStrategy
 import apap.infrastructure.eventbus.SynchronousEventBus
@@ -27,6 +32,7 @@ import apap.plugin.PluginManager
 import apap.plugin.PluginSignatureVerifier
 import apap.provider.AdapterRegistry
 import apap.provider.CapabilityDiscoveryQuery
+import apap.provider.CapabilityRegistry
 import apap.provider.ModelManager
 import apap.provider.PluginNotFoundException
 import apap.provider.ProviderHealthCheckTask
@@ -73,6 +79,7 @@ class ApapEngineBuilder(
     private var retryStrategy: RetryStrategy? = null,
     private var compactionStrategy: CompactionStrategy = TruncateOldestCompactionStrategy(),
     private var rateLimiterConfig: RateLimiterConfig = RateLimiterConfig(),
+    private var queryEmbedding: (suspend (List<ContentPart>) -> List<Double>)? = null,
     /**
      * 2.19のメトリクス記録口。既定は[meter]から作る[OpenTelemetryMetricsRecorder]。
      * テストや、独自の計測基盤を持つ埋込ホストが差し替えられるようにする。
@@ -205,6 +212,29 @@ class ApapEngineBuilder(
         refillPerSecond: Double,
     ) = apply { this.rateLimiterConfig = RateLimiterConfig(capacity, refillPerSecond) }
 
+    /**
+     * Memory類似検索（FR-CTX-004 / 2.17）のクエリ埋め込み。
+     *
+     * 既定は[apap.context.NoOpQueryEmbedder]（常に空ベクトル）で、**Memory注入は一切起きない**。
+     * ベクトル化の実体はAPAP側に無く（ADR-0023で経路だけが確定している）、埋込ホストが供給する
+     * までMemoryは実行経路上で機能しない。ここを通さない限りホストにはその供給手段が無かった
+     * ——`ExecutionEngineComposer`はファクトリ引数を持つが、本番の入口である本ビルダが
+     * 露出していなかった（P14で検出。実装済みだが到達不能だったF1/F3と同じ形）。
+     *
+     * 引数を`QueryEmbedder`型ではなくラムダにしているのは[rateLimits]と同じ理由——`apap-context`は
+     * `implementation`スコープで埋込ホストから見えない（`HostCompileClasspathTest`がその分離を
+     * 検証している）。返すベクトルの次元は`Memory.embedding`と揃えること（合わないと類似度が
+     * 0になり、黙って「該当なし」になる）。
+     *
+     * **既知の制約**: ADR-0023は「埋め込み呼出もメインリクエストと同じCircuit Breaker /
+     * Rate Limiterを経由する」と決めているが、[apap.context.QueryEmbedder.embed]は
+     * `parts`しか受け取らず、[ResilientQueryEmbedder]が必要とするtenantId/traceId/
+     * providerId/modelIdを渡す口が無い。ここで渡した実装は**そのまま呼ばれる**
+     * （保護の無いまま呼ばれることを黙らせない。ホスト側で自前の保護を掛けるか、
+     * `embed`のシグネチャ拡張を待つこと）。docs/verification-report.md参照。
+     */
+    fun queryEmbedding(embed: suspend (List<ContentPart>) -> List<Double>) = apply { this.queryEmbedding = embed }
+
     fun clock(clock: Clock) = apply { this.clock = clock }
 
     fun idGenerator(idGenerator: IdGenerator) = apply { this.idGenerator = idGenerator }
@@ -243,6 +273,7 @@ class ApapEngineBuilder(
                 compactionStrategy = compactionStrategy,
                 cacheStore = effectiveCacheStore,
                 rateLimiterConfig = rateLimiterConfig,
+                queryEmbedderFactory = resolveQueryEmbedderFactory(),
             )
         // MetricsEngineはExecutionEngineComposer.build()の中で構築・購読される。
         // ここでも構築すると同じEvent Busへ2つのMetricsEngineが購読し、
@@ -266,6 +297,9 @@ class ApapEngineBuilder(
                 clock,
                 idGenerator,
             )
+        // FR-CAP-017 / P11-F3: Capabilityスキーマの登録・検証。参照側（CapabilityDiscoveryQuery）
+        // だけが配線され、登録側が本番のどこからも生成されていなかった。
+        val capabilityRegistry = CapabilityRegistry(repositories.capabilityRepository)
         val admin =
             ApapAdmin(
                 providerManager,
@@ -275,6 +309,7 @@ class ApapEngineBuilder(
                 repositories.aliasRepository,
                 repositories.policyRepository,
                 resolvedAdapterRegistry,
+                capabilityRegistry,
                 SecretStoreAccessor(secretStore),
             )
         // ProviderHealthAggregatorはEvent Busを購読してProvider別状態を保持する（P11-F2で未配線と判明）。
@@ -321,6 +356,16 @@ class ApapEngineBuilder(
     }
 
     private var pluginManagerOrNull: PluginManager? = null
+
+    /**
+     * [queryEmbedding]が未設定なら既定の[NoOpQueryEmbedder]（＝Memory注入なし）。
+     * Composerのファクトリは[CircuitBreaker]/[RateLimiter]を渡してくるが、上記の既知の制約により
+     * ここでは使わない（使えるふりをしない）。
+     */
+    private fun resolveQueryEmbedderFactory(): (CircuitBreaker, RateLimiter) -> QueryEmbedder {
+        val embed = queryEmbedding ?: return { _, _ -> NoOpQueryEmbedder(optedIn = true) }
+        return { _, _ -> QueryEmbedder { parts -> embed(parts) } }
+    }
 
     private fun resolveAdapterRegistry(): AdapterRegistry {
         val explicit = adapterRegistry

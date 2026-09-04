@@ -1,6 +1,7 @@
 package apap.api
 
 import apap.domain.model.execution.GenerationParams
+import apap.domain.model.execution.InputMessage
 import apap.domain.model.execution.ToolDefinition
 import apap.domain.model.execution.ToolResult
 import apap.domain.model.vo.CapabilityId
@@ -44,6 +45,12 @@ data class ApapRequest(
     val timeoutBudget: Duration = DEFAULT_TIMEOUT_BUDGET,
     val requestId: String? = null,
     val traceId: String? = null,
+    /**
+     * role付きの発話列（13.2 `messages[]`）。既定は[input]を単一USER発話とみなしたもの。
+     * **System Promptを効かせるにはこちらを使うこと**——[input]だけではroleを表現できず、
+     * Providerからはすべてユーザ発話に見える（P11-F4 / ADR-0031）。
+     */
+    val messages: List<InputMessage> = InputMessage.userOnly(input),
 ) {
     private companion object {
         val DEFAULT_TIMEOUT_BUDGET: Duration = Duration.ofSeconds(30)

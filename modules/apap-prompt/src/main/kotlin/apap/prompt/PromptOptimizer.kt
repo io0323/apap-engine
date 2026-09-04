@@ -20,15 +20,15 @@ class PromptOptimizer(
 ) {
     fun optimize(draft: PromptDraft): PromptDraft {
         val variables = config.staticVariables + draft.templateVariables
-        val optimizedInput =
-            draft.input.map { part ->
-                if (part !is ContentPart.Text) {
-                    part
-                } else {
-                    ContentPart.Text(resolveVariables(compress(part.text), variables))
-                }
-            }
-        return draft.copy(input = optimizedInput)
+        val optimizePart = { part: ContentPart ->
+            if (part is ContentPart.Text) ContentPart.Text(resolveVariables(compress(part.text), variables)) else part
+        }
+        // 平坦な[PromptDraft.input]とrole付きの[PromptDraft.messages]へ同じ変換を掛ける。
+        // 片方だけ最適化すると、Providerへ渡る内容とトークン計上がずれる（ADR-0031）。
+        return draft.copy(
+            input = draft.input.map(optimizePart),
+            messages = draft.messages.map { it.copy(content = it.content.map(optimizePart)) },
+        )
     }
 
     private fun compress(text: String): String {

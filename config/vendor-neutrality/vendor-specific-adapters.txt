@@ -1,0 +1,17 @@
+# Vendor Neutrality 例外: 実Provider固有の知識を持ってよいAdapterモジュール
+#
+# 01_CLAUDE.md 不変条件1は「実Provider固有の知識は adapters/ 配下にのみ存在してよい」と
+# 定めているが、VendorNeutralityTest の走査ルートには adapters が含まれており、
+# 実Provider向けAdapterを1つでも足すと必ず落ちる状態だった（P15で判明）。
+#
+# そこで「adapters/ を丸ごと対象外にする」のではなく、**そのAdapterだけ**を理由付きで
+# 対象外にする。adapter-mock や共通コードは引き続き走査対象のままにしておくためで、
+# 丸ごと除外すると「コアのテストは adapter-mock のみを使う」（不変条件1）の担保が消える。
+#
+# 形式: <リポジトリルートからの相対パス> | <なぜ例外でよいのか>
+#   - パスは adapters/ 直下のディレクトリのみ許可（modules/ や gateway/ は例外にできない）
+#   - 理由は必須。空欄の行はテストが落ちる（理由を書けない除外は「漏れ」と区別できない）
+#   - 実在しないパスを書いた場合もテストが落ちる（消したモジュールの除外が残るのを防ぐ）
+#   - `#` 始まりはコメント、空行は無視
+
+adapters/adapter-anthropic | 実Provider向けAdapter（P15）。ProviderAdapter SPIが実APIとの接触に耐えるかを検証するために追加した。Provider固有のURL・認証・レスポンス形式・エラーコードはこのモジュール内に閉じ込める（15.1 Step1）。

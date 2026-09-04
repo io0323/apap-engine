@@ -67,11 +67,13 @@ object EngineFixture {
         plugins: Map<String, ProviderAdapter>,
         repositories: ApapRepositories = ApapRepositories(),
         metricsRecorder: MetricsRecorder? = null,
+        configure: ApapEngineBuilder.() -> Unit = {},
     ): Fixture {
         val engine =
             ApapEngineBuilder(repositories = repositories)
                 .adapterRegistry(registryOf(capabilityId, plugins))
                 .apply { metricsRecorder?.let { metricsRecorder(it) } }
+                .apply(configure)
                 .build()
         return Fixture(engine, repositories)
     }

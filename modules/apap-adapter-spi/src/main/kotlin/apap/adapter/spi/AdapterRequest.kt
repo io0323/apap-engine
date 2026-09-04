@@ -28,6 +28,13 @@ data class AdapterRequest(
     val timeout: Duration,
     val traceHeaders: Map<String, String> = emptyMap(),
     val authContext: AuthContext,
+    /**
+     * role付きの発話列（ADR-0031）。[input]と同じ内容をroleごとに区切ったもので、
+     * **Provider固有形式へ変換する際はこちらを使うこと**——[input]は平坦化されており、
+     * System Prompt・ユーザ発話・過去のassistant応答を区別できない。
+     * 既定は[input]を単一USER発話とみなしたもので、既存Adapterは無視しても動作は変わらない。
+     */
+    val messages: List<InputMessage> = InputMessage.userOnly(input),
 ) {
     init {
         require(modelName.isNotBlank()) { "AdapterRequest.modelName must not be blank" }

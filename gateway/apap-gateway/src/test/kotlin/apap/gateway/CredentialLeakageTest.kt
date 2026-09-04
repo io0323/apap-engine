@@ -19,13 +19,15 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
-import io.ktor.server.testing.testApplication
+import io.ktor.server.testing.runTestApplication
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import kotlin.time.Duration.Companion.minutes
 
 /**
  * 01_CLAUDE.md 不変条件4 / FR-SEC-001 / NFR-SEC-002:
@@ -75,6 +77,16 @@ class CredentialLeakageTest {
 
     @Test
     fun `no credential value reaches responses, headers, metrics or logs on success or failure`() {
+        // 既定の60秒（runTest）ではなく明示的に延ばす。本テストは8往復のHTTP
+        // （うち2本はSSEで、応答本文の読み切りにheartbeat周期分待つ）を実行し、
+        // フルビルド中は他モジュールのテストと同じマシンを奪い合う。実際、
+        // 単独実行では常に緑だが`./gradlew build`の並列実行下で60秒を超えて失敗した。
+        // 待ち時間の上限そのものは検査対象ではない（漏洩の有無が検査対象）ため、
+        // 負荷に左右されない余裕を取る。
+        runTest(timeout = SCAN_TIMEOUT) { scanForLeaks() }
+    }
+
+    private suspend fun scanForLeaks() {
         val observed = StringBuilder()
         // 正常系と、Provider起因の失敗（例外メッセージ・スタックトレース経路）の双方を通す。
         observed.append(driveGateway(forcedError = null))
@@ -107,9 +119,9 @@ class CredentialLeakageTest {
      * sentinelを正規のCredential経路（[SecretAccessor]とAuthorizationヘッダ）から流し込み、
      * 応答・ヘッダ・`/metrics`を文字列として集める。
      */
-    private fun driveGateway(forcedError: AdapterErrorCategory?): String {
+    private suspend fun driveGateway(forcedError: AdapterErrorCategory?): String {
         val collected = StringBuilder()
-        testApplication {
+        runTestApplication {
             val fixture =
                 TestEngineFixture(
                     adapterConfig =
@@ -195,5 +207,8 @@ class CredentialLeakageTest {
 
         /** 応答3本 + /metrics + ログが集まっていればこの程度は超える。 */
         const val MIN_OBSERVED_CHARS = 500
+
+        /** 上のKDoc参照。負荷下でも打ち切られない長さ。 */
+        val SCAN_TIMEOUT = 5.minutes
     }
 }

@@ -130,6 +130,7 @@ private fun ApapRequest.toCanonical(idGenerator: IdGenerator): CanonicalRequest 
         capabilityId = capabilityId,
         modelAlias = modelAlias,
         input = input,
+        messages = messages,
         params = params,
         tools = tools,
         toolResults = toolResults,

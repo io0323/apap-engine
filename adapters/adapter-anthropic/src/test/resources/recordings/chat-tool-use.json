@@ -1,0 +1,19 @@
+{
+  "source": "hand-authored from public API documentation (NOT a recording of a live API call)",
+  "reply": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "id": "msg_redacted_0002",
+      "type": "message",
+      "role": "assistant",
+      "model": "test-model-1",
+      "content": [
+        { "type": "text", "text": "Looking that up." },
+        { "type": "tool_use", "id": "toolu_redacted_01", "name": "lookup", "input": { "query": "weather" } }
+      ],
+      "stop_reason": "tool_use",
+      "usage": { "input_tokens": 40, "output_tokens": 25 }
+    }
+  }
+}

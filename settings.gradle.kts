@@ -46,4 +46,5 @@ include(
     "integration:host-compat",
     "adapters:adapter-mock",
     "adapters:adapter-generic-http",
+    "adapters:adapter-anthropic",
 )

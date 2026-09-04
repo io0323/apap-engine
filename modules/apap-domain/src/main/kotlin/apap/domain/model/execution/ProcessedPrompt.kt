@@ -12,4 +12,11 @@ import apap.domain.model.vo.TokenCount
 data class ProcessedPrompt(
     val input: List<ContentPart>,
     val estimatedTokens: TokenCount = TokenCount.ZERO,
+    /**
+     * role付きの発話列（ADR-0031 / P11-F4）。[input]はこれを平坦化したものと同じ内容を持ち、
+     * トークン計上・キャッシュキーなど**roleを見ない用途**はそのまま[input]を使ってよい。
+     * Providerへ渡す際は[messages]を使うこと——[input]だけではSystem Promptと
+     * ユーザ発話、過去のassistant応答が区別できない。
+     */
+    val messages: List<InputMessage> = InputMessage.userOnly(input),
 )

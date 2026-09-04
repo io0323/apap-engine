@@ -17,6 +17,7 @@ import apap.domain.port.ModelRepository
 import apap.domain.port.PolicyRepository
 import apap.domain.port.ProviderRepository
 import apap.provider.AdapterRegistry
+import apap.provider.CapabilityRegistry
 import apap.provider.ModelManager
 import apap.provider.ProviderManager
 import apap.provider.RegisterModelCommand
@@ -43,6 +44,7 @@ class ApapAdmin internal constructor(
     private val aliasRepository: AliasRepository,
     private val policyRepository: PolicyRepository,
     @Suppress("UnusedPrivateProperty") private val adapterRegistry: AdapterRegistry,
+    private val capabilityRegistry: CapabilityRegistry,
     /**
      * [ApapEngineBuilder.secretStore]の解決口。Provider登録後、実際に`ProviderAdapter.initialize`を
      * 呼び出す（Credential解決を伴う）のは埋込ホスト自身の責務（15.1 Step4以降、本タスクの範囲外
@@ -54,6 +56,13 @@ class ApapAdmin internal constructor(
     val providers = ProviderAdmin(providerManager, providerRepository)
     val models = ModelAdmin(modelManager, modelRepository, aliasRepository)
     val policies = PolicyAdmin(policyRepository)
+
+    /**
+     * Capabilityスキーマの登録・検証（FR-CAP-017 / NFR-EXT-003）。
+     * P11-F3では`CapabilityRegistry`が本番配線のどこからも生成されておらず、
+     * 参照側（`GET /v1/capabilities`）だけが動いて登録側が機能していなかった。
+     */
+    val capabilities = capabilityRegistry
 }
 
 class ProviderAdmin internal constructor(
