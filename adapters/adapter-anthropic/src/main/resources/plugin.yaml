@@ -1,0 +1,11 @@
+# 15.1 Step2: Pluginマニフェスト
+plugin_id: adapter-anthropic
+version: 1.0.0
+# ADR-0016: SPI公開面への破壊的変更はメジャー更新を要する。1.x の範囲で互換。
+spi_version: ">=1.0 <2.0"
+entry_point: apap.adapter.anthropic.AnthropicAdapter
+capabilities: [chat, streaming, tool_calling]
+auth_types: [api_key]
+# 配布パッケージ署名。配布時にPluginSignatureVerifierが検証する値を入れる
+# （リポジトリには実署名を置かない）。
+signature: "<unsigned: set at packaging time>"
