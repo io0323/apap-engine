@@ -2,6 +2,7 @@ package apap.domain.model.modelcatalog
 
 import apap.domain.model.IllegalStateTransitionException
 import apap.domain.model.vo.CapabilityId
+import apap.domain.model.vo.Modality
 import apap.domain.model.vo.ModelId
 import apap.domain.model.vo.ProviderId
 import apap.domain.model.vo.Region
@@ -24,7 +25,19 @@ class ModelStillReferencedByAliasException(
 /** 04_ドメイン設計.md 4.3.2 ModelCapability（Entity）: capabilityIdはCapability Registryに存在。 */
 data class ModelCapability(
     val capabilityId: CapabilityId,
+    /** 構造化していない制約（最大入力、並列tool数等）。機械的な判断には使わない。 */
     val constraints: Map<String, String> = emptyMap(),
+    /**
+     * 受け付けられる入力modality。04_ドメイン設計.md 4.3.2の`constraints（対応modality…）`のうち、
+     * **Routingがハードフィルタとして読む**部分を型として切り出したもの（ADR-0039）。
+     *
+     * 空集合は「未申告」であり「非対応」ではない。未申告のModelは従来どおり候補に残る
+     * （申告のあるModelだけを絞り込む）。[constraints]の自由文字列のままではRoutingが
+     * 解釈できず、実際に**誰も読んでいなかった**。
+     *
+     * 既存の位置引数呼出を壊さないよう**末尾**に置くこと（P13で同じ形の破壊を経験している）。
+     */
+    val supportedInputModalities: Set<Modality> = emptySet(),
 )
 
 /**

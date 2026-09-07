@@ -16,6 +16,18 @@ data class AdapterConfig(
     val rateLimits: RateLimits,
     val regions: Set<Region>,
     val options: Map<String, String> = emptyMap(),
+    /**
+     * このProviderが使うCredentialの参照（09_状態遷移図.mdの4状態を持つ）。
+     *
+     * ADR-0038: 設計書3.3.2の抜けで、`Provider`は`credentialRefs[]`を持つのにAdapterへ渡す口が
+     * 無かった。Adapterは`SecretAccessor.resolve(ref)`に渡す参照を自力で決めるしかなく、
+     * adapter-mockが固定のダミー参照を持っていたのはその兆候である。
+     *
+     * Rotation中はACTIVEとSTANDBYが並存しうるため、Adapterは
+     * `state == CredentialState.ACTIVE` のものを使うこと。空リストは「未設定」で、
+     * その状態で秘密値を要求するAdapterは初期化エラーにしてよい。
+     */
+    val credentialRefs: List<CredentialRef> = emptyList(),
 ) {
     init {
         require(endpoints.isNotEmpty()) { "AdapterConfig.endpoints must not be empty" }

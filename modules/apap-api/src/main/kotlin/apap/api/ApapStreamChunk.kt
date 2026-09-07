@@ -2,6 +2,7 @@ package apap.api
 
 import apap.domain.model.execution.ToolCall
 import apap.domain.model.vo.ContentPart
+import apap.domain.model.vo.FinishReason
 import apap.domain.model.vo.NormalizedError
 import apap.domain.model.vo.Usage
 
@@ -21,4 +22,6 @@ data class ApapStreamChunk(
     val toolCallDelta: ToolCall? = null,
     val usage: Usage? = null,
     val error: NormalizedError? = null,
+    /** 終了理由（13.3のSSE `message_end` の `finish_reason`）。MESSAGE_ENDにのみ載る。 */
+    val finishReason: FinishReason? = null,
 )
