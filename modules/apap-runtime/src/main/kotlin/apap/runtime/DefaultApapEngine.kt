@@ -162,6 +162,7 @@ private fun apap.domain.model.execution.StreamChunk.toApi(): ApapStreamChunk =
         toolCallDelta = toolCallDelta,
         usage = usage,
         error = error,
+        finishReason = finishReason,
     )
 
 private fun StreamChunkType.toApi(): ApapStreamChunkType =
