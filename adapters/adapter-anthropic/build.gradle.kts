@@ -14,6 +14,8 @@ dependencies {
     implementation(libs.findLibrary("jackson-databind").get())
     implementation(libs.findLibrary("jackson-module-kotlin").get())
     implementation(libs.findLibrary("kotlinx-coroutines-core").get())
+    // 未検証であることの警告に使う（CLAUDE.md不変条件6: SLF4J APIまでは可）。
+    implementation(libs.findLibrary("slf4j-api").get())
 
     // ADR-0015: testソースセットのみapap-testkit（Adapter Contract Test）へ依存してよい。
     testImplementation(project(":modules:apap-testkit"))

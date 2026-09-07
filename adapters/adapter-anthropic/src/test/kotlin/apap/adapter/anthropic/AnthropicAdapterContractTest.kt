@@ -19,6 +19,7 @@ import apap.domain.model.vo.ProviderId
 import apap.domain.model.vo.Region
 import apap.domain.model.vo.RegionCodeTable
 import apap.testkit.contract.AdapterContractTest
+import apap.testkit.contract.ContentFilteringSurface
 import java.time.Duration
 
 /**
@@ -53,11 +54,22 @@ class AnthropicAdapterContractTest : AdapterContractTest() {
             // 申告外Capabilityへの呼出で再現できる（専用テストと重複するが、
             // 分類表の網羅としてもここで確かめておく）。
             AdapterErrorCategory.UNSUPPORTED_CAPABILITY -> requestFor(CapabilityId("embedding"))
-            // CONTENT_FILTEREDだけは再現できない。実APIはコンテンツ拒否を**HTTP 200の応答**
-            // （stop_reason=refusal）として返し、エラーとして返さないため。
-            // Adapterの実装不足ではなくSPIの設計問題としてdocs/adapter-spi-findings.mdに記録している。
+            // CONTENT_FILTEREDはこの分類表では扱わない。実APIは拒否をHTTP 200の応答
+            // （stop_reason=refusal）として返すため、[contentFilteringSurface]で応答側として申告する。
             AdapterErrorCategory.CONTENT_FILTERED -> null
         }
+
+    /**
+     * ADR-0037: このProviderは拒否を**HTTP 200の正常応答**（`stop_reason: "refusal"`）で返す。
+     * 例外側の分類（2.11）はProviderがエラーステータスを返す場合に予約される。
+     */
+    override fun contentFilteringSurface(): ContentFilteringSurface =
+        ContentFilteringSurface.AsFinishReason(
+            requestFor(AnthropicAdapter.CAPABILITY_CHAT).copy(
+                messages = listOf(userMessage(ScenarioTransport.REFUSAL_MARKER)),
+                input = listOf(TextContentPart(ScenarioTransport.REFUSAL_MARKER)),
+            ),
+        )
 
     override fun secretProbeValue(): String = SECRET
 
@@ -124,5 +136,14 @@ internal fun testSecrets(secret: String = TEST_SECRET): SecretAccessor =
 
 internal fun initializedAdapter(transport: HttpTransport): AnthropicAdapter =
     AnthropicAdapter(transportFactory = { transport }).apply { initialize(testConfig(), testSecrets()) }
+
+/** `AdapterConfig.options`を差し替えたAdapter（Structured Outputのモード切替検証に使う）。 */
+internal fun adapterWithOptions(
+    transport: HttpTransport,
+    options: Map<String, String>,
+): AnthropicAdapter =
+    AnthropicAdapter(transportFactory = { transport }).apply {
+        initialize(testConfig().copy(options = testConfig().options + options), testSecrets())
+    }
 
 internal fun credentialRef() = CredentialRef("test-key-ref", 1, CredentialState.ACTIVE)

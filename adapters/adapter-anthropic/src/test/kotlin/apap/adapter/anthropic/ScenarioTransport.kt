@@ -30,7 +30,11 @@ class ScenarioTransport : HttpTransport {
         return recorded ?: errorFor(body) ?: successReply(body)
     }
 
+    @Suppress("ReturnCount")
     private suspend fun successReply(body: String): HttpReply {
+        if (body.contains(REFUSAL_MARKER)) return ReplayHttpTransport.load("chat-refusal").reply!!
+        // スキーマが実際に届いたときの応答（記録）。届かない場合との差を測るために分けている。
+        if (body.contains(SCHEMA_AWARE_MARKER)) return ReplayHttpTransport.load("chat-structured").reply!!
         if (body.contains(SLOW_MARKER)) {
             // タイムアウト検証用。AdapterRequest.timeoutより十分長く待つ。
             delay(SLOW_DELAY_MILLIS)
@@ -81,6 +85,12 @@ class ScenarioTransport : HttpTransport {
         /** タイムアウト検証で使う。この文字列を含むリクエストだけ応答を遅らせる。 */
         const val SLOW_MARKER = "force-slow:timeout"
         const val STREAM_TOOL_MARKER = "force-stream:tool"
+
+        /** スキーマ適合応答を返させる（Structured Outputが効いた場合の記録）。 */
+        const val SCHEMA_AWARE_MARKER = "force-structured:conforming"
+
+        /** コンテンツ拒否（stop_reason=refusal）を返させる。HTTP 200で返る点が要点。 */
+        const val REFUSAL_MARKER = "force-refusal:content"
 
         private const val SLOW_DELAY_MILLIS = 5_000L
         private const val STATUS_BAD_REQUEST = 400

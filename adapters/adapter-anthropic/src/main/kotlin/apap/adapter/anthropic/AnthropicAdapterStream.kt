@@ -3,6 +3,7 @@ package apap.adapter.anthropic
 import apap.adapter.spi.AdapterChunk
 import apap.adapter.spi.AdapterChunkType
 import apap.adapter.spi.ContentPart
+import apap.adapter.spi.FinishReason
 import apap.adapter.spi.ProviderAdapter
 import apap.adapter.spi.TextContentPart
 import apap.adapter.spi.TokenCount
@@ -24,8 +25,8 @@ import com.fasterxml.jackson.databind.ObjectMapper
  * | `content_block_delta` (text_delta) | CONTENT_DELTA |
  * | `content_block_delta` (input_json_delta) | TOOL_CALL_DELTA（partial_jsonを積む） |
  * | `content_block_stop` (tool_use) | TOOL_CALL_DELTA + **toolCallComplete=true**（ADR-0019） |
- * | `message_delta` | stop_reasonとoutput_tokensを保持 |
- * | `message_stop` | USAGE → MESSAGE_END |
+ * | `message_delta` | stop_reasonとoutput_tokensを保持（stop_reasonが終了理由の唯一の供給源） |
+ * | `message_stop` | USAGE → MESSAGE_END（**finishReason付き**） |
  * | `ping` | HEARTBEAT |
  * | `error` | [apap.adapter.spi.AdapterException]を送出 |
  *
@@ -51,6 +52,7 @@ class AnthropicAdapterStream(
     /** content_block index → 進行中のtool_use（id/name）。input_json_deltaがidを持たないため必要。 */
     private val toolBlocks = mutableMapOf<Int, ToolCall>()
 
+    private var finishReason: FinishReason? = null
     private var sequence = 0
     private var inputTokens = 0
     private var outputTokens = 0
@@ -88,6 +90,11 @@ class AnthropicAdapterStream(
             "content_block_stop" -> onBlockStop(node)
             "message_delta" -> {
                 outputTokens = node.path("usage").path("output_tokens").asInt(outputTokens)
+                // 終了理由はここで確定する（message_stopは理由を持たない）。
+                // これを拾わないと length_limit で切られたストリームが正常完了と区別できない。
+                node.path("delta").path("stop_reason").asText(null)?.let {
+                    finishReason = ResponseMapper.finishReasonOf(it)
+                }
             }
             "message_stop" -> onMessageStop()
             "ping" -> emit(AdapterChunkType.HEARTBEAT)
@@ -149,16 +156,20 @@ class AnthropicAdapterStream(
                     estimated = false,
                 ),
         )
-        emit(AdapterChunkType.MESSAGE_END)
+        emit(AdapterChunkType.MESSAGE_END, finishReason = finishReason ?: FinishReason.COMPLETED)
         finished = true
     }
 
+    // LongParameterList: AdapterChunkのフィールドをそのまま受ける組立ヘルパのため、
+    // 引数の数はSPIの型に由来する。
+    @Suppress("LongParameterList")
     private fun emit(
         type: AdapterChunkType,
         delta: ContentPart? = null,
         toolCallDelta: ToolCall? = null,
         usage: Usage? = null,
         toolCallComplete: Boolean = false,
+        finishReason: FinishReason? = null,
     ) {
         pending.addLast(
             AdapterChunk(
@@ -168,6 +179,7 @@ class AnthropicAdapterStream(
                 toolCallDelta = toolCallDelta,
                 usage = usage,
                 toolCallComplete = toolCallComplete,
+                finishReason = finishReason,
             ),
         )
     }

@@ -47,13 +47,16 @@ object RequestBodyBuilder {
         request: AdapterRequest,
         stream: Boolean,
         maxTokensFallback: Int,
+        structuredOutputMode: StructuredOutputMode,
     ): String {
         val body = mapper.createObjectNode()
         body.put("model", request.modelName)
-        body.put("max_tokens", request.params.maxTokens ?: maxTokensFallback)
+        // ADR-0040: リクエスト指定 → Modelの上限 → Adapterの既定 の順で解決する。
+        // 以前はModelの上限がAdapterへ渡らず、8192で登録したModelでも既定4096で頭打ちになっていた。
+        body.put("max_tokens", request.params.maxTokens ?: request.modelMaxOutputTokens ?: maxTokensFallback)
         body.put("stream", stream)
 
-        systemTextOf(request)?.let { body.put("system", it) }
+        systemTextOf(request, structuredOutputMode)?.let { body.put("system", it) }
         body.set<ArrayNode>("messages", messagesOf(request))
 
         request.params.temperature?.let { body.put("temperature", it) }
@@ -63,11 +66,37 @@ object RequestBodyBuilder {
             request.params.stop.forEach { stops.add(it) }
             body.set<ArrayNode>("stop_sequences", stops)
         }
-        // seed: 実APIに対応するパラメタが無い。黙って捨てるのではなく findings へ記録している。
+        // ADR-0040: seedは実APIに対応パラメタが無い。**黙って捨てない**——
+        // 呼び出し元は再現性を期待しており、無言で無視すると効いていないことに気付けない。
+        // 拒否はAdapter側で行う（[AnthropicAdapter.buildBody]がUNSUPPORTED_CAPABILITYへ変換する）。
+        if (request.params.seed != null) throw AdapterUnsupportedParamException("params.seed")
+
         request.tools?.takeIf { it.isNotEmpty() }?.let { body.set<ArrayNode>("tools", toolsArray(it)) }
-        // outputSchema: 実APIにJSON Schema強制のパラメタが無いため、schema付きtoolを1本足して
-        // それを強制する方式は取らない（Routing/Tool呼出の意味論が変わるため）。findings参照。
+        applyStructuredOutput(body, request.outputSchema, structuredOutputMode)
         return mapper.writeValueAsString(body)
+    }
+
+    /**
+     * FR-CAP-003 Structured Output。**以前はここが何もしておらず、`outputSchema`は
+     * Adapter内で参照ゼロだった**——スキーマがProviderへ渡らないため、モデルは構造の指示なしに
+     * 生成し、毎回まず検証に落ちてからADR-0011の是正リトライで直る動作になっていた。
+     * 是正機構は例外的な救済であって常用経路ではない（ADR-0040）。
+     *
+     * @param mode [StructuredOutputMode.NATIVE] は実APIの `output_config.format` を使う。
+     *   [StructuredOutputMode.PROMPT] はスキーマをsystemへ組み込む（[systemTextOf]側で行う）。
+     */
+    private fun applyStructuredOutput(
+        body: ObjectNode,
+        schema: String?,
+        mode: StructuredOutputMode,
+    ) {
+        if (schema == null || mode != StructuredOutputMode.NATIVE) return
+        val outputConfig = mapper.createObjectNode()
+        val format = mapper.createObjectNode()
+        format.put("type", "json_schema")
+        format.set<ObjectNode>("schema", parseSchema(schema))
+        outputConfig.set<ObjectNode>("format", format)
+        body.set<ObjectNode>("output_config", outputConfig)
     }
 
     /** tools を Provider 形式の配列へ。`translateTools` からも使う。 */
@@ -83,14 +112,28 @@ object RequestBodyBuilder {
         return array
     }
 
-    /** SYSTEM発話（Memory注入・System Promptの両方がここに来る）を連結する。 */
-    private fun systemTextOf(request: AdapterRequest): String? {
-        val text =
+    /**
+     * SYSTEM発話（Memory注入・System Promptの両方がここに来る）を連結する。
+     * [StructuredOutputMode.PROMPT]のときはスキーマ指示も末尾へ足す。
+     */
+    private fun systemTextOf(
+        request: AdapterRequest,
+        mode: StructuredOutputMode,
+    ): String? {
+        val declared =
             request.messages
                 .filter { it.role == TurnRole.SYSTEM }
                 .flatMap { it.content }
                 .filterIsInstance<TextContentPart>()
                 .joinToString("\n\n") { it.text }
+        val schemaInstruction =
+            request.outputSchema
+                ?.takeIf { mode == StructuredOutputMode.PROMPT }
+                ?.let { schema ->
+                    "You must reply with JSON that validates against this JSON Schema. " +
+                        "Reply with the JSON document only, without prose or code fences.\n$schema"
+                }
+        val text = listOfNotNull(declared.takeIf { it.isNotBlank() }, schemaInstruction).joinToString("\n\n")
         return text.takeIf { it.isNotBlank() }
     }
 
@@ -218,6 +261,11 @@ object RequestBodyBuilder {
 class AdapterModalityException(
     val modality: String,
 ) : RuntimeException("this provider's messages API has no content block for modality: $modality")
+
+/** Providerに対応する概念が無いパラメタを指定された。黙って捨てないための明示的な失敗。 */
+class AdapterUnsupportedParamException(
+    val paramName: String,
+) : RuntimeException("this provider has no equivalent for $paramName; it would be silently ignored")
 
 /** tool の input_schema がJSONとして壊れている。 */
 class AdapterSchemaException(

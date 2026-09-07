@@ -13,6 +13,7 @@ import apap.adapter.spi.CredentialRef
 import apap.adapter.spi.CredentialState
 import apap.adapter.spi.DiscoveredModel
 import apap.adapter.spi.HealthResult
+import apap.adapter.spi.Modality
 import apap.adapter.spi.Period
 import apap.adapter.spi.ProviderAdapter
 import apap.adapter.spi.ProviderCost
@@ -21,6 +22,7 @@ import apap.adapter.spi.ProviderToolFormat
 import apap.adapter.spi.ProviderUsage
 import apap.adapter.spi.SecretAccessor
 import apap.adapter.spi.SemVer
+import apap.adapter.spi.SpiSurface
 import apap.adapter.spi.TokenCount
 import apap.adapter.spi.ToolDefinition
 import apap.adapter.spi.ValidationResult
@@ -66,6 +68,9 @@ class AnthropicAdapter(
         config: AdapterConfig,
         secrets: SecretAccessor,
     ) {
+        // 実APIでの検証が済んでいないことを、本番配線に載った時点で必ず見えるようにする
+        // （NoOpQueryEmbedderと同じ扱い。docs/adapter-spi-findings.md参照）。
+        UnverifiedAgainstLiveApi.warnIfUnverified()
         this.config = config
         this.secrets = secrets
         this.transport = transportFactory(baseUrlOf(config))
@@ -78,7 +83,8 @@ class AnthropicAdapter(
         config = null
     }
 
-    override fun spiVersion(): SemVer = SemVer(1, 0, 0)
+    // 単一管理（ADR-0016）。ここで数値を書き写すとSPI本体と食い違う。
+    override fun spiVersion(): SemVer = SpiSurface.version
 
     // --- 能力申告 ---------------------------------------------------------------------------
 
@@ -92,20 +98,27 @@ class AnthropicAdapter(
                     maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS,
                     streamable = true,
                     supportsTools = true,
-                    // capabilityConstraintsの固定フィールドで表現できない制約はextraへ入れる。
-                    // 何がはみ出したかは findings に記録している。
+                    // ADR-0039: 自由文字列ではなく型で申告する。Routingがハードフィルタとして読む。
+                    supportedInputModalities = SUPPORTED_INPUT_MODALITIES,
+                    // 固定フィールドで表現できない制約だけがextraに残る（人間向けのメモ）。
                     extra =
                         mapOf(
-                            "modalities.input" to "text,image",
-                            "modalities.output" to "text",
                             "messages.must_alternate" to "true",
                             "max_tokens.required" to "true",
                         ),
                 )
             CAPABILITY_STREAMING ->
-                CapabilityConstraints(streamable = true, supportsTools = true)
+                CapabilityConstraints(
+                    streamable = true,
+                    supportsTools = true,
+                    supportedInputModalities = SUPPORTED_INPUT_MODALITIES,
+                )
             CAPABILITY_TOOL_CALLING ->
-                CapabilityConstraints(streamable = true, supportsTools = true)
+                CapabilityConstraints(
+                    streamable = true,
+                    supportsTools = true,
+                    supportedInputModalities = SUPPORTED_INPUT_MODALITIES,
+                )
             else -> CapabilityConstraints()
         }
 
@@ -244,11 +257,18 @@ class AnthropicAdapter(
         stream: Boolean,
     ): String =
         try {
-            RequestBodyBuilder.build(request, stream, DEFAULT_MAX_OUTPUT_TOKENS)
+            RequestBodyBuilder.build(request, stream, DEFAULT_MAX_OUTPUT_TOKENS, structuredOutputMode())
         } catch (e: AdapterModalityException) {
             throw AdapterException(
                 AdapterErrorCategory.UNSUPPORTED_CAPABILITY,
                 "this provider cannot accept the requested modality: ${e.modality}",
+                cause = e,
+            )
+        } catch (e: AdapterUnsupportedParamException) {
+            // ADR-0040: 利用側が指定したパラメタを無言で無視しない。
+            throw AdapterException(
+                AdapterErrorCategory.UNSUPPORTED_CAPABILITY,
+                "this provider does not support ${e.paramName}",
                 cause = e,
             )
         } catch (e: AdapterSchemaException) {
@@ -336,14 +356,36 @@ class AnthropicAdapter(
         accessor.resolve(currentCredentialRef()).use { block(it.charArray()) }
     }
 
+    /**
+     * ADR-0038: `AdapterConfig.credentialRefs` から ACTIVE のものを使う。
+     *
+     * Rotation中はACTIVEとSTANDBYが並存しうるため、状態で選ぶ（先頭決め打ちにしない）。
+     * ACTIVEが無ければSTANDBYへ落とさず失敗させる——「まだ有効化していない鍵」で
+     * 実リクエストを送ると、Provider側で認証失敗が並ぶだけで原因が分かりにくい。
+     *
+     * `options[credential.ref]` は`credentialRefs`が空のときの後方互換経路として残す
+     * （P15ではSPIに受け口が無く、この回避策しか無かった）。
+     */
     private fun currentCredentialRef(): CredentialRef {
-        val options = config?.options ?: throw notInitialized()
+        val current = config ?: throw notInitialized()
+        current.credentialRefs
+            .firstOrNull { it.state == CredentialState.ACTIVE }
+            ?.let { return it }
+        if (current.credentialRefs.isNotEmpty()) {
+            throw AdapterException(
+                AdapterErrorCategory.AUTH_ERROR,
+                "no ACTIVE credential among ${current.credentialRefs.size} configured refs",
+            )
+        }
         return CredentialRef(
-            secretRef = options[CREDENTIAL_REF_OPTION] ?: DEFAULT_CREDENTIAL_REF_NAME,
-            version = options[CREDENTIAL_VERSION_OPTION]?.toIntOrNull() ?: 1,
+            secretRef = current.options[CREDENTIAL_REF_OPTION] ?: DEFAULT_CREDENTIAL_REF_NAME,
+            version = current.options[CREDENTIAL_VERSION_OPTION]?.toIntOrNull() ?: 1,
             state = CredentialState.ACTIVE,
         )
     }
+
+    private fun structuredOutputMode(): StructuredOutputMode =
+        StructuredOutputMode.from(config?.options?.get(StructuredOutputMode.OPTION_KEY))
 
     private fun baseUrlOf(config: AdapterConfig): String =
         // Endpointは重み付きで複数あり得るが、実APIは単一のグローバルエンドポイント。
@@ -374,6 +416,13 @@ class AnthropicAdapter(
         val CAPABILITY_TOOL_CALLING = CapabilityId("tool_calling")
 
         val SUPPORTED_CAPABILITIES = setOf(CAPABILITY_CHAT, CAPABILITY_STREAMING, CAPABILITY_TOOL_CALLING)
+
+        /**
+         * Messages APIが受け付ける入力modality。音声・動画に対応するcontent blockが無いため
+         * 申告しない（申告しなければRoutingが実行前に候補から外す。ADR-0039）。
+         * JSONはテキストblockとして送るため受け付けられる。
+         */
+        val SUPPORTED_INPUT_MODALITIES = setOf(Modality.TEXT, Modality.IMAGE, Modality.JSON)
 
         const val DEFAULT_BASE_URL = "https://api.anthropic.com"
         const val MESSAGES_PATH = "/v1/messages"
