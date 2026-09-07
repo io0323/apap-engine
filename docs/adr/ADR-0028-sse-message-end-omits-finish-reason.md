@@ -2,7 +2,13 @@
 
 ## ステータス
 
-Accepted（2026-09-02）
+**Superseded by ADR-0037（P16）**
+
+P16で `StreamChunk` / `ApapStreamChunk` / `AdapterChunk` に `finishReason` を追加し、
+13.3のSSE例どおり `message_end` で `finish_reason` を送出するようにした。
+本ADRが「送出できない」根拠としていた前提（エンジンが終了理由を伝播していない）が
+解消されたため。`length_limit` で切られたストリームが正常完了と区別できない状態は、
+省略の代償として許容できるものではなかった。
 
 ## コンテキスト
 

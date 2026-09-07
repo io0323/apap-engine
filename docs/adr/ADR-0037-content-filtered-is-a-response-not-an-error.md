@@ -1,6 +1,6 @@
 # ADR-0037: コンテンツ拒否を例外側と応答側のどちらで表現するか
 
-- **ステータス**: Proposed（P15で検出。**実装は次フェーズ**）
+- **ステータス**: Accepted（P16で実装。応答側＝FinishReason経路を正とし、例外側はProviderがエラーを返す場合に予約）
 - **関連要件**: FR-CAP-003, FR-EXE-002
 - **関連する設計書**: 02_システム仕様.md 2.11（Retry/Fallback判断）, 03_基本設計.md 3.3.2
 - **検出**: P15 実Provider向けAdapter第1号の実装（docs/adapter-spi-findings.md §3.1）

@@ -13,6 +13,44 @@ Adapterそのものではなく、この文書が本フェーズの主成果物�
 公開API仕様に基づく**手書き**であり、実通信の記録ではない。各記録ファイルの `source` が
 それを宣言し、`RecordingProvenanceTest` が全件に宣言があることを機械検証している。
 
+### 0.1 実測を見送った判断（P16）
+
+P16の着手時点で実API検証（作業1）を**見送った**。理由と、その判断が成り立つ範囲を記す。
+
+**見送ってよいと判断した理由**: [構造]の項目だけで**7件のSPI不足が特定でき**、
+それらは実APIの挙動に依存しない（型・シグネチャに何が無いかの問題であり、
+Providerが何を返すかとは独立している）。したがってSPI変更を実測より先行できる。
+実測を待つと、複数Adapterが存在しない「変更コストが最も低い時期」を逃す。
+
+**その代わり [要実測] は未確定のまま残る。** 実測でしか分からない事柄は依然として不明で、
+本文書の [要実測] 印はすべて有効である。印と `RecordingProvenanceTest` は**維持する**——
+時間が経つと「一通り検証した」という記憶に置き換わるため、この印が唯一の防止手段である。
+
+### 0.2 実測が必須になる条件
+
+次のいずれかに到達したら、**実測を済ませるまで先へ進まない**。
+
+1. **prompt-engine が実Providerへ接続する前**
+2. **実トラフィックを流す前**（Canary 5%を含む。少量でも実トラフィックは実トラフィックである）
+
+実測手順は `adapters/adapter-anthropic/README.md`。`LiveProviderTest` は
+環境変数でのみ有効化され、CIでは実行されない。鍵は `SecretStore` 経由で解決し、
+実行後に**実際の鍵文字列**が記録・計測ファイルへ現れないことを `@AfterAll` で検査する。
+
+### 0.3 未検証であることの可視化
+
+構造的にはスタブと同じ（動いて見えるが実挙動は未確認）であるため、
+本リポジトリがスタブに与えてきた扱い（`NoOpQueryEmbedder`の明示的opt-inとWARN、
+`ZeroCostEstimator.isStub`の自己申告）と同じ扱いを与えた。
+
+| 仕掛け | 何を防ぐか |
+|---|---|
+| `UnverifiedAgainstLiveApi.warnIfUnverified()` を `initialize()` で呼ぶ | 未検証のAdapterが本番配線に載ったことがログに必ず出る |
+| `UnverifiedAgainstLiveApiTest` | `LIVE_VERIFIED=false` の間、記録が手書きのままであること・本文書が未検証である旨と`[要実測]`印を保持していることを機械検証する |
+| `RecordingProvenanceTest` | 各記録の出所宣言と機微情報の非混入 |
+
+コードの申告・記録の出所・文書の記述の**3点が揃って初めて意味を持つ**ので、3点セットで縛っている。
+
 したがって本文書の各項目は次の2種類に分かれる。読み分けを誤ると「検証済み」の範囲を過大評価する。
 
 | 印 | 意味 |
@@ -41,8 +79,12 @@ Adapterそのものではなく、この文書が本フェーズの主成果物�
 | 10 | typealias 経由のネスト型参照 | **回避策で対応**（SPI側に既に用意があった） |
 
 SPI変更が必要と判断したのは4件（§3.3 / §3.5 / §3.7 / §3.9）。
-**いずれも実装は次フェーズとし、本フェーズでは一覧化に留める。**
 「このProviderが特殊なだけ」と判断して**SPIを変えない**と決めたものは §4 に分けて記載した。
+
+> **P16で実装済み。** 上記4件に加え、P16の調査で見つかった3件（`outputSchema`の不使用、
+> Streamingの`finishReason`欠落、`capabilityConstraints`が誰にも読まれていない）を含む
+> **7件をまとめて実装した**。実装結果と、その過程で新たに見つかった欠落は §9 を参照。
+> §2〜§4 の記述はP15時点の調査結果としてそのまま残す（判断の経緯を消さないため）。
 
 ---
 
@@ -337,32 +379,38 @@ Credential非漏出は Contract Test に加えて `AnthropicAdapterReplayTest` �
 
 ---
 
-## 6. 15.4 Go-Liveチェックリストに対する現状評価
+## 6. 15.4 Go-Liveチェックリストに対する現状評価（P16再評価）
 
-| # | 項目 | 現状 | 根拠・残作業 |
-|---|---|---|---|
-| 1 | Contract Test全件パス（エラー分類・Stream中断・Credential非漏出含む） | **△** | 15項目中14パス。CONTENT_FILTEREDのみ未パスで、原因はSPI設計（§3.1）。実APIでの再確認も要る |
-| 2 | Health Check応答が30秒周期で安定 | **未評価** | `healthCheck` は実装済み（モデル一覧で代用）。30秒周期の安定性は実API＋常駐運用でしか測れない。周期実行は宿主が回す（ADR-0032） |
-| 3 | 単価（PriceBook）登録済・コスト算出がAuditへ反映 | **未実施** | Adapterの範囲外。Model登録時にPriceBookへ単価を入れる運用手順（ADR-0021: 単価未登録Modelは候補から除外される） |
-| 4 | Fallback Chainに組み込んだ場合の切替動作確認（強制障害試験） | **△** | エンジン側は `SequenceFlowE2ETest` / `RequestFidelityE2ETest` で検証済み。**この実Adapterを組み込んだ状態での試験は未実施** |
-| 5 | Rate Limit設定がProvider実制限以下 | **未実施** | 実アカウントの制限値を確認して `Provider.rateLimits` に設定する必要がある。P12以降 `rpm` はRateLimiterへ反映される（`tpm`/`concurrent` は未反映＝F12） |
-| 6 | Canary 5%で24時間、エラー率・レイテンシがSLO内 | **未実施** | 実運用フェーズ。Alias weightでの流量制御は実装済み |
-| 7 | ロールバック手順（Alias weight 0%化）の演習済 | **未実施** | `assignAlias` で weight を変更できることはE2Eで確認済みだが、運用演習は未実施 |
+| # | 項目 | P15 | P16 | 根拠・残作業 |
+|---|---|---|---|---|
+| 1 | Contract Test全件パス（エラー分類・Stream中断・Credential非漏出含む） | △ | **○（機能面）** | **16/16パス・スキップ0**（CONTENT_FILTEREDを含む）。ADR-0037で申告方式にしたことで、再現できない項目を黙って飛ばせなくなった。ただし**実APIに対しては未実行**のため、実挙動での合格は未確認 |
+| 2 | Health Check応答が30秒周期で安定 | 未評価 | **未評価** | 実API＋常駐運用でしか測れない。`LiveProviderTest`に計測を用意済み（30秒予算の判定つき） |
+| 3 | 単価（PriceBook）登録済・コスト算出がAuditへ反映 | 未実施 | **未実施** | Adapterの範囲外。Model登録時の運用手順 |
+| 4 | Fallback Chainに組み込んだ場合の切替動作確認（強制障害試験） | △ | △ | エンジン側は検証済み。**この実Adapterを組み込んだ状態での試験は未実施** |
+| 5 | Rate Limit設定がProvider実制限以下 | 未実施 | **未実施** | 実アカウントの制限値が要る |
+| 6 | Canary 5%で24時間、エラー率・レイテンシがSLO内 | 未実施 | **未実施** | 実運用フェーズ。§0.2により、ここへ進む前に実測が必須 |
+| 7 | ロールバック手順（Alias weight 0%化）の演習済 | 未実施 | **未実施** | 機構はE2Eで確認済み、運用演習は未実施 |
 
-**結論: Go-Live可否は「まだ不可」。** 1（CONTENT_FILTERED）と、そもそも
-**実APIに一度も接続していないこと**が最大のブロッカー。2・5・6・7は実アカウントと
-常駐運用が前提で、リポジトリ内では判定できない。
+**結論: Go-Liveは引き続き「不可」。** P16でSPIの機能的な欠落は解消したが、
+**ブロッカーの本体は変わっていない**——実APIに一度も接続していないこと。
+加えてP16で新たに判明した ADR-0041（`initialize()`が本番のどこからも呼ばれていない）により、
+**現状では実Providerを本番配線で動かすことすらできない**。Go-Liveの前提として、
+少なくとも次の3つが要る。
 
----
+1. ADR-0041の解決（Adapterが初期化される経路）
+2. 実APIでの実測（§0.2の条件）
+3. 上表 2 / 5 / 6 / 7 の運用側の確認
 
 ## 7. 次フェーズへの申し送り（ADR起票一覧）
 
-| ADR | 論点 | 影響しうる要件 |
-|---|---|---|
-| ADR-0037 | CONTENT_FILTERED を例外側と応答側のどちらで表現するか | FR-CAP-003、2.11 |
-| ADR-0038 | AdapterがCredentialRefを解決する手段（`AdapterConfig` かシグネチャか） | FR-SEC-002 |
-| ADR-0039 | modality対応可否の申告（Routing候補選択に使えるように） | FR-RTE-002 |
-| ADR-0040 | 必須パラメタ・未対応パラメタの扱い（`max_tokens` / `seed`） | FR-CAP-001、FR-EXE-002 |
+| ADR | 論点 | 影響しうる要件 | P16での状態 |
+|---|---|---|---|
+| ADR-0037 | CONTENT_FILTERED を例外側と応答側のどちらで表現するか | FR-CAP-003、2.11 | **実装済**（申告方式） |
+| ADR-0038 | AdapterがCredentialRefを解決する手段（`AdapterConfig` かシグネチャか） | FR-SEC-002 | **実装済**（`credentialRefs`。ただしADR-0041により未到達） |
+| ADR-0039 | modality対応可否の申告（Routing候補選択に使えるように） | FR-RTE-002 | **実装済**（SPI・ドメイン・Routingの3層） |
+| ADR-0040 | 必須パラメタ・未対応パラメタの扱い（`max_tokens` / `seed`） | FR-CAP-001、FR-EXE-002 | **実装済**（`outputSchema`の実使用も含む） |
+| ADR-0028 | SSEの`message_end`が`finish_reason`を省略する | FR-CAP-004、13.3 | **Superseded**（P16で送出するようにした） |
+| **ADR-0041** | `ProviderAdapter.initialize()` が本番のどこからも呼ばれていない | FR-PRV-001〜006、FR-SEC-002 | **未着手**（P16で新規検出） |
 
 **実装は次フェーズ。** 本フェーズでは一覧化に留め、SPIには手を入れていない。
 1つのProviderの都合でSPIを変えると、2つ目のProviderで必ず歪みが出るため、
@@ -387,3 +435,170 @@ Credential非漏出は Contract Test に加えて `AnthropicAdapterReplayTest` �
 | `modules/apap-runtime` を例外に登録しようとする | 失敗（adapters/直下のみ許可） |
 | 例外エントリの理由を空にする | 失敗（理由必須） |
 | 実在しないパスを例外に登録する | 失敗（残骸の検出） |
+
+---
+
+## 9. P16: SPI変更の実装結果
+
+複数Adapterが存在しない今が変更コストの最も低い時期であるため、7件をまとめて実施した。
+SPIは **1.0.0 → 1.1.0（マイナー）**。追加はすべて既定値付き・末尾配置で、
+フィールド削除・型変更・制約強化は行っていない（ADR-0016）。版は `SpiSurface.version` の
+単一管理とし、各Adapterの `spiVersion()` はそれを参照する（数値の書き写しをやめた）。
+
+### 9.1 outputSchema をAdapterで実際に使う（最優先）
+
+**何が起きていたか**: `outputSchema` はAdapterのmain配下で**参照ゼロ**だった。スキーマが
+Providerへ渡らないため、モデルは構造の指示なしに生成し、毎回まず`AttemptExecutor`の
+検証に落ちてからADR-0011の是正リトライで直る動作になっていた。是正機構は例外的救済であって
+常用経路ではなく、往復2回ぶんのコストと成功率の両方に効いていた。
+
+**ネイティブ機構の有無（出典を明示）**: 実APIには構造化出力のネイティブ機構が**ある**。
+
+| 項目 | 内容 |
+|---|---|
+| パラメタ | `output_config.format` |
+| 出典1 | `https://platform.claude.com/docs/en/api/messages` の Body Parameters > output_config（"specify a JSON schema for structured outputs"） |
+| 出典2 | `https://platform.claude.com/docs/en/api/beta/messages` の `BetaOutputConfig.format`（型名 `BetaJSONOutputFormat`、"Schema for structured JSON output"） |
+| 確認方法 | 公開ドキュメント（実APIでは未確認） |
+
+**実装**: 既定で `output_config.format` を送る（`StructuredOutputMode.NATIVE`）。
+
+**[要実測]**: **`format` オブジェクトの内側の正確な形は公開ドキュメントから確定できていない。**
+型名が `BetaJSONOutputFormat` であることから `{"type":"json_schema","schema":{…}}` と実装したが、
+形が違えば `invalid_request_error` でスキーマ付きリクエストが全滅する——これは
+「スキーマが無視される」従来より悪い。そのため
+`AdapterConfig.options["structured_output.mode"] = "prompt"` の1行で、スキーマを
+systemプロンプトへ組み込む経路へ退避できるようにした（`prompt` は文字列を足すだけなので確実に動く）。
+実APIで弾かれた場合はここを切り替えること。
+
+**効果の検証**: `StructuredOutputTest` が、スキーマが送信ボディへ載ること・promptモードでは
+systemへ組み込まれること・スキーマが届いた場合は**1回の呼出で完了し是正リトライが発生しないこと**を
+確認する。ただし「モデルが実際にスキーマへ従う率」は実APIでしか測れない（**[要実測]**）。
+
+### 9.2 「届いているが使われていない」項目の全数監査
+
+P14のリクエスト忠実性検査は「Adapterへ**届く**こと」を検証したが、
+「Adapterが**使う**こと」は別問題だった。全フィールドを監査した結果:
+
+| フィールド | P15時点 | P16での対応 |
+|---|---|---|
+| `params.temperature` / `topP` / `stop` | 使用 | — |
+| `params.maxTokens` | 使用 | Model上限へのフォールバックを追加（§9.5） |
+| `params.seed` | **黙殺** | `UNSUPPORTED_CAPABILITY` で明示的に拒否（§9.5） |
+| `outputSchema` | **黙殺** | ネイティブ機構／プロンプト組込で使用（§9.1） |
+| `capabilityId` / `tools` / `toolResults` / `timeout` / `traceHeaders` / `messages` | 使用 | — |
+| `input` | 未使用（意図的） | `messages` が正。SPIの意図どおりで問題なし |
+| `authContext` | 未使用（意図的） | APIキー方式では呼出ごとにヘッダを組むため。Credentialを載せないのが正しい |
+
+**黙殺は2件**（`seed` と `outputSchema`）で、いずれも解消した。
+
+### 9.3 StreamChunk の finishReason（ADR-0028をSupersede）
+
+13.3のSSE例は `event: message_end` / `data: {"finish_reason":"completed"}` と明記しているのに、
+`StreamChunk`/`ApapStreamChunk` にフィールドすら無く、**`length_limit` で切られたストリームが
+正常完了と区別できなかった**。`tool_call` / `content_filtered` も同様に届いていなかった。
+
+Adapter → `StreamChunk` → `ApapStreamChunk` → Gateway SSE まで通した。
+実装中に**終端チャンクの二重送出**も見つかった——Adapter由来のMESSAGE_ENDと実行エンジンが
+終端で送るMESSAGE_ENDの両方が流れていた（従来テストは `chunks.last()` しか見ておらず気付けなかった）。
+Adapter由来のものは終了理由だけを預かって転送しない形に直した。
+
+**6値の到達可否**（`ResponseFidelityE2ETest`）:
+
+| 値 | ストリーム経路 |
+|---|---|
+| `completed` / `length_limit` / `tool_call` / `content_filtered` | **届く**（Providerが応答として申告できる4値） |
+| `cancelled` | 届かない。利用側の切断が原因なので受け取る相手がいない |
+| `error` | 届かない。13.3「異常時は `event: error` で終端」に従い ERROR チャンクで表す |
+
+「検証していない」と「構造上届かない」を後から区別できるよう、後者もテストとして明示した。
+
+### 9.4 CONTENT_FILTERED（ADR-0037）
+
+調査の結果、**例外経路はコア側で開通済み**だった。`ErrorClassificationService` が
+`CONTENT_FILTERED → ErrorCode.CONTENT_FILTERED(422), retryable=false, fallbackable=設定可,
+cbRecordable=false` と 2.11 の表どおりに実装している。塞がっていたのは2点で、
+どちらも解消した。
+
+1. **Adapterが分類を作れない** → `AdapterContractTest` に
+   `contentFilteringSurface()` を**抽象メソッド**として追加し、Adapterに
+   「例外側／応答側／再現不能（理由必須）」のいずれかを**宣言させる**。宣言に応じて検証するため、
+   「再現できないからスキップ」で緑になることがなくなった
+2. **Streamingで届かない** → §9.3で解消
+
+エラー分類側は、Providerがエラーステータスを返す場合のために予約されたまま維持する
+（adapter-mock は例外側で申告し、実際に検証している）。
+
+### 9.5 max_tokens / seed（ADR-0040）
+
+- `AdapterRequest.modelMaxOutputTokens` を追加し、Routingが確定したModelの上限がAdapterへ届くようにした。
+  解決順は `params.maxTokens` → `modelMaxOutputTokens` → Adapterの既定。
+  以前は「Modelを8192で登録してもAdapterの既定4096で頭打ち」という静かな食い違いがあった
+- `seed` は**黙って捨てない**。対応する概念が無いため `UNSUPPORTED_CAPABILITY` で明示的に拒否し、
+  Providerを呼ぶ前に落とす。利用側が指定したパラメタを無言で無視しないための判断である
+
+### 9.6 credentialRefs（ADR-0038）と、その過程で見つかった欠落
+
+`AdapterConfig.credentialRefs` を追加し、Adapterは `state == ACTIVE` のものを選ぶ。
+adapter-mock の固定ダミー参照も是正し、実Adapterと同じ経路を通るようにした。
+
+**`authenticate()` のシグネチャは変更しない**と判断した。理由: `execute()` も秘密値を要るが
+`CredentialRef` を受け取らないため、`authenticate(ref)` にしても解決しない。
+Provider単位の設定を運ぶのは `initialize(config, …)` の役目であり、そこに置くのが筋である。
+シグネチャ変更はSPIのメジャー更新を要する割に得るものが無い。
+
+> **新たに見つかった欠落（ADR-0041）**: `ProviderAdapter.initialize(config, secrets)` は
+> **本番のどこからも呼ばれていない**。`PluginManager` のKDocが「Provider登録フローが別途行う」と
+> 書いたまま、その登録フローが実装されていない。つまり `credentialRefs` を追加しても、
+> **現状では実Adapterへ届かない**。P16では欠落の記録に留めた（配線には
+> 「1つのPluginを複数のProviderが共有する場合にインスタンスをどう分けるか」の設計判断が要り、
+> 本タスクの範囲を超えるため）。ADR-0041に詳細を記録した。
+
+### 9.7 modality申告（ADR-0039）と capabilityConstraints の消費（作業2-7）
+
+**`capabilityConstraints()` の戻り値は、本番コードのどこからも読まれていなかった。**
+Adapterが実装し、テストのフェイクが実装しているだけで、コア側に読み手がゼロ。
+「実装済みだが機能していない」の再発である（`MetricsEngine`・`AuditEngine`・
+`CapabilityRegistry` に続く4件目）。
+
+`ModelCapability.constraints` も `Map<String,String>` の自由領域で誰も読んでいなかった。
+**SPI側とRouting側の両方が不足**していたと判定し、両方を直した。
+
+- SPI: `CapabilityConstraints.supportedInputModalities: Set<Modality>`
+- ドメイン: `ModelCapability.supportedInputModalities: Set<Modality>`
+- Routing: `RoutingHardFilters.passesModalityFilter` をハードフィルタ列へ追加し、
+  `RoutingRequest.requiredModalities`（`ExecutionEngine` がリクエストの `ContentPart` から導出）と突き合わせる
+
+空集合は「未申告」であり「非対応」ではない。未申告のModelは従来どおり候補に残す
+（全Modelを落とすと、modalityを宣言していない既存の登録がすべて使えなくなるため）。
+`ModalityRoutingE2ETest` が、非対応Providerが**一度も呼ばれずに**候補から外れること、
+対応Providerは選ばれること、未申告Modelは残ることを確認する。
+
+なお `capabilityConstraints()` 自体の消費経路は**まだ無い**。今回Routingが読むのは
+ドメイン側の `ModelCapability` であり、Adapterの申告をModel登録へ取り込む経路
+（`discoverModels` の結果を承認する 15.1 Step6）は未実装のままである。
+**これは残る欠落として記録する**——申告口を作っただけで読み手を作らなければ、
+今回直したはずの「実装済みだが機能していない」を繰り返すことになる。
+
+### 9.8 typealias 経由のネスト型参照
+
+§3.7に記録したとおり、Kotlinはtypealias経由でネストした型（`ContentPart.Text`）へ
+アクセスできない。SPIは `TextContentPart` 等のフラットなaliasを別途用意しており、
+新規Adapter作者はそちらを使う必要がある。設計書は編集できないため、
+15章相当の記述としてここと `SpiSurface` のKDocに残す（ADR-0016の制約の実務上の帰結）。
+
+### 9.9 不変条件9: 違反注入による確認
+
+新規・変更した検査に、意図的な違反を一時的に注入して**実際に落ちること**を確認した
+（確認後はいずれも復旧済み）。
+
+| 注入 | 落ちた検査とメッセージ |
+|---|---|
+| Adapterが `MESSAGE_END` に `finishReason` を載せないようにする | `AdapterContractTest > the terminal stream chunk carries a finish reason`「MESSAGE_ENDに終了理由が載っていません。載せないと length_limit と正常完了が区別できません」 |
+| Routingの modality ハードフィルタを外す | `ModalityRoutingE2ETest > a provider that does not accept images is excluded before it is ever called`「Expected ApapException to be thrown, but nothing was thrown」（＝非対応Providerが呼ばれてしまう） |
+| Streaming の `finishReason` 伝播を切る（公開APIへの写し漏れ） | `ResponseFidelityE2ETest` の5項目「Adapterが申告した終了理由がストリーム経路で失われています。届いた: null」 |
+| `outputSchema` を再び黙殺する | `StructuredOutputTest > the schema reaches the provider through the native structured output mechanism`「output_config.format が送られていません」 |
+| findings文書から `[要実測]` の印を消す | `UnverifiedAgainstLiveApiTest > while unverified, the findings document must say so`「[要実測]の印が findings 文書から消えています。この印が『一通り検証した』という記憶への置き換わりを防ぐ唯一の手段です」 |
+
+最後の1件は、**文書の記述そのものを機械検証の対象にした**もの。作業0-2の
+「時間が経つと記憶に置き換わる」への対策が、文書を書いただけで終わらないようにしている。

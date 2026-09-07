@@ -1,6 +1,6 @@
 # ADR-0040: Provider必須パラメタと未対応パラメタをSPIが表現できない
 
-- **ステータス**: Proposed（P15で検出。**実装は次フェーズ**）
+- **ステータス**: Accepted（P16で実装。`modelMaxOutputTokens`の追加、`seed`の明示的拒否、`outputSchema`の実使用）
 - **関連要件**: FR-CAP-001, FR-EXE-002
 - **関連する設計書**: 03_基本設計.md 3.3.1（GenerationParams）, 3.3.2（AdapterRequest）
 - **検出**: P15 実Provider向けAdapter第1号の実装（docs/adapter-spi-findings.md §3.5）

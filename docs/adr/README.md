@@ -31,7 +31,7 @@ Architecture Decision Record。`docs/design/*.md` は一次情報として編集
 | [ADR-0025](ADR-0025-p8-infrastructure-technology-selection.md) | P8 apap-infrastructure/apap-plugin実装の技術選定（PostgreSQL+Flyway+素のJDBC、Redis+Lettuce、Plugin署名検証はjava.security.Signature自前実装） | Accepted | 補足（P8着手前レビュー、ADR-0001/ADR-0002の実装方式選定） |
 | [ADR-0026](ADR-0026-event-sourced-aggregate-reconstruction.md) | Event Sourcing対象Aggregateの再構築方式（apply/fold構造、イベントpayload拡張、スナップショット取得ポリシー） | Accepted | 補足（NFR-DAT-003、ADR-0014が委譲した未決定事項の解消） |
 | [ADR-0027](ADR-0027-gateway-endpoint-catalog-and-not-implemented-code.md) | 13.1のエンドポイントのうち提供していないものを明示的に区別する（EndpointCatalog + NOT_IMPLEMENTED） | Accepted | 補足（P10着手、13.1、13.4） |
-| [ADR-0028](ADR-0028-sse-message-end-omits-finish-reason.md) | SSEの`message_end`は`finish_reason`を省略する（エンジンが終了理由を伝播していないため） | Accepted | 補足（P10着手、13.3、2.10、FR-CAP-004） |
+| [ADR-0028](ADR-0028-sse-message-end-omits-finish-reason.md) | SSEの`message_end`は`finish_reason`を省略する（エンジンが終了理由を伝播していないため） | Superseded by ADR-0037 | 補足（P10着手、13.3、2.10、FR-CAP-004） |
 | [ADR-0029](ADR-0029-host-compatibility-verification-module.md) | 埋込ホスト互換性を検証する専用モジュールを置き、統合ドキュメントのコード例をそこでコンパイルする | Accepted | 補足（P10後続、P9統合ガイドの不具合） |
 | [ADR-0030](ADR-0030-resource-not-found-error-code-for-admin-apis.md) | Admin系リソースの「存在しない」に汎用の `RESOURCE_NOT_FOUND` を追加する | Accepted | 補足（13.4、13.1 Admin系） |
 | [ADR-0031](ADR-0031-canonical-request-loses-role-and-template-reference.md) | CanonicalRequestが13.2の入力表現（role / Template参照）を取りこぼしている | Accepted | 補足（P11総合検証、FR-CAP-001、FR-PMT-004） |
@@ -40,10 +40,11 @@ Architecture Decision Record。`docs/design/*.md` は一次情報として編集
 | [ADR-0034](ADR-0034-gateway-phase-overhead-measurement-point.md) | Gateway層に付加レイテンシの計測点を置く | Accepted | 補足（P11総合検証、NFR-PRF-001/002、2.19） |
 | [ADR-0035](ADR-0035-tenant-rate-limit-has-no-source-of-truth.md) | テナント別レート制限に設定元が無い（既定バケットは絞らない） | Accepted | 補足（P12是正、FR-EXE-003、NFR-PRF-003） |
 | [ADR-0036](ADR-0036-lock-free-rate-limiter-and-circuit-breaker.md) | Rate LimiterとCircuit Breakerのロック競合への対処方針（CAS化は単独では採らない） | Accepted | 補足（P13、NFR-PRF-003、2.4/2.12） |
-| [ADR-0037](ADR-0037-content-filtered-is-a-response-not-an-error.md) | コンテンツ拒否を例外側と応答側のどちらで表現するか | Proposed（実装は次フェーズ） | 補足（P15 SPI検証、FR-CAP-003） |
-| [ADR-0038](ADR-0038-adapter-credential-ref-resolution.md) | AdapterがどのCredentialRefを使うべきかをSPIが伝えていない | Proposed（実装は次フェーズ） | 補足（P15 SPI検証、FR-SEC-002） |
-| [ADR-0039](ADR-0039-modality-declaration-in-capability-constraints.md) | 対応modalityを申告する手段がSPIに無い | Proposed（実装は次フェーズ） | 補足（P15 SPI検証、FR-RTE-002） |
-| [ADR-0040](ADR-0040-required-and-unsupported-generation-params.md) | Provider必須パラメタと未対応パラメタをSPIが表現できない | Proposed（実装は次フェーズ） | 補足（P15 SPI検証、FR-CAP-001） |
+| [ADR-0037](ADR-0037-content-filtered-is-a-response-not-an-error.md) | コンテンツ拒否を例外側と応答側のどちらで表現するか | Accepted（P16実装） | 補足（P15 SPI検証、FR-CAP-003） |
+| [ADR-0038](ADR-0038-adapter-credential-ref-resolution.md) | AdapterがどのCredentialRefを使うべきかをSPIが伝えていない | Accepted（P16実装） | 補足（P15 SPI検証、FR-SEC-002） |
+| [ADR-0039](ADR-0039-modality-declaration-in-capability-constraints.md) | 対応modalityを申告する手段がSPIに無い | Accepted（P16実装） | 補足（P15 SPI検証、FR-RTE-002） |
+| [ADR-0040](ADR-0040-required-and-unsupported-generation-params.md) | Provider必須パラメタと未対応パラメタをSPIが表現できない | Accepted（P16実装） | 補足（P15 SPI検証、FR-CAP-001） |
+| [ADR-0041](ADR-0041-provider-adapter-is-never-initialized.md) | `ProviderAdapter.initialize()` が本番のどこからも呼ばれていない | Proposed（実装は次フェーズ） | 補足（P16、FR-PRV-001〜006、FR-SEC-002） |
 
 ## 命名規則
 
