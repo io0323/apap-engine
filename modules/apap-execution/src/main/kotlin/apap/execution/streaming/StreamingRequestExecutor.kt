@@ -158,7 +158,8 @@ class StreamingRequestExecutor(
         val resolved = adapterRegistry.resolve(provider.adapterPluginId)
         val authContext = resolved.adapter.authenticate()
         val remaining = ctx.remaining(clock.now())
-        val adapterRequest = RequestMapper.map(prompt, req, model.modelName, authContext, remaining)
+        val adapterRequest =
+            RequestMapper.map(prompt, req, model.modelName, authContext, remaining, model.maxOutputTokens)
 
         val adapterStream =
             try {

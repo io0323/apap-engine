@@ -215,7 +215,15 @@ class AttemptExecutor(
         val resolved = adapterRegistry.resolve(provider.adapterPluginId)
         val adapter = resolved.adapter
         val authContext = adapter.authenticate()
-        val adapterRequest = RequestMapper.map(prompt, req, model.modelName, authContext, remainingBudget)
+        val adapterRequest =
+            RequestMapper.map(
+                prompt,
+                req,
+                model.modelName,
+                authContext,
+                remainingBudget,
+                model.maxOutputTokens,
+            )
 
         // ここまでがAdapter送信前の付加分。次行のadapter.executeはProviderの時間なので含めない。
         recordDispatchOverhead(attemptStartedAt)

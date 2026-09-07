@@ -83,6 +83,7 @@ class RoutingEngine(
                 candidates,
                 regionRequirement = request.constraints.region,
                 excludeProviders = request.constraints.excludeProviders,
+                requiredModalities = request.requiredModalities,
                 isDenied = { candidate -> effectivePolicy.isDenied(candidate, request.capabilityId) },
             )
         if (filtered.isEmpty()) throw NoCandidateAvailableException(request.capabilityId)

@@ -14,6 +14,7 @@ import apap.domain.model.execution.StreamChunkType
 import apap.domain.model.vo.AdapterErrorCategory
 import apap.domain.model.vo.ContentPart
 import apap.domain.model.vo.ErrorCode
+import apap.domain.model.vo.FinishReason
 import apap.domain.model.vo.NormalizedError
 import apap.domain.port.Clock
 import apap.domain.port.DomainEventPublisher
@@ -87,6 +88,7 @@ class StreamingEngine(
         channelFlow {
             var state = StreamSessionState.OPENING
             var firstChunkSent = false
+            var finishReason: FinishReason? = null
             var index = 0
             val assembler = ToolCallAssembler()
             val startedAt = clock.now()
@@ -143,7 +145,15 @@ class StreamingEngine(
                                 return@channelFlow
                             }
                             state = StreamSessionState.DRAINING
-                            send(StreamChunk(type = StreamChunkType.MESSAGE_END, index = index++))
+                            // 13.3のSSE例どおり終了理由を載せる。Adapterが申告しなかった場合のみ
+                            // COMPLETEDとみなす（申告があるのに握り潰さないこと）。
+                            send(
+                                StreamChunk(
+                                    type = StreamChunkType.MESSAGE_END,
+                                    index = index++,
+                                    finishReason = finishReason ?: FinishReason.COMPLETED,
+                                ),
+                            )
                             state = StreamSessionState.CLOSED
                             logger.debug("stream {} -> {}", ctx.requestId.value, state)
                             completedNormally = true
@@ -157,7 +167,9 @@ class StreamingEngine(
                                 firstChunkSent = true
                                 publishOpened(ctx)
                             }
-                            emitNormalized(this, outcome.chunk, assembler, index) { index = it }
+                            emitNormalized(this, outcome.chunk, assembler, index, { index = it }) {
+                                finishReason = it
+                            }
                         }
                     }
                 }
@@ -166,13 +178,26 @@ class StreamingEngine(
             }
         }
 
+    /**
+     * @param onFinishReason Adapterが申告した終了理由を呼出元へ預ける。
+     *
+     * AdapterのMESSAGE_ENDは**転送しない**。終端チャンクは`EndOfStream`検出時に本エンジンが
+     * 1つだけ送出するのが正であり、両方を流すとMESSAGE_ENDが2回出る
+     * （従来テストは`chunks.last()`しか見ておらず、この重複が見えていなかった）。
+     */
+    @Suppress("LongParameterList")
     private suspend fun emitNormalized(
         scope: ProducerScope<StreamChunk>,
         raw: AdapterChunk,
         assembler: ToolCallAssembler,
         currentIndex: Int,
         updateIndex: (Int) -> Unit,
+        onFinishReason: (FinishReason) -> Unit,
     ) {
+        if (raw.type == AdapterChunkType.MESSAGE_END) {
+            raw.finishReason?.let(onFinishReason)
+            return
+        }
         var idx = currentIndex
         val normalized = ResponseMapper.normalizeChunk(raw).let { it.copy(index = idx++) }
         val toolCallDelta = normalized.toolCallDelta
