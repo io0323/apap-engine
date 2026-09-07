@@ -16,6 +16,7 @@ import apap.domain.model.vo.ProviderId
 import apap.domain.model.vo.Region
 import apap.domain.model.vo.RegionCodeTable
 import apap.testkit.contract.AdapterContractTest
+import apap.testkit.contract.ContentFilteringSurface
 import java.time.Duration
 
 /**
@@ -66,6 +67,15 @@ class MockProviderAdapterContractTest : AdapterContractTest() {
             pendingForcedErrorCategory = category
             baseRequest(chatCapability)
         }
+
+    /**
+     * adapter-mockは`forcedErrorCategory`で任意の分類を作れるため、例外側で申告する
+     * （実Providerと違い、拒否の表現方法を自由に選べる立場にある）。
+     */
+    override fun contentFilteringSurface(): ContentFilteringSurface {
+        pendingForcedErrorCategory = AdapterErrorCategory.CONTENT_FILTERED
+        return ContentFilteringSurface.AsException(baseRequest(chatCapability))
+    }
 
     override fun secretProbeValue(): String = SECRET_VALUE
 

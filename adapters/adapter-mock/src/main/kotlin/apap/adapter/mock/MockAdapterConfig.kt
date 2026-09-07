@@ -4,6 +4,7 @@ import apap.adapter.spi.AdapterChunk
 import apap.adapter.spi.AdapterErrorCategory
 import apap.adapter.spi.CapabilityId
 import apap.adapter.spi.HealthResult
+import apap.adapter.spi.Modality
 import apap.adapter.spi.ProviderHealthStatus
 import apap.adapter.spi.TokenCount
 import apap.adapter.spi.ToolCall
@@ -50,6 +51,18 @@ data class MockAdapterConfig(
      * 通常の完了応答にする——これが5.4の往復そのもの。
      */
     val toolCallsOnFirstTurn: List<ToolCall> = emptyList(),
+    /**
+     * `capabilityConstraints`が申告する入力modality（ADR-0039）。
+     * 空集合＝未申告。Routingのハードフィルタは未申告の候補を通すため、
+     * 「非対応で除外される」ことを試すテストは明示的に集合を指定すること。
+     */
+    val supportedInputModalities: Set<Modality> = emptySet(),
+    /**
+     * `execute`/`executeStream`が受け取った[apap.adapter.spi.AdapterRequest]を記録する。
+     * SPIの新しい項目（`modelMaxOutputTokens`・`outputSchema`等）がAdapterまで届いているかを、
+     * コア側のテストから確認できるようにするためのフック。
+     */
+    val requestSink: ((apap.adapter.spi.AdapterRequest) -> Unit)? = null,
 ) {
     init {
         require(!latency.isNegative) { "latency must not be negative: $latency" }

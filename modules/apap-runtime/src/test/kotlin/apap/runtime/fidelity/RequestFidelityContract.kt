@@ -229,6 +229,9 @@ object RequestFidelityContract {
         mapOf(
             "modelName" to "Routingが決めたModelの物理名。リクエストにはmodelAlias（論理名）しか無い（不変条件3）",
             "authContext" to "Adapter自身のauthenticate()の結果。Credentialは保持しない（不変条件4）",
+            "modelMaxOutputTokens" to
+                "Routingが確定したModelの`maxOutputTokens`。リクエストではなくModel定義由来で、" +
+                "`max_tokens`必須のProviderがAdapter側で既定値を捏造しないために渡す（ADR-0040）",
         )
 
     /**

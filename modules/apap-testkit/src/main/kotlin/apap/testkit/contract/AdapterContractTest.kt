@@ -7,9 +7,11 @@ import apap.adapter.spi.ProviderAdapter
 import apap.domain.model.vo.AdapterErrorCategory
 import apap.domain.model.vo.CapabilityId
 import apap.domain.model.vo.ContentPart
+import apap.domain.model.vo.FinishReason
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -61,6 +63,16 @@ abstract class AdapterContractTest {
     /** [ProviderAdapter.healthCheck]が返るまでに許容する最大時間。 */
     protected open fun healthCheckMaxDuration(): Duration = Duration.ofSeconds(HEALTH_CHECK_DEFAULT_SECONDS)
 
+    /**
+     * コンテンツ拒否（セーフティ拒否）が**どちらの経路で表面化するか**の申告（ADR-0037）。
+     *
+     * 設計書は同じ概念を2箇所に持つ。2.9のFinishReason 6値（応答側）と、2.11のエラー分類（例外側）。
+     * どちらで来るかはProviderによって違うため、**Adapterが宣言し、それに応じて検証する**。
+     * 宣言しないことは選べない——「再現できないからスキップ」を許すと、緑のまま
+     * 「コンテンツ拒否の扱いを一度も確かめていない」状態になる。
+     */
+    protected abstract fun contentFilteringSurface(): ContentFilteringSurface
+
     /** [ProviderAdapter.estimateTokens]呼出に使うサンプル入力。 */
     protected open fun estimateTokensSampleInput(): List<ContentPart> = listOf(ContentPart.Text("sample input"))
 
@@ -100,9 +112,13 @@ abstract class AdapterContractTest {
             assertEquals(AdapterErrorCategory.UNSUPPORTED_CAPABILITY, exception.category)
         }
 
+    /**
+     * CONTENT_FILTEREDは除外する。Providerによって例外／正常応答のどちらでも来うるため、
+     * 専用の`content filtering surfaces the way this adapter declares it does`で申告どおりに検証する。
+     */
     @TestFactory
     fun `each error category maps to the matching AdapterException category`(): List<DynamicTest> =
-        AdapterErrorCategory.entries.map { category ->
+        AdapterErrorCategory.entries.filterNot { it == AdapterErrorCategory.CONTENT_FILTERED }.map { category ->
             DynamicTest.dynamicTest("category=$category") {
                 val request = errorRequestFor(category)
                 assumeTrue(request != null, "errorRequestFor($category) not provided by this adapter's test")
@@ -177,6 +193,62 @@ abstract class AdapterContractTest {
 
             val haystack = "${exception.message}|${exception.providerDetail}|$exception|$captured"
             assertFalse(haystack.contains(secret!!), "Credential value leaked into adapter output: $haystack")
+        }
+
+    /**
+     * 15.4「エラー分類」のうちCONTENT_FILTEREDだけは、Providerによって
+     * 例外／正常応答のどちらでも来うる。[contentFilteringSurface]の申告どおりに届くことを確認する。
+     */
+    @Test
+    fun `content filtering surfaces the way this adapter declares it does`() =
+        runBlocking {
+            when (val surface = contentFilteringSurface()) {
+                is ContentFilteringSurface.AsException -> {
+                    val adapter = createAdapter()
+                    val exception =
+                        assertThrows(AdapterException::class.java) {
+                            runBlocking { adapter.execute(surface.request) }
+                        }
+                    assertEquals(AdapterErrorCategory.CONTENT_FILTERED, exception.category)
+                }
+                is ContentFilteringSurface.AsFinishReason -> {
+                    val adapter = createAdapter()
+                    val response = adapter.execute(surface.request)
+                    assertEquals(
+                        FinishReason.CONTENT_FILTERED,
+                        response.finishReason,
+                        "拒否が正常応答として返る宣言なのに、finishReasonがCONTENT_FILTEREDではありません",
+                    )
+                }
+                is ContentFilteringSurface.NotReachable -> {
+                    // 「このProviderでは再現手段が無い」ことを理由付きで宣言した場合のみ許す。
+                    assertTrue(
+                        surface.reason.isNotBlank(),
+                        "再現できない理由を書かない宣言は、単なる検証漏れと区別できません",
+                    )
+                }
+            }
+        }
+
+    /**
+     * ストリームの終端が終了理由を運ぶこと（13.3 `message_end` の `finish_reason`）。
+     *
+     * これが無いと **`length_limit`で切られたストリームが正常完了と区別できない**。
+     * Streamを用意できないAdapterはスキップする。
+     */
+    @Test
+    fun `the terminal stream chunk carries a finish reason`() =
+        runBlocking {
+            val request = streamRequest()
+            assumeTrue(request != null, "streamRequest() not provided by this adapter's test")
+            val stream = createAdapter().executeStream(request!!)
+            val chunks = buildList { while (true) add(stream.next() ?: break) }
+            val terminal = chunks.lastOrNull { it.type == AdapterChunkType.MESSAGE_END }
+            assumeTrue(terminal != null, "this adapter's stream does not emit MESSAGE_END")
+            assertNotNull(
+                terminal!!.finishReason,
+                "MESSAGE_ENDに終了理由が載っていません。載せないと length_limit と正常完了が区別できません",
+            )
         }
 
     @Test
