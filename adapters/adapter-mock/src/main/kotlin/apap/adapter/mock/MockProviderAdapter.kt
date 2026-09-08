@@ -8,7 +8,6 @@ import apap.adapter.spi.AdapterException
 import apap.adapter.spi.AdapterRequest
 import apap.adapter.spi.AdapterResponse
 import apap.adapter.spi.AuthContext
-import apap.adapter.spi.CapabilityConstraints
 import apap.adapter.spi.CapabilityId
 import apap.adapter.spi.ContentPart
 import apap.adapter.spi.CredentialRef
@@ -73,14 +72,6 @@ class MockProviderAdapter(
     override fun spiVersion(): SemVer = SpiSurface.version
 
     override fun supportedCapabilities(): Set<CapabilityId> = config.supportedCapabilities
-
-    override fun capabilityConstraints(capabilityId: CapabilityId): CapabilityConstraints =
-        CapabilityConstraints(
-            streamable = true,
-            supportsTools = true,
-            // ADR-0039: テストが対応/非対応を作り分けられるよう設定可能にする。
-            supportedInputModalities = config.supportedInputModalities,
-        )
 
     override suspend fun authenticate(): AuthContext {
         resolveCredentialSafely()

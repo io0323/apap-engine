@@ -41,12 +41,6 @@ class SpiValueObjectsTest {
     }
 
     @Test
-    fun `CapabilityConstraints rejects non positive token limits`() {
-        assertThrows(IllegalArgumentException::class.java) { CapabilityConstraints(maxInputTokens = 0) }
-        assertThrows(IllegalArgumentException::class.java) { CapabilityConstraints(maxOutputTokens = 0) }
-    }
-
-    @Test
     fun `DiscoveredModel rejects blank names and non positive limits`() {
         assertThrows(IllegalArgumentException::class.java) { discoveredModel(modelName = " ") }
         assertThrows(IllegalArgumentException::class.java) { discoveredModel(version = " ") }

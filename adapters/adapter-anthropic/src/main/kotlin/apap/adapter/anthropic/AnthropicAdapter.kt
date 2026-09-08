@@ -6,14 +6,12 @@ import apap.adapter.spi.AdapterException
 import apap.adapter.spi.AdapterRequest
 import apap.adapter.spi.AdapterResponse
 import apap.adapter.spi.AuthContext
-import apap.adapter.spi.CapabilityConstraints
 import apap.adapter.spi.CapabilityId
 import apap.adapter.spi.ContentPart
 import apap.adapter.spi.CredentialRef
 import apap.adapter.spi.CredentialState
 import apap.adapter.spi.DiscoveredModel
 import apap.adapter.spi.HealthResult
-import apap.adapter.spi.Modality
 import apap.adapter.spi.Period
 import apap.adapter.spi.ProviderAdapter
 import apap.adapter.spi.ProviderCost
@@ -89,38 +87,6 @@ class AnthropicAdapter(
     // --- 能力申告 ---------------------------------------------------------------------------
 
     override fun supportedCapabilities(): Set<CapabilityId> = SUPPORTED_CAPABILITIES
-
-    override fun capabilityConstraints(capabilityId: CapabilityId): CapabilityConstraints =
-        when (capabilityId) {
-            CAPABILITY_CHAT ->
-                CapabilityConstraints(
-                    maxInputTokens = DEFAULT_CONTEXT_WINDOW,
-                    maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS,
-                    streamable = true,
-                    supportsTools = true,
-                    // ADR-0039: 自由文字列ではなく型で申告する。Routingがハードフィルタとして読む。
-                    supportedInputModalities = SUPPORTED_INPUT_MODALITIES,
-                    // 固定フィールドで表現できない制約だけがextraに残る（人間向けのメモ）。
-                    extra =
-                        mapOf(
-                            "messages.must_alternate" to "true",
-                            "max_tokens.required" to "true",
-                        ),
-                )
-            CAPABILITY_STREAMING ->
-                CapabilityConstraints(
-                    streamable = true,
-                    supportsTools = true,
-                    supportedInputModalities = SUPPORTED_INPUT_MODALITIES,
-                )
-            CAPABILITY_TOOL_CALLING ->
-                CapabilityConstraints(
-                    streamable = true,
-                    supportsTools = true,
-                    supportedInputModalities = SUPPORTED_INPUT_MODALITIES,
-                )
-            else -> CapabilityConstraints()
-        }
 
     // --- 認証 -------------------------------------------------------------------------------
 
@@ -424,13 +390,6 @@ class AnthropicAdapter(
         val CAPABILITY_TOOL_CALLING = CapabilityId("tool_calling")
 
         val SUPPORTED_CAPABILITIES = setOf(CAPABILITY_CHAT, CAPABILITY_STREAMING, CAPABILITY_TOOL_CALLING)
-
-        /**
-         * Messages APIが受け付ける入力modality。音声・動画に対応するcontent blockが無いため
-         * 申告しない（申告しなければRoutingが実行前に候補から外す。ADR-0039）。
-         * JSONはテキストblockとして送るため受け付けられる。
-         */
-        val SUPPORTED_INPUT_MODALITIES = setOf(Modality.TEXT, Modality.IMAGE, Modality.JSON)
 
         const val DEFAULT_BASE_URL = "https://api.anthropic.com"
         const val MESSAGES_PATH = "/v1/messages"

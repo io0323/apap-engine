@@ -44,9 +44,6 @@ typealias AdapterErrorCategory = apap.domain.model.vo.AdapterErrorCategory
 
 typealias FinishReason = apap.domain.model.vo.FinishReason
 
-/** 入出力の様式（ADR-0039）。`CapabilityConstraints.supportedInputModalities`で申告する。 */
-typealias Modality = apap.domain.model.vo.Modality
-
 typealias Period = apap.domain.model.vo.Period
 
 typealias SemVer = apap.domain.model.vo.SemVer

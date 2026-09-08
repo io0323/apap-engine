@@ -68,3 +68,18 @@ echo "$APAP_RECORD_DIR"
 | `credential.version` | `1` | 同上 |
 
 `AdapterConfig.endpoints` は重み最大のものの `baseUrl` を使う。
+
+## Model登録時に申告すること
+
+ADR-0042で `capabilityConstraints()` をSPIから削除したため、**Adapterは自分の制約を申告しない**。
+制約はProviderごとではなくModelごとにしか意味を持たず、Routingが読むのはドメイン側の
+`ModelCapability` だからである。このAdapterのModelを登録する際は、次を人手（または将来の
+15.1 Step6の自動登録）で設定すること。
+
+| 項目 | 値 | 根拠 |
+|---|---|---|
+| `ModelCapability.supportedInputModalities` | `TEXT`, `IMAGE`, `JSON` | Messages APIに音声・動画のcontent blockが無い。JSONはテキストblockとして送る。申告しておくとRoutingが実行前に非対応リクエストを外す（ADR-0039） |
+| `Model.contextWindow` / `Model.maxOutputTokens` | Modelごとの実値 | 未設定だとAdapterの既定値（4096）で頭打ちになる（ADR-0040） |
+
+`messages`のrole交互制約と`max_tokens`必須は、Adapter内（`RequestBodyBuilder`）で吸収するため
+登録時の申告は要らない。

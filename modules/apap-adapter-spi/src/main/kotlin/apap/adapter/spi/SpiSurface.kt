@@ -23,17 +23,19 @@ object SpiSurface {
      * |---|---|---|
      * | 1.0.0 | 初版 | — |
      * | 1.1.0 | P16のSPI拡張 | **マイナー**（追加のみ、既定値あり、順序末尾） |
+     * | 2.0.0 | `capabilityConstraints`の削除（ADR-0042） | **メジャー**（メソッド削除） |
      *
      * 1.1.0で追加したもの: `CapabilityConstraints.supportedInputModalities`（ADR-0039）、
      * `AdapterConfig.credentialRefs`（ADR-0038）、`AdapterRequest.modelMaxOutputTokens`（ADR-0040）、
      * `AdapterChunk.finishReason`（13.3の`message_end`、ADR-0028をSupersede）。
+     * いずれも省略可能フィールドの末尾追加のためマイナーに留めた。
      *
-     * いずれも**省略可能フィールドの末尾追加**であり、フィールド削除・型変更・制約強化は
-     * 行っていないためメジャー更新には当たらない。既存Adapterは無改修でコンパイル・動作する
-     * （`AdapterContractTest`に抽象メソッドを1つ足したため、**契約テストの実装だけは**更新が要る。
-     * これは`apap-testkit`側の変更でSPI公開面ではない）。
+     * 2.0.0で削除したもの: `ProviderAdapter.capabilityConstraints`、`CapabilityConstraints`型、
+     * `Modality`のtypealias（ADR-0042）。**メソッドの削除は既存Adapterのコンパイルを壊す**ため
+     * メジャー更新に当たる。Adapter側の対応は`override`を1つ消し、`plugin.yaml`の
+     * `spi_version`レンジを`>=2.0 <3.0`へ更新すること。
      */
-    val version: SemVer = SemVer(1, 1, 0)
+    val version: SemVer = SemVer(2, 0, 0)
 
     /** typealias名 → 再エクスポート先の完全修飾クラス名。 */
     val exposedDomainTypes: Map<String, String> =
@@ -51,11 +53,52 @@ object SpiSurface {
             "CredentialState" to "apap.domain.model.vo.CredentialState",
             "AdapterErrorCategory" to "apap.domain.model.vo.AdapterErrorCategory",
             "FinishReason" to "apap.domain.model.vo.FinishReason",
-            "Modality" to "apap.domain.model.vo.Modality",
             "Period" to "apap.domain.model.vo.Period",
             "SemVer" to "apap.domain.model.vo.SemVer",
             "TokenCount" to "apap.domain.model.vo.TokenCount",
             "Usage" to "apap.domain.model.vo.Usage",
             "ProviderHealthStatus" to "apap.domain.model.provider.ProviderHealthStatus",
         )
+
+    /**
+     * [ProviderAdapter]の各メソッドと、**本番コード側の呼び出し元**（クローズドセット）。
+     *
+     * ## なぜこの表が要るのか
+     *
+     * `capabilityConstraints`は2フェーズにわたり「実装されているが本番の誰も読まない」まま残り、
+     * Adapter作者には意味のあるメソッドに見えていた（ADR-0042で削除）。同じ形の欠落は
+     * `MetricsEngine`・`AuditEngine`・`CapabilityRegistry`でも起きている。**宣言だけを増やせない**
+     * ようにするため、メソッド集合と消費者の対応をここで管理し、`ProviderAdapterSurfaceTest`が
+     * 機械検証する。SPIへメソッドを足すときは、この表も更新しなければビルドが落ちる。
+     *
+     * 値が[NO_CONSUMER_PREFIX]で始まるものは、**現時点で本番の呼び出し元が無い**ことを
+     * 明示的に宣言したものである（理由を続けて書く）。黙って増やさないための逃げ道であって、
+     * 推奨される状態ではない。
+     */
+    val adapterMethodConsumers: Map<String, String> =
+        mapOf(
+            "initialize" to "apap.provider.ProviderAdapterProvisioner",
+            "shutdown" to "apap.provider.ProviderAdapterProvisioner",
+            "spiVersion" to
+                "$NO_CONSUMER_PREFIX ホストは`plugin.yaml`の`spi_version`レンジ（PluginManager）で" +
+                "互換性を判定しており、Adapter自身の申告は突き合わせていない（ADR-0016の残課題）",
+            "supportedCapabilities" to "apap.provider.ProviderManager (15.1 Step5の突合)",
+            "authenticate" to "apap.execution.attempt.AttemptExecutor / StreamingRequestExecutor",
+            "validateCredential" to "apap.provider.ProviderManager",
+            "execute" to "apap.execution.attempt.AttemptExecutor",
+            "executeStream" to "apap.execution.streaming.StreamingRequestExecutor",
+            "translateTools" to
+                "$NO_CONSUMER_PREFIX コアは`AdapterRequest.tools`をSPIの共通形式のまま渡し、" +
+                "Provider形式への変換はAdapter内部で完結している（findings §4）",
+            "discoverModels" to
+                "$NO_CONSUMER_PREFIX 検出結果を承認してModel登録する経路（15.1 Step6）が未実装" +
+                "（apap.gateway.catalog.EndpointCatalogに未提供APIとして記録済み）",
+            "healthCheck" to "apap.provider.ProviderHealthCheckTask / ProviderManager",
+            "fetchUsage" to "$NO_CONSUMER_PREFIX Provider側集計APIを取り込むユースケースが未実装（findings §4.2）",
+            "fetchCost" to "$NO_CONSUMER_PREFIX 同上（findings §4.2）",
+            "estimateTokens" to "apap.execution.estimation.TokenEstimator",
+        )
+
+    /** [adapterMethodConsumers]で「本番の消費者が無い」ことを宣言する接頭辞。 */
+    const val NO_CONSUMER_PREFIX: String = "NO PRODUCTION CONSUMER:"
 }
