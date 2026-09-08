@@ -47,13 +47,16 @@ object RequestBodyBuilder {
         request: AdapterRequest,
         stream: Boolean,
         maxTokensFallback: Int,
+        structuredOutputMode: StructuredOutputMode,
     ): String {
         val body = mapper.createObjectNode()
         body.put("model", request.modelName)
-        body.put("max_tokens", request.params.maxTokens ?: maxTokensFallback)
+        // ADR-0040: リクエスト指定 → Modelの上限 → Adapterの既定 の順で解決する。
+        // 以前はModelの上限がAdapterへ渡らず、8192で登録したModelでも既定4096で頭打ちになっていた。
+        body.put("max_tokens", request.params.maxTokens ?: request.modelMaxOutputTokens ?: maxTokensFallback)
         body.put("stream", stream)
 
-        systemTextOf(request)?.let { body.put("system", it) }
+        systemTextOf(request, structuredOutputMode)?.let { body.put("system", it) }
         body.set<ArrayNode>("messages", messagesOf(request))
 
         request.params.temperature?.let { body.put("temperature", it) }
@@ -63,11 +66,63 @@ object RequestBodyBuilder {
             request.params.stop.forEach { stops.add(it) }
             body.set<ArrayNode>("stop_sequences", stops)
         }
-        // seed: 実APIに対応するパラメタが無い。黙って捨てるのではなく findings へ記録している。
+        // ADR-0040: seedは実APIに対応パラメタが無い。**黙って捨てない**——
+        // 呼び出し元は再現性を期待しており、無言で無視すると効いていないことに気付けない。
+        // 拒否はAdapter側で行う（[AnthropicAdapter.buildBody]がUNSUPPORTED_CAPABILITYへ変換する）。
+        if (request.params.seed != null) throw AdapterUnsupportedParamException("params.seed")
+
         request.tools?.takeIf { it.isNotEmpty() }?.let { body.set<ArrayNode>("tools", toolsArray(it)) }
-        // outputSchema: 実APIにJSON Schema強制のパラメタが無いため、schema付きtoolを1本足して
-        // それを強制する方式は取らない（Routing/Tool呼出の意味論が変わるため）。findings参照。
+        rejectIncompatibleCombinations(request, structuredOutputMode)
+        applyStructuredOutput(body, request.outputSchema, structuredOutputMode)
         return mapper.writeValueAsString(body)
+    }
+
+    /**
+     * FR-CAP-003 Structured Output。**以前はここが何もしておらず、`outputSchema`は
+     * Adapter内で参照ゼロだった**——スキーマがProviderへ渡らないため、モデルは構造の指示なしに
+     * 生成し、毎回まず検証に落ちてからADR-0011の是正リトライで直る動作になっていた。
+     * 是正機構は例外的な救済であって常用経路ではない（ADR-0040）。
+     *
+     * @param mode [StructuredOutputMode.NATIVE] は実APIの `output_config.format` を使う。
+     *   [StructuredOutputMode.PROMPT] はスキーマをsystemへ組み込む（[systemTextOf]側で行う）。
+     */
+    private fun applyStructuredOutput(
+        body: ObjectNode,
+        schema: String?,
+        mode: StructuredOutputMode,
+    ) {
+        if (schema == null || mode != StructuredOutputMode.NATIVE) return
+        val outputConfig = mapper.createObjectNode()
+        val format = mapper.createObjectNode()
+        format.put("type", "json_schema")
+        // 実APIが受け付ける部分集合へ整えてから載せる。整形の内容と、外した制約が
+        // どこで効くのかは[StructuredOutputSchema]のKDocを参照。
+        format.set<ObjectNode>("schema", StructuredOutputSchema.prepare(schema))
+        outputConfig.set<ObjectNode>("format", format)
+        body.set<ObjectNode>("output_config", outputConfig)
+    }
+
+    /**
+     * `output_config.format`と**併用できない**組み合わせを、送信前に落とす。
+     *
+     * 実APIは構造化出力とMessage Prefilling（末尾のassistantメッセージで応答の書き出しを固定する
+     * 手法）の併用を400で拒否する。SPIには「prefill」という概念が無く、末尾がassistantの
+     * 会話履歴がそのままprefillとして送られるため、**利用側は併用していることに気付けない**。
+     * Provider側の400をそのまま返すと原因が読み取れないので、ここで理由の分かる失敗にする。
+     * 退避先は`structured_output.mode = "prompt"`（[StructuredOutputMode]）。
+     *
+     * Citationsも同じく併用不可だが、本Adapterはcitations blockを組み立てないため
+     * 経路が存在しない（findings §9.8）。
+     */
+    private fun rejectIncompatibleCombinations(
+        request: AdapterRequest,
+        mode: StructuredOutputMode,
+    ) {
+        if (request.outputSchema == null || mode != StructuredOutputMode.NATIVE) return
+        val lastConversational = request.messages.lastOrNull { it.role != TurnRole.SYSTEM } ?: return
+        if (lastConversational.role == TurnRole.ASSISTANT && request.toolResults.isEmpty()) {
+            throw AdapterStructuredOutputConflictException("message prefilling (a trailing assistant message)")
+        }
     }
 
     /** tools を Provider 形式の配列へ。`translateTools` からも使う。 */
@@ -83,14 +138,28 @@ object RequestBodyBuilder {
         return array
     }
 
-    /** SYSTEM発話（Memory注入・System Promptの両方がここに来る）を連結する。 */
-    private fun systemTextOf(request: AdapterRequest): String? {
-        val text =
+    /**
+     * SYSTEM発話（Memory注入・System Promptの両方がここに来る）を連結する。
+     * [StructuredOutputMode.PROMPT]のときはスキーマ指示も末尾へ足す。
+     */
+    private fun systemTextOf(
+        request: AdapterRequest,
+        mode: StructuredOutputMode,
+    ): String? {
+        val declared =
             request.messages
                 .filter { it.role == TurnRole.SYSTEM }
                 .flatMap { it.content }
                 .filterIsInstance<TextContentPart>()
                 .joinToString("\n\n") { it.text }
+        val schemaInstruction =
+            request.outputSchema
+                ?.takeIf { mode == StructuredOutputMode.PROMPT }
+                ?.let { schema ->
+                    "You must reply with JSON that validates against this JSON Schema. " +
+                        "Reply with the JSON document only, without prose or code fences.\n$schema"
+                }
+        val text = listOfNotNull(declared.takeIf { it.isNotBlank() }, schemaInstruction).joinToString("\n\n")
         return text.takeIf { it.isNotBlank() }
     }
 
@@ -208,7 +277,7 @@ object RequestBodyBuilder {
             .getOrElse {
                 // スキーマが壊れているまま送ると、Provider側で分かりにくい400になる。
                 // 手前で落として INVALID_REQUEST として扱えるようにする。
-                throw AdapterSchemaException(it.message ?: "invalid tool input schema")
+                throw AdapterSchemaException(it.message ?: "invalid schema")
             }
 
     private const val CONTINUATION_PLACEHOLDER = "(continued)"
@@ -219,7 +288,17 @@ class AdapterModalityException(
     val modality: String,
 ) : RuntimeException("this provider's messages API has no content block for modality: $modality")
 
-/** tool の input_schema がJSONとして壊れている。 */
+/** Providerに対応する概念が無いパラメタを指定された。黙って捨てないための明示的な失敗。 */
+class AdapterUnsupportedParamException(
+    val paramName: String,
+) : RuntimeException("this provider has no equivalent for $paramName; it would be silently ignored")
+
+/** 渡されたJSON Schema（toolの`input_schema`または`outputSchema`）がJSONとして壊れている。 */
 class AdapterSchemaException(
     detail: String,
-) : RuntimeException("tool input schema is not valid JSON: $detail")
+) : RuntimeException("schema is not valid JSON: $detail")
+
+/** 構造化出力と併用できない機能が同じリクエストに含まれている（Provider側では400になる）。 */
+class AdapterStructuredOutputConflictException(
+    val feature: String,
+) : RuntimeException("this provider cannot combine native structured output with $feature")

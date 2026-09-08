@@ -133,16 +133,26 @@ class CapabilityRegistry(
  * 「検証していない」より危険（検証済みだと誤信させる）。
  */
 object JsonSchemaValidator {
-    // TooGenericExceptionCaught: 検証器が投げうる例外は不正スキーマ・JSON構文エラー・
-    // 内部状態エラーと多岐にわたり、取りこぼすと「検証していない応答」を通してしまう。
-    // 種類ではなく「検証できなかった」という事実だけを見て、常に不適合として扱う。
+    /**
+     * `TooGenericExceptionCaught`を抑制しているのは、検証器が投げうる例外が不正スキーマ・
+     * JSON構文エラー・内部状態エラーと多岐にわたり、取りこぼすと「検証していない応答」を
+     * 通してしまうため。種類ではなく「検証できなかった」という事実だけを見て、常に不適合とする。
+     *
+     * @param enumCaseInsensitive `enum`値の**大文字小文字の違いだけ**を適合と見なす。
+     *   制約付きデコードを行うProviderが宣言と異なる綴りを返すこと（しかも正常終了する）への許容で、
+     *   詳細と根拠は[EnumCaseNormalizer]のKDocにある。既定は`false`——入力境界の検証
+     *   （[CapabilityRegistry]）を緩めてはならないため、緩めるのは応答側の判定に限る。
+     */
     @Suppress("TooGenericExceptionCaught")
     fun validate(
         schema: String,
         json: String,
+        enumCaseInsensitive: Boolean = false,
     ): SchemaValidationResult =
         try {
-            val messages = SCHEMA_FACTORY.getSchema(schema).validate(json, InputFormat.JSON)
+            // 寄せるのは検証にかける写しだけで、呼び出し側が持つ応答そのものは書き換えない。
+            val target = if (enumCaseInsensitive) EnumCaseNormalizer.normalize(schema, json) ?: json else json
+            val messages = SCHEMA_FACTORY.getSchema(schema).validate(target, InputFormat.JSON)
             SchemaValidationResult(valid = messages.isEmpty(), errors = messages.map { it.message })
         } catch (e: RuntimeException) {
             // スキーマ自体が不正、または検証対象がJSONとして壊れている場合。

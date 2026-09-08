@@ -35,6 +35,15 @@ data class AdapterRequest(
      * 既定は[input]を単一USER発話とみなしたもので、既存Adapterは無視しても動作は変わらない。
      */
     val messages: List<InputMessage> = InputMessage.userOnly(input),
+    /**
+     * ルーティングで確定したModelの出力上限（`Model.maxOutputTokens`）。
+     *
+     * ADR-0040: `max_tokens`が**必須**のProviderがあるのに`GenerationParams.maxTokens`は任意で、
+     * Model側の上限もAdapterへ渡っていなかった。そのためAdapterは既定値を捏造するしかなく、
+     * 「Modelを8192で登録したのにAdapterの既定4096で頭打ち」という静かな食い違いが起きていた。
+     * Adapterは `params.maxTokens ?: modelMaxOutputTokens ?: 自前の既定` の順で解決すること。
+     */
+    val modelMaxOutputTokens: Int? = null,
 ) {
     init {
         require(modelName.isNotBlank()) { "AdapterRequest.modelName must not be blank" }

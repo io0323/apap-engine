@@ -30,7 +30,7 @@ class TokenEstimator(
         prompt: ProcessedPrompt,
     ): TokenCount {
         val provider = providerRepository.findById(candidate.providerId)
-        val exact = provider?.let { adapterRegistry.resolve(it.adapterPluginId).adapter.estimateTokens(prompt.input) }
+        val exact = provider?.let { adapterRegistry.resolve(it.providerId).adapter.estimateTokens(prompt.input) }
         return if (exact != null) {
             TokenEstimationService.estimateExact(exact.value, config)
         } else {

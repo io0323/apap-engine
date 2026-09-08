@@ -17,6 +17,7 @@ import apap.execution.ExecutionEngine
 import apap.observability.audit.AuditEngine
 import apap.plugin.PluginManager
 import apap.provider.CapabilityDiscoveryQuery
+import apap.provider.ProviderAdapterProvisioner
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
@@ -47,6 +48,13 @@ internal class DefaultApapEngine(
      */
     private val auditEngine: AuditEngine,
     private val pluginManager: PluginManager?,
+    /**
+     * ProviderごとのAdapterインスタンス（ADR-0041）。[close]で全件`shutdown()`する
+     * ——Adapterは実HTTPクライアント（コネクションプール・スレッド）を持ちうるため、
+     * 畳まずにPluginをunloadすると、宿主のプロセスに残る（不変条件6の趣旨）。
+     * ホストが自前の`AdapterRegistry`を渡した構成ではnull（インスタンスの寿命はホストの責任）。
+     */
+    private val adapterProvisioner: ProviderAdapterProvisioner?,
     private val drainTimeout: Duration = DEFAULT_DRAIN_TIMEOUT,
 ) : ApapEngine {
     private val draining = AtomicBoolean(false)
@@ -105,6 +113,13 @@ internal class DefaultApapEngine(
         while (inFlight.get() > 0 && System.nanoTime() < deadline) {
             Thread.sleep(DRAIN_POLL_INTERVAL_MS)
         }
+        // Adapter → Plugin の順に畳む。逆にするとClassLoaderを閉じた後にAdapterのコードを
+        // 呼ぶことになる。
+        adapterProvisioner?.let { provisioner ->
+            provisioner.provisionedProviders().forEach { providerId ->
+                runCatching { provisioner.release(providerId) }
+            }
+        }
         pluginManager?.let { manager ->
             manager.loadedPluginIds().forEach { pluginId -> runCatching { manager.unload(pluginId) } }
         }
@@ -162,6 +177,7 @@ private fun apap.domain.model.execution.StreamChunk.toApi(): ApapStreamChunk =
         toolCallDelta = toolCallDelta,
         usage = usage,
         error = error,
+        finishReason = finishReason,
     )
 
 private fun StreamChunkType.toApi(): ApapStreamChunkType =

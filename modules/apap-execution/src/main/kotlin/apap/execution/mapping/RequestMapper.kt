@@ -19,12 +19,17 @@ import java.time.Duration
  * 変換する。
  */
 object RequestMapper {
+    // LongParameterList: 3.3.6の`map(prompt, candidate, req)`に加え、Adapterが必要とする
+    // modelName/authContext/timeout/modelMaxOutputTokensを渡す。まとめ型を作ると
+    // 「AdapterRequestを組むためだけの中間型」が増えて写像が二段になる。
+    @Suppress("LongParameterList")
     fun map(
         prompt: ProcessedPrompt,
         req: CanonicalRequest,
         modelName: String,
         authContext: AuthContext,
         timeout: Duration,
+        modelMaxOutputTokens: Int? = null,
     ): AdapterRequest =
         AdapterRequest(
             capabilityId = req.capabilityId,
@@ -38,6 +43,9 @@ object RequestMapper {
             timeout = timeout,
             traceHeaders = mapOf(TRACE_HEADER to req.traceId),
             authContext = authContext,
+            // ADR-0040: `max_tokens`が必須のProviderがAdapter側で既定値を捏造せずに済むよう、
+            // Routingで確定したModelの上限を渡す。
+            modelMaxOutputTokens = modelMaxOutputTokens,
         )
 
     private fun mapToolResult(result: apap.domain.model.execution.ToolResult) =

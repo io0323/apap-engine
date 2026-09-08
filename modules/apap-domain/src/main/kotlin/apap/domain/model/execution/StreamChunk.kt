@@ -1,6 +1,7 @@
 package apap.domain.model.execution
 
 import apap.domain.model.vo.ContentPart
+import apap.domain.model.vo.FinishReason
 import apap.domain.model.vo.NormalizedError
 import apap.domain.model.vo.Usage
 
@@ -23,6 +24,14 @@ data class StreamChunk(
     val toolCallDelta: ToolCall? = null,
     val usage: Usage? = null,
     val error: NormalizedError? = null,
+    /**
+     * 終了理由。[StreamChunkType.MESSAGE_END]のチャンクにのみ載る。
+     *
+     * 13_API設計.md 13.3のSSE例が `message_end` に `finish_reason` を載せているのに
+     * この型が持っておらず、**`length_limit`で切られたストリームが正常完了と区別できなかった**
+     * （P16で是正。ADR-0028をSupersede）。
+     */
+    val finishReason: FinishReason? = null,
 ) {
     init {
         require(index >= 0) { "StreamChunk.index must not be negative: $index" }

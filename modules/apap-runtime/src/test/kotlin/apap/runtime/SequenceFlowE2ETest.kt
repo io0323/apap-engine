@@ -13,6 +13,7 @@ import apap.domain.model.vo.AdapterErrorCategory
 import apap.domain.model.vo.AliasId
 import apap.domain.model.vo.CapabilityId
 import apap.domain.model.vo.ModelId
+import apap.domain.model.vo.ProviderId
 import apap.infrastructure.eventbus.SynchronousEventBus
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -117,7 +118,7 @@ class SequenceFlowE2ETest {
             ApapEngineBuilder(repositories = repositories)
                 .adapterRegistry(
                     object : apap.provider.AdapterRegistry {
-                        override fun resolve(pluginId: String) =
+                        override fun resolve(providerId: ProviderId) =
                             apap.provider.ResolvedPlugin(
                                 probe,
                                 apap.adapter.spi.plugin.PluginManifest(

@@ -4,6 +4,7 @@ import apap.domain.model.execution.CbState
 import apap.domain.model.modelcatalog.ModelStatus
 import apap.domain.model.provider.ProviderHealthStatus
 import apap.domain.model.provider.ProviderStatus
+import apap.domain.model.vo.Modality
 import apap.domain.model.vo.ModelId
 import apap.domain.model.vo.Money
 import apap.domain.model.vo.ProviderId
@@ -49,6 +50,11 @@ data class Candidate(
     val modelPriority: Int,
     val hasPermission: Boolean,
     val quotaRemaining: Boolean,
+    /**
+     * このModelが受け付ける入力modality（`ModelCapability.supportedInputModalities`）。
+     * 空集合は「未申告」であり「非対応」ではない（ADR-0039）。
+     */
+    val supportedInputModalities: Set<Modality> = emptySet(),
 ) {
     init {
         require(p50LatencyMs >= 0.0) { "p50LatencyMs must not be negative: $p50LatencyMs" }

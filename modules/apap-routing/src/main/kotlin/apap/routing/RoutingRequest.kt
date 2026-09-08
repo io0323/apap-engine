@@ -2,6 +2,7 @@ package apap.routing
 
 import apap.domain.model.vo.CapabilityId
 import apap.domain.model.vo.ConversationId
+import apap.domain.model.vo.Modality
 import apap.domain.model.vo.RoutingConstraints
 import apap.domain.model.vo.RoutingPreferences
 import apap.domain.model.vo.TenantId
@@ -15,4 +16,9 @@ data class RoutingRequest(
     val constraints: RoutingConstraints = RoutingConstraints(),
     val preferences: RoutingPreferences = RoutingPreferences(),
     val conversationId: ConversationId? = null,
+    /**
+     * リクエスト入力に含まれるmodality（ADR-0039）。候補が受け付けられないmodalityを含む場合、
+     * 実行前にハードフィルタで除外する。空集合なら制約なし。
+     */
+    val requiredModalities: Set<Modality> = emptySet(),
 )

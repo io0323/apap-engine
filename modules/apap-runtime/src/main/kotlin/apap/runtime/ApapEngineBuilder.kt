@@ -1,5 +1,6 @@
 package apap.runtime
 
+import apap.adapter.spi.SpiSurface
 import apap.cache.CacheStore
 import apap.cache.InMemoryCacheStore
 import apap.cache.ratelimit.RateLimiter
@@ -10,6 +11,7 @@ import apap.context.QueryEmbedder
 import apap.context.TruncateOldestCompactionStrategy
 import apap.domain.model.execution.CanonicalResponse
 import apap.domain.model.vo.ContentPart
+import apap.domain.model.vo.ProviderId
 import apap.domain.model.vo.SemVer
 import apap.domain.port.Clock
 import apap.domain.port.DomainEventPublisher
@@ -35,6 +37,7 @@ import apap.provider.CapabilityDiscoveryQuery
 import apap.provider.CapabilityRegistry
 import apap.provider.ModelManager
 import apap.provider.PluginNotFoundException
+import apap.provider.ProviderAdapterProvisioner
 import apap.provider.ProviderHealthCheckTask
 import apap.provider.ProviderManager
 import apap.provider.ResolvedPlugin
@@ -95,10 +98,13 @@ class ApapEngineBuilder(
     private var idGenerator: IdGenerator = UlidIdGenerator(),
     /**
      * ADR-0016のSPIバージョニング規約における「ホスト（apap-runtime）が対応するSPIバージョン」。
-     * 現時点でこの値を一元管理する定数が`apap-adapter-spi`側に存在しないため、ここで既定値を持つ
-     * （要件充足に影響しない実装判断のためADR化せずここに根拠を記す）。
+     *
+     * 単一の管理箇所である[SpiSurface.version]をそのまま使う。かつてここに`SemVer(1, 0, 0)`を
+     * 直書きしており（一元管理する定数が無かった頃の名残）、SPIが1.1.0へ上がってもホストは
+     * 1.0.0を名乗り続けていた。`plugin.yaml`の`spi_version`レンジはこの値と突き合わされるため、
+     * 放置するとレンジを正しく書いたPluginほど弾かれる。
      */
-    private var pluginHostSpiVersion: SemVer = SemVer(1, 0, 0),
+    private var pluginHostSpiVersion: SemVer = SpiSurface.version,
 ) {
     /** [DomainEventPublisher]/[DomainEventSubscriber]をまとめて1つのeventBusとして差し替える。 */
     data class DomainEventBus(
@@ -288,6 +294,8 @@ class ApapEngineBuilder(
                 clock,
                 idGenerator,
                 resolvedAdapterRegistry,
+                // ADR-0041: ProviderごとのAdapterインスタンスを生成・初期化・破棄する。
+                provisionerOrNull,
             )
         val modelManager =
             ModelManager(
@@ -352,6 +360,7 @@ class ApapEngineBuilder(
             scheduledTasks = scheduledTasks,
             auditEngine = auditEngine,
             pluginManager = pluginManagerOrNull,
+            adapterProvisioner = provisionerOrNull,
         )
     }
 
@@ -367,6 +376,13 @@ class ApapEngineBuilder(
         return { _, _ -> QueryEmbedder { parts -> embed(parts) } }
     }
 
+    /**
+     * ADR-0041: Plugin経由の配線では[ProviderAdapterProvisioner]がAdapterの生成・初期化・破棄を持つ。
+     * ホストが自前の[AdapterRegistry]を渡した場合（テスト・埋込での差し替え）はnullになり、
+     * `ProviderManager`は与えられたレジストリをそのまま引く（初期化済みのAdapterを渡す前提）。
+     */
+    private var provisionerOrNull: ProviderAdapterProvisioner? = null
+
     private fun resolveAdapterRegistry(): AdapterRegistry {
         val explicit = adapterRegistry
         val directory = pluginDirectory
@@ -377,6 +393,11 @@ class ApapEngineBuilder(
                 "plugin signature verification cannot be skipped."
         }
         return if (explicit != null) {
+            // ホストが自前で[ProviderAdapterProvisioner]を渡した場合は、Plugin経由と同じく
+            // ライフサイクル（VALIDATINGで生成／DISABLED・DELETEDで破棄／close()で全破棄）を
+            // エンジン側が駆動する。渡された物がインスタンス寿命の管理者そのものだからである。
+            // それ以外のレジストリは「初期化済みのAdapterを返すだけ」と見なし、寿命はホストの責任。
+            (explicit as? ProviderAdapterProvisioner)?.let { provisionerOrNull = it }
             explicit
         } else if (directory != null && publicKey != null) {
             val manager =
@@ -389,14 +410,16 @@ class ApapEngineBuilder(
                 )
             manager.scan(directory)
             pluginManagerOrNull = manager
-            PluginManagerAdapterRegistry(manager)
+            ProviderAdapterProvisioner(PluginManagerAdapterFactory(manager), secretStore)
+                .also { provisionerOrNull = it }
         } else {
             EmptyAdapterRegistry
         }
     }
 
     private object EmptyAdapterRegistry : AdapterRegistry {
-        override fun resolve(pluginId: String): ResolvedPlugin = throw PluginNotFoundException(pluginId)
+        override fun resolve(providerId: ProviderId): ResolvedPlugin =
+            throw PluginNotFoundException("no adapter registry is configured (providerId=${providerId.value})")
     }
 
     companion object {

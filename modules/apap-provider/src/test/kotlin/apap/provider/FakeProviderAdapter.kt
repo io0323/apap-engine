@@ -4,7 +4,6 @@ import apap.adapter.spi.AdapterConfig
 import apap.adapter.spi.AdapterRequest
 import apap.adapter.spi.AdapterResponse
 import apap.adapter.spi.AuthContext
-import apap.adapter.spi.CapabilityConstraints
 import apap.adapter.spi.DiscoveredModel
 import apap.adapter.spi.HealthResult
 import apap.adapter.spi.ProviderAdapter
@@ -44,8 +43,6 @@ class FakeProviderAdapter(
     override fun spiVersion(): SemVer = SemVer(1, 0, 0)
 
     override fun supportedCapabilities(): Set<CapabilityId> = supportedCapabilities
-
-    override fun capabilityConstraints(capabilityId: CapabilityId): CapabilityConstraints = CapabilityConstraints()
 
     override suspend fun authenticate(): AuthContext = AuthContext()
 

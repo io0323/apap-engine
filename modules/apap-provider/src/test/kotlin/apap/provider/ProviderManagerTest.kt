@@ -28,7 +28,7 @@ class ProviderManagerTest {
     private val eventPublisher = InMemoryDomainEventPublisher()
     private val clock = InMemoryClock()
     private val idGenerator = InMemoryIdGenerator()
-    private val adapterRegistry = InMemoryAdapterRegistry()
+    private val adapterRegistry = InMemoryAdapterRegistry(providerRepository)
     private val manager = ProviderManager(providerRepository, eventPublisher, clock, idGenerator, adapterRegistry)
 
     private fun registerCommand() =

@@ -1,6 +1,6 @@
 # ADR-0038: AdapterがどのCredentialRefを使うべきかをSPIが伝えていない
 
-- **ステータス**: Proposed（P15で検出。**実装は次フェーズ**）
+- **ステータス**: Accepted（P16で`AdapterConfig.credentialRefs`を追加。`authenticate()`のシグネチャは変更しないと判断。ただしADR-0041により実Adapterへはまだ届かない）
 - **関連要件**: FR-SEC-001, FR-SEC-002（Credential Rotation）
 - **関連する設計書**: 03_基本設計.md 3.3.2, 09_状態遷移図.md（Credential 4状態）
 - **検出**: P15 実Provider向けAdapter第1号の実装（docs/adapter-spi-findings.md §3.3）

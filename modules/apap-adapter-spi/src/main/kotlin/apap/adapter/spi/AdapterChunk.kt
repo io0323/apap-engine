@@ -32,6 +32,15 @@ data class AdapterChunk(
     val usage: Usage? = null,
     val errorMessage: String? = null,
     val toolCallComplete: Boolean = false,
+    /**
+     * 終了理由。`MESSAGE_END`のチャンクにのみ載せる。
+     *
+     * 13_API設計.md 13.3のSSE例は `event: message_end` / `data: {"finish_reason":"completed"}` と
+     * 明記しているが、これが無かったため **`length_limit`で切られたストリームが正常完了と
+     * 区別できなかった**（ADR-0028をSupersede）。`tool_call`・`cancelled`・`content_filtered`も
+     * 同様に届いていなかった。
+     */
+    val finishReason: FinishReason? = null,
 ) {
     init {
         require(index >= 0) { "AdapterChunk.index must not be negative: $index" }

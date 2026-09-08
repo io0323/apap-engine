@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.flow
  * （15.1 Step1）。
  *
  * Kotlin化方針: I/Oを伴うメソッドは`suspend`とする。ライフサイクル系（[initialize]/[shutdown]/
- * [spiVersion]/[supportedCapabilities]/[capabilityConstraints]/[translateTools]）はI/Oを伴わない
+ * [spiVersion]/[supportedCapabilities]/[translateTools]）はI/Oを伴わない
  * 同期メソッドのまま維持する。
  *
  * 03_基本設計.md 3.3.2で定義された固定のSPI契約であり、メソッド数は設計書通り（分割はSPIの分裂を招くため
@@ -35,9 +35,15 @@ interface ProviderAdapter {
     fun spiVersion(): SemVer
 
     // --- 能力申告 ---------------------------------------------------------------------------
-    fun supportedCapabilities(): Set<CapabilityId>
 
-    fun capabilityConstraints(capabilityId: CapabilityId): CapabilityConstraints
+    /**
+     * 対応Capability。Provider検証（15.1 Step5）が`plugin.yaml`の申告と突き合わせる。
+     *
+     * ADR-0042: かつて対になっていた`capabilityConstraints(capabilityId)`は削除した。
+     * 制約は(Provider, Capability)ではなく**(Model, Capability)**の粒度でしか意味を持たず、
+     * Routingが読むのはドメイン側の`ModelCapability`である。
+     */
+    fun supportedCapabilities(): Set<CapabilityId>
 
     // --- 認証（抽象化。実装内でapi_key/oauth2/署名等を処理） --------------------------------
     suspend fun authenticate(): AuthContext

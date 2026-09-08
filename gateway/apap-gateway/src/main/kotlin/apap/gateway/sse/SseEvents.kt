@@ -66,6 +66,17 @@ data class UsageData(
 )
 
 /**
+ * 13.3 `event: message_end` / `data: {"finish_reason":"completed"}`。
+ *
+ * [finishReason]がnullのときはフィールドごと省略される（`GatewayJson`が
+ * `NON_NULL`で直列化する）。エンジンが終了理由を申告しなかった場合に
+ * `completed`と埋めると嘘になるため、無いなら黙って無いままにする。
+ */
+data class MessageEndData(
+    val finishReason: String?,
+)
+
+/**
  * `heartbeat`は13.3で`data`の中身が規定されていない。接続維持が目的なので空オブジェクトを送る
  * （`data:`行そのものを省くとイベント境界を誤認するクライアント実装があるため、必ず`data`を持たせる）。
  */
@@ -106,13 +117,12 @@ fun ApapStreamChunk.toSseEvent(responseId: String): SseEvent =
                 ),
             )
 
-        // 13.3の`message_end`は`{"finish_reason":"completed"}`を例示しているが、
-        // **finish_reasonは現時点で送出できない**: StreamingEngine（apap-execution）は
-        // StreamChunk(type = MESSAGE_END, index = ...) を終了理由なしで送っており、
-        // ApapStreamChunkにもfinishReasonフィールドが無いため、Gatewayからは知りようがない。
-        // ここで"completed"を固定で埋めると、length_limit等で終わったストリームにも
-        // 常にcompletedと嘘をつくことになるため、フィールドごと省略する（ADR-0028）。
-        ApapStreamChunkType.MESSAGE_END -> SseEvent(SseEventName.MESSAGE_END, "{}")
+        // 13.3の`message_end`どおり終了理由を載せる（P16でADR-0028をSupersede）。
+        // 以前はStreamChunk/ApapStreamChunkにfinishReasonが無く送出できなかったため省略していたが、
+        // その状態では**length_limitで切られたストリームが正常完了と区別できない**。
+        // 申告が無い場合のみ省略する（"completed"を固定で埋めると嘘をつくことになる）。
+        ApapStreamChunkType.MESSAGE_END ->
+            event(SseEventName.MESSAGE_END, MessageEndData(finishReason?.name?.lowercase()))
 
         // 13.3「異常時はevent: error（bodyは13.4のエラー形式）で終端」。
         // NormalizedErrorは既に13.4のコードを持つので、そのままProblemDetailsへ写す。

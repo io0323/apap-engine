@@ -1,6 +1,6 @@
 # ADR-0039: 対応modalityを申告する手段がSPIに無い
 
-- **ステータス**: Proposed（P15で検出。**実装は次フェーズ**）
+- **ステータス**: Accepted（P16で実装。SPI・ドメイン・Routingハードフィルタの3層を追加）
 - **関連要件**: FR-RTE-002（Capabilityに基づく候補選択）, FR-CAP-001
 - **関連する設計書**: 03_基本設計.md 3.3.2（CapabilityConstraints）, 04_ドメイン設計.md 4.4（ContentPart）
 - **検出**: P15 実Provider向けAdapter第1号の実装（docs/adapter-spi-findings.md §3.4）

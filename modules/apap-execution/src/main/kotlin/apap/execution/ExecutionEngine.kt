@@ -28,6 +28,7 @@ import apap.domain.model.vo.AdapterErrorCategory
 import apap.domain.model.vo.ContentPart
 import apap.domain.model.vo.ConversationId
 import apap.domain.model.vo.ErrorCode
+import apap.domain.model.vo.Modality
 import apap.domain.model.vo.ModelId
 import apap.domain.model.vo.Money
 import apap.domain.model.vo.NormalizedError
@@ -168,6 +169,9 @@ class DefaultExecutionEngine(
                         request.constraints,
                         request.preferences,
                         request.conversationId,
+                        // ADR-0039: 入力に含まれるmodalityを候補選択の条件にする。
+                        // これが無いと、音声非対応のProviderへ音声が割り当てられ実行時に失敗する。
+                        requiredModalities = Modality.of(request.input),
                     ),
                     request.requestId,
                 )
@@ -246,6 +250,9 @@ class DefaultExecutionEngine(
                         request.constraints,
                         request.preferences,
                         request.conversationId,
+                        // ADR-0039: 入力に含まれるmodalityを候補選択の条件にする。
+                        // これが無いと、音声非対応のProviderへ音声が割り当てられ実行時に失敗する。
+                        requiredModalities = Modality.of(request.input),
                     ),
                     request.requestId,
                 )

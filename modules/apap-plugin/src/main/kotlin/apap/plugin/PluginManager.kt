@@ -45,14 +45,21 @@ class PluginEntryPointNotFoundException(
  * 3状態のみを持つ永続化対象Aggregate）そのものの状態ではなく、本クラスが実行する**手順**である。
  * 「稼働」中のAdapterインスタンス生成（ServiceLoader経由）までがこのクラスの責務であり、
  * Provider固有設定を伴う`ProviderAdapter.initialize(config, secrets)`の実際の呼出は、
- * Provider登録フロー（15.1 Step4以降、本タスクの範囲外）が別途行う——1個のPluginは複数の
- * Provider登録から共有され得るため、Plugin単位のロード時点ではProvider固有設定を持てない。
+ * Provider登録フロー（15.1 Step4以降）が行う——1個のPluginは複数のProvider登録から
+ * 共有され得るため、Plugin単位のロード時点ではProvider固有設定を持てない。ADR-0041により、
+ * **インスタンスはProviderごと**に[newAdapter]で作られ、`ProviderAdapterProvisioner`が
+ * 初期化と破棄を担う（Plugin・ClassLoaderは共有のまま）。
  *
  * 分離: `apap-plugin`は`apap-domain`+`apap-adapter-spi`のみに依存し、コアのDIには参加しない
  * （CLAUDE.md不変条件6と同じ精神）。ロードしたPluginは分離`URLClassLoader`
  * （親を`ClassLoader.getPlatformClassLoader()`とし、コア実装クラス（apap-domain等）を
  * 見せない）でロードし、コア側へAdapterの実装クラスを漏らさない。
+ *
+ * `TooManyFunctions`を抑制しているのは、scan/verify/initialize/drain/shutdown/unloadという
+ * Pluginライフサイクルの手順が、そのまま公開関数の数になっているため。1つに畳むと
+ * 9.5の状態遷移との対応が読めなくなる。
  */
+@Suppress("TooManyFunctions")
 class PluginManager(
     private val eventPublisher: DomainEventPublisher,
     private val idGenerator: IdGenerator,
@@ -87,6 +94,24 @@ class PluginManager(
     fun getAdapter(pluginId: String): ProviderAdapter {
         val plugin = loaded[pluginId] ?: throw PluginNotFoundException(pluginId)
         return plugin.adapter
+    }
+
+    /**
+     * ロード済みPluginから**新しい**Adapterインスタンスを作る（ADR-0041）。
+     *
+     * Plugin（クラスとClassLoader）は共有したまま、インスタンスだけをProviderごとに分けるため。
+     * `getAdapter`が返す単一インスタンスを複数Providerで共有すると、Providerごとに異なる
+     * `endpoints`/`credentialRefs`/`rateLimits`のどれで初期化されたかが決まらず、
+     * FR-SEC-005（Provider Isolation）が成立しない。
+     *
+     * `ServiceLoader.load`はイテレータごとにインスタンスを生成するため、呼ぶたびに別物が返る。
+     */
+    fun newAdapter(pluginId: String): ProviderAdapter {
+        val plugin = loaded[pluginId] ?: throw PluginNotFoundException(pluginId)
+        return ServiceLoader
+            .load(ProviderAdapter::class.java, plugin.classLoader)
+            .firstOrNull()
+            ?: throw PluginNotFoundException(pluginId)
     }
 
     fun registration(pluginId: String): PluginRegistration? = loaded[pluginId]?.registration ?: quarantined[pluginId]

@@ -59,6 +59,7 @@ object ResponseMapper {
             delta = chunk.delta,
             toolCallDelta = chunk.toolCallDelta?.let(::mapToolCall),
             usage = chunk.usage,
+            finishReason = chunk.finishReason,
         )
 
     fun normalizeError(

@@ -380,10 +380,7 @@ fun mockAdapterRegistry(capabilityId: CapabilityId): AdapterRegistry {
             signature = "sig",
         )
     return object : AdapterRegistry {
-        override fun resolve(pluginId: String): ResolvedPlugin {
-            if (pluginId != "plugin-a") throw PluginNotFoundException(pluginId)
-            return ResolvedPlugin(adapter, manifest)
-        }
+        override fun resolve(providerId: ProviderId): ResolvedPlugin = ResolvedPlugin(adapter, manifest)
     }
 }
 ```

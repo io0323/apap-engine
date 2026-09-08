@@ -156,9 +156,8 @@ class ExecutionEngineComposerTest {
             )
             val adapterRegistry =
                 object : AdapterRegistry {
-                    override fun resolve(pluginId: String): ResolvedPlugin {
-                        if (pluginId != "plugin-a") throw PluginNotFoundException(pluginId)
-                        return ResolvedPlugin(
+                    override fun resolve(providerId: ProviderId): ResolvedPlugin =
+                        ResolvedPlugin(
                             adapter,
                             PluginManifest(
                                 "plugin-a",
@@ -170,7 +169,6 @@ class ExecutionEngineComposerTest {
                                 "sig",
                             ),
                         )
-                    }
                 }
 
             val engine =
@@ -273,9 +271,8 @@ class ExecutionEngineComposerTest {
             )
             val adapterRegistry =
                 object : AdapterRegistry {
-                    override fun resolve(pluginId: String): ResolvedPlugin {
-                        if (pluginId != "plugin-a") throw PluginNotFoundException(pluginId)
-                        return ResolvedPlugin(
+                    override fun resolve(providerId: ProviderId): ResolvedPlugin =
+                        ResolvedPlugin(
                             adapter,
                             PluginManifest(
                                 "plugin-a",
@@ -287,7 +284,6 @@ class ExecutionEngineComposerTest {
                                 "sig",
                             ),
                         )
-                    }
                 }
 
             val conversationId = ConversationId("01ARZ3NDEKTSV4RRFFQ69G5FA6")
@@ -409,9 +405,8 @@ class ExecutionEngineComposerTest {
             )
             val adapterRegistry =
                 object : AdapterRegistry {
-                    override fun resolve(pluginId: String): ResolvedPlugin {
-                        if (pluginId != "plugin-a") throw PluginNotFoundException(pluginId)
-                        return ResolvedPlugin(
+                    override fun resolve(providerId: ProviderId): ResolvedPlugin =
+                        ResolvedPlugin(
                             adapter,
                             PluginManifest(
                                 "plugin-a",
@@ -423,7 +418,6 @@ class ExecutionEngineComposerTest {
                                 "sig",
                             ),
                         )
-                    }
                 }
 
             val engine =
@@ -572,11 +566,12 @@ class ExecutionEngineComposerTest {
                 )
             val adapterRegistry =
                 object : AdapterRegistry {
-                    override fun resolve(pluginId: String): ResolvedPlugin =
-                        when (pluginId) {
+                    override fun resolve(providerId: ProviderId): ResolvedPlugin =
+                        // ADR-0041でキーがproviderIdになったため、Provider経由でpluginIdへ翻訳する。
+                        when (val pluginId = providerRepository.findById(providerId)?.adapterPluginId) {
                             "plugin-failing" -> ResolvedPlugin(failingAdapter, manifest(pluginId))
                             "plugin-healthy" -> ResolvedPlugin(healthyAdapter, manifest(pluginId))
-                            else -> throw PluginNotFoundException(pluginId)
+                            else -> throw PluginNotFoundException(pluginId ?: providerId.value)
                         }
                 }
 
@@ -655,9 +650,7 @@ class ExecutionEngineComposerTest {
                 InMemoryBudgetRepository(),
                 InMemoryUsageRepository(),
                 InMemoryQuotaPolicyRepository(),
-                object : AdapterRegistry {
-                    override fun resolve(pluginId: String): ResolvedPlugin = throw PluginNotFoundException(pluginId)
-                },
+                UnresolvableAdapterRegistry,
                 InMemoryClock(Instant.parse("2026-01-01T00:00:00Z")),
                 InMemoryIdGenerator(),
                 events,
@@ -748,9 +741,8 @@ class ExecutionEngineComposerTest {
             val capturingAdapter = CapturingProviderAdapter(mockAdapter)
             val adapterRegistry =
                 object : AdapterRegistry {
-                    override fun resolve(pluginId: String): ResolvedPlugin {
-                        if (pluginId != "plugin-a") throw PluginNotFoundException(pluginId)
-                        return ResolvedPlugin(
+                    override fun resolve(providerId: ProviderId): ResolvedPlugin =
+                        ResolvedPlugin(
                             capturingAdapter,
                             PluginManifest(
                                 "plugin-a",
@@ -762,7 +754,6 @@ class ExecutionEngineComposerTest {
                                 "sig",
                             ),
                         )
-                    }
                 }
 
             val engine =
@@ -871,9 +862,8 @@ class ExecutionEngineComposerTest {
             )
             val adapterRegistry =
                 object : AdapterRegistry {
-                    override fun resolve(pluginId: String): ResolvedPlugin {
-                        if (pluginId != "plugin-a") throw PluginNotFoundException(pluginId)
-                        return ResolvedPlugin(
+                    override fun resolve(providerId: ProviderId): ResolvedPlugin =
+                        ResolvedPlugin(
                             adapter,
                             PluginManifest(
                                 "plugin-a",
@@ -885,7 +875,6 @@ class ExecutionEngineComposerTest {
                                 "sig",
                             ),
                         )
-                    }
                 }
 
             val engine =
@@ -939,5 +928,10 @@ class ExecutionEngineComposerTest {
             capturedRequest = request
             return delegate.execute(request)
         }
+    }
+
+    /** どのProviderも解決できないレジストリ（この検証ではAdapterを呼ばない）。 */
+    private object UnresolvableAdapterRegistry : AdapterRegistry {
+        override fun resolve(providerId: ProviderId): ResolvedPlugin = throw PluginNotFoundException(providerId.value)
     }
 }

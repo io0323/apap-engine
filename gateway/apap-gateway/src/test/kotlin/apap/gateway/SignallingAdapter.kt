@@ -4,7 +4,6 @@ import apap.adapter.spi.AdapterConfig
 import apap.adapter.spi.AdapterRequest
 import apap.adapter.spi.AdapterResponse
 import apap.adapter.spi.AuthContext
-import apap.adapter.spi.CapabilityConstraints
 import apap.adapter.spi.DiscoveredModel
 import apap.adapter.spi.HealthResult
 import apap.adapter.spi.ProviderAdapter
@@ -56,8 +55,6 @@ class SignallingAdapter(
     override fun spiVersion(): SemVer = delegate.spiVersion()
 
     override fun supportedCapabilities(): Set<CapabilityId> = delegate.supportedCapabilities()
-
-    override fun capabilityConstraints(id: CapabilityId): CapabilityConstraints = delegate.capabilityConstraints(id)
 
     override suspend fun authenticate(): AuthContext = delegate.authenticate()
 

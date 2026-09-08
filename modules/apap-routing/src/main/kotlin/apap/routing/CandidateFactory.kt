@@ -130,6 +130,13 @@ class CandidateFactory(
             modelPriority = model.priority,
             hasPermission = hasPermission,
             quotaRemaining = quotaRemaining,
+            // ADR-0039: 当該Capabilityの申告modality。未申告なら空のままで、
+            // ハードフィルタは通す（申告のあるModelだけを絞り込む）。
+            supportedInputModalities =
+                model.capabilities
+                    .firstOrNull { it.capabilityId == capabilityId }
+                    ?.supportedInputModalities
+                    .orEmpty(),
         )
     }
 

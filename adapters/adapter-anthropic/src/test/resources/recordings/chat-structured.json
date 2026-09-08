@@ -1,0 +1,16 @@
+{
+  "source": "hand-authored from public API documentation (NOT a recording of a live API call)",
+  "reply": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "id": "msg_redacted_0004",
+      "type": "message",
+      "role": "assistant",
+      "model": "test-model-1",
+      "content": [ { "type": "text", "text": "{\"answer\":\"structured\"}" } ],
+      "stop_reason": "end_turn",
+      "usage": { "input_tokens": 20, "output_tokens": 8 }
+    }
+  }
+}

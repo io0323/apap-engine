@@ -86,7 +86,7 @@ class ProviderHealthCheckTask(
     @Suppress("TooGenericExceptionCaught")
     private suspend fun probe(provider: Provider): Observation =
         try {
-            val result = adapterRegistry.resolve(provider.adapterPluginId).adapter.healthCheck()
+            val result = adapterRegistry.resolve(provider.providerId).adapter.healthCheck()
             Observation(result.status, "latencyMs=${result.latency.toMillis()} detail=${result.detail.orEmpty()}")
         } catch (e: Exception) {
             logger.warn("health check failed providerId={}: {}", provider.providerId.value, e.message)

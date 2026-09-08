@@ -6,7 +6,6 @@ import apap.adapter.spi.AdapterException
 import apap.adapter.spi.AdapterRequest
 import apap.adapter.spi.AdapterResponse
 import apap.adapter.spi.AuthContext
-import apap.adapter.spi.CapabilityConstraints
 import apap.adapter.spi.CapabilityId
 import apap.adapter.spi.ContentPart
 import apap.adapter.spi.CredentialRef
@@ -21,6 +20,7 @@ import apap.adapter.spi.ProviderToolFormat
 import apap.adapter.spi.ProviderUsage
 import apap.adapter.spi.SecretAccessor
 import apap.adapter.spi.SemVer
+import apap.adapter.spi.SpiSurface
 import apap.adapter.spi.TokenCount
 import apap.adapter.spi.ToolDefinition
 import apap.adapter.spi.ValidationResult
@@ -66,6 +66,9 @@ class AnthropicAdapter(
         config: AdapterConfig,
         secrets: SecretAccessor,
     ) {
+        // 実APIでの検証が済んでいないことを、本番配線に載った時点で必ず見えるようにする
+        // （NoOpQueryEmbedderと同じ扱い。docs/adapter-spi-findings.md参照）。
+        UnverifiedAgainstLiveApi.warnIfUnverified()
         this.config = config
         this.secrets = secrets
         this.transport = transportFactory(baseUrlOf(config))
@@ -78,36 +81,12 @@ class AnthropicAdapter(
         config = null
     }
 
-    override fun spiVersion(): SemVer = SemVer(1, 0, 0)
+    // 単一管理（ADR-0016）。ここで数値を書き写すとSPI本体と食い違う。
+    override fun spiVersion(): SemVer = SpiSurface.version
 
     // --- 能力申告 ---------------------------------------------------------------------------
 
     override fun supportedCapabilities(): Set<CapabilityId> = SUPPORTED_CAPABILITIES
-
-    override fun capabilityConstraints(capabilityId: CapabilityId): CapabilityConstraints =
-        when (capabilityId) {
-            CAPABILITY_CHAT ->
-                CapabilityConstraints(
-                    maxInputTokens = DEFAULT_CONTEXT_WINDOW,
-                    maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS,
-                    streamable = true,
-                    supportsTools = true,
-                    // capabilityConstraintsの固定フィールドで表現できない制約はextraへ入れる。
-                    // 何がはみ出したかは findings に記録している。
-                    extra =
-                        mapOf(
-                            "modalities.input" to "text,image",
-                            "modalities.output" to "text",
-                            "messages.must_alternate" to "true",
-                            "max_tokens.required" to "true",
-                        ),
-                )
-            CAPABILITY_STREAMING ->
-                CapabilityConstraints(streamable = true, supportsTools = true)
-            CAPABILITY_TOOL_CALLING ->
-                CapabilityConstraints(streamable = true, supportsTools = true)
-            else -> CapabilityConstraints()
-        }
 
     // --- 認証 -------------------------------------------------------------------------------
 
@@ -244,17 +223,32 @@ class AnthropicAdapter(
         stream: Boolean,
     ): String =
         try {
-            RequestBodyBuilder.build(request, stream, DEFAULT_MAX_OUTPUT_TOKENS)
+            RequestBodyBuilder.build(request, stream, DEFAULT_MAX_OUTPUT_TOKENS, structuredOutputMode())
         } catch (e: AdapterModalityException) {
             throw AdapterException(
                 AdapterErrorCategory.UNSUPPORTED_CAPABILITY,
                 "this provider cannot accept the requested modality: ${e.modality}",
                 cause = e,
             )
+        } catch (e: AdapterUnsupportedParamException) {
+            // ADR-0040: 利用側が指定したパラメタを無言で無視しない。
+            throw AdapterException(
+                AdapterErrorCategory.UNSUPPORTED_CAPABILITY,
+                "this provider does not support ${e.paramName}",
+                cause = e,
+            )
         } catch (e: AdapterSchemaException) {
             throw AdapterException(
                 AdapterErrorCategory.INVALID_REQUEST,
-                "tool input schema is not valid JSON",
+                "the requested schema is not valid JSON",
+                cause = e,
+            )
+        } catch (e: AdapterStructuredOutputConflictException) {
+            // 併用不可の組み合わせ。再試行しても直らないのでINVALID_REQUEST（2.11でRetry対象外）。
+            throw AdapterException(
+                AdapterErrorCategory.INVALID_REQUEST,
+                "this provider cannot combine structured output with ${e.feature}; " +
+                    "set the ${StructuredOutputMode.OPTION_KEY} option to fall back to prompt-based schemas",
                 cause = e,
             )
         }
@@ -336,14 +330,36 @@ class AnthropicAdapter(
         accessor.resolve(currentCredentialRef()).use { block(it.charArray()) }
     }
 
+    /**
+     * ADR-0038: `AdapterConfig.credentialRefs` から ACTIVE のものを使う。
+     *
+     * Rotation中はACTIVEとSTANDBYが並存しうるため、状態で選ぶ（先頭決め打ちにしない）。
+     * ACTIVEが無ければSTANDBYへ落とさず失敗させる——「まだ有効化していない鍵」で
+     * 実リクエストを送ると、Provider側で認証失敗が並ぶだけで原因が分かりにくい。
+     *
+     * `options[credential.ref]` は`credentialRefs`が空のときの後方互換経路として残す
+     * （P15ではSPIに受け口が無く、この回避策しか無かった）。
+     */
     private fun currentCredentialRef(): CredentialRef {
-        val options = config?.options ?: throw notInitialized()
+        val current = config ?: throw notInitialized()
+        current.credentialRefs
+            .firstOrNull { it.state == CredentialState.ACTIVE }
+            ?.let { return it }
+        if (current.credentialRefs.isNotEmpty()) {
+            throw AdapterException(
+                AdapterErrorCategory.AUTH_ERROR,
+                "no ACTIVE credential among ${current.credentialRefs.size} configured refs",
+            )
+        }
         return CredentialRef(
-            secretRef = options[CREDENTIAL_REF_OPTION] ?: DEFAULT_CREDENTIAL_REF_NAME,
-            version = options[CREDENTIAL_VERSION_OPTION]?.toIntOrNull() ?: 1,
+            secretRef = current.options[CREDENTIAL_REF_OPTION] ?: DEFAULT_CREDENTIAL_REF_NAME,
+            version = current.options[CREDENTIAL_VERSION_OPTION]?.toIntOrNull() ?: 1,
             state = CredentialState.ACTIVE,
         )
     }
+
+    private fun structuredOutputMode(): StructuredOutputMode =
+        StructuredOutputMode.from(config?.options?.get(StructuredOutputMode.OPTION_KEY))
 
     private fun baseUrlOf(config: AdapterConfig): String =
         // Endpointは重み付きで複数あり得るが、実APIは単一のグローバルエンドポイント。

@@ -8,7 +8,6 @@ import apap.adapter.spi.AdapterException
 import apap.adapter.spi.AdapterRequest
 import apap.adapter.spi.AdapterResponse
 import apap.adapter.spi.AuthContext
-import apap.adapter.spi.CapabilityConstraints
 import apap.adapter.spi.CapabilityId
 import apap.adapter.spi.ContentPart
 import apap.adapter.spi.CredentialRef
@@ -23,6 +22,7 @@ import apap.adapter.spi.ProviderToolFormat
 import apap.adapter.spi.ProviderUsage
 import apap.adapter.spi.SecretAccessor
 import apap.adapter.spi.SemVer
+import apap.adapter.spi.SpiSurface
 import apap.adapter.spi.TextContentPart
 import apap.adapter.spi.TokenCount
 import apap.adapter.spi.ToolDefinition
@@ -49,6 +49,7 @@ class MockProviderAdapter(
     private val config: MockAdapterConfig = MockAdapterConfig(),
 ) : ProviderAdapter {
     private var secrets: SecretAccessor? = null
+    private var adapterConfig: AdapterConfig? = null
     private var initialized = false
     private val scriptedIndex = AtomicInteger(0)
 
@@ -57,22 +58,20 @@ class MockProviderAdapter(
         secrets: SecretAccessor,
     ) {
         this.secrets = secrets
+        this.adapterConfig = config
         initialized = true
     }
 
     override fun shutdown() {
         initialized = false
         secrets = null
+        adapterConfig = null
     }
 
-    override fun spiVersion(): SemVer = SemVer(1, 0, 0)
+    // 単一管理（ADR-0016）。ここで数値を書き写すとSPI本体と食い違う。
+    override fun spiVersion(): SemVer = SpiSurface.version
 
     override fun supportedCapabilities(): Set<CapabilityId> = config.supportedCapabilities
-
-    override fun capabilityConstraints(capabilityId: CapabilityId): CapabilityConstraints =
-        CapabilityConstraints(
-            streamable = true,
-        )
 
     override suspend fun authenticate(): AuthContext {
         resolveCredentialSafely()
@@ -85,6 +84,7 @@ class MockProviderAdapter(
     }
 
     override suspend fun execute(request: AdapterRequest): AdapterResponse {
+        config.requestSink?.invoke(request)
         ensureSupported(request.capabilityId)
         resolveCredentialSafely()
         return try {
@@ -100,8 +100,8 @@ class MockProviderAdapter(
                     )
                 } else {
                     AdapterResponse(
-                        output = listOf(TextContentPart(mockText(request))),
-                        finishReason = FinishReason.COMPLETED,
+                        output = listOf(TextContentPart(config.responseText ?: mockText(request))),
+                        finishReason = config.finishReason,
                         usage = config.usage,
                     )
                 }
@@ -116,6 +116,7 @@ class MockProviderAdapter(
     }
 
     override suspend fun executeStream(request: AdapterRequest): ProviderAdapter.AdapterStream {
+        config.requestSink?.invoke(request)
         ensureSupported(request.capabilityId)
         resolveCredentialSafely()
         config.forcedErrorCategory?.let { category ->
@@ -190,9 +191,21 @@ class MockProviderAdapter(
         return config.scriptedOutcomes.getOrNull(i)
     }
 
+    /**
+     * ADR-0038: `AdapterConfig.credentialRefs` の ACTIVE を使う。
+     * 以前は固定のダミー参照を自前で持っていたが、それは
+     * 「SPIがどの参照を使うべきかを伝えていない」欠落の回避策だった。
+     * SPIが参照を渡すようになったので、実Adapterと同じ経路を通す。
+     */
     private fun resolveCredentialSafely() {
-        requireSecrets().resolve(DUMMY_CREDENTIAL_REF).use { /* 解決するだけで、値は一切外部へ出さない */ }
+        requireSecrets().resolve(credentialRef()).use { /* 解決するだけで、値は一切外部へ出さない */ }
     }
+
+    private fun credentialRef(): CredentialRef =
+        adapterConfig
+            ?.credentialRefs
+            ?.firstOrNull { it.state == CredentialState.ACTIVE }
+            ?: DUMMY_CREDENTIAL_REF
 
     private fun requireSecrets(): SecretAccessor =
         checkNotNull(secrets) {
@@ -224,7 +237,11 @@ class MockProviderAdapter(
             listOf(
                 AdapterChunk(type = AdapterChunkType.MESSAGE_START, index = 0),
                 AdapterChunk(type = AdapterChunkType.CONTENT_DELTA, index = 1, delta = TextContentPart("mock")),
-                AdapterChunk(type = AdapterChunkType.MESSAGE_END, index = 2),
+                AdapterChunk(
+                    type = AdapterChunkType.MESSAGE_END,
+                    index = 2,
+                    finishReason = FinishReason.COMPLETED,
+                ),
             )
     }
 }
