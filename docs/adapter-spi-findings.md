@@ -589,6 +589,10 @@ Adapterが実装し、テストのフェイクが実装しているだけで、�
 **これは残る欠落として記録する**——申告口を作っただけで読み手を作らなければ、
 今回直したはずの「実装済みだが機能していない」を繰り返すことになる。
 
+> **決着（P18・ADR-0042）**: この欠落は「消費者を作る」ではなく「申告口を削除する」で閉じた。
+> 制約は(Provider, Capability)ではなく(Model, Capability)の粒度でしか意味を持たず、
+> SPIのメソッドはその粒度を表現できないためである。詳細は §11。
+
 ### 9.8 typealias 経由のネスト型参照
 
 §3.7に記録したとおり、Kotlinはtypealias経由でネストした型（`ContentPart.Text`）へ
@@ -664,20 +668,25 @@ Adapterは実HTTPクライアントを持ちうるため、畳まないと宿主
 
 ### 10.2 構造化出力の確定
 
-出典: <https://platform.claude.com/docs/en/build-with-claude/structured-outputs>
-（`StructuredOutputSchema.DOC_SOURCE` にも記録）。以下のうち、**この文書で直接確認できたもの**と
-**利用者から一次情報として指定されたもの**を区別して記す（前者は上記URLの記述、後者は
-ドキュメントの当該節が本作業時点の取得で末尾切れになっていたため未再確認）。
+**出典は下記1点。7項目すべて公式ドキュメントの記載である**
+（`StructuredOutputSchema.DOC_SOURCE` にも記録）。
 
-| # | 事項 | 出所 | 実装 |
-|---|---|---|---|
-| 1 | 形は `output_config.format = {type: "json_schema", schema: ...}`。**ベータヘッダ不要** | ドキュメントで確認 | 既存実装のまま。`no beta header is attached to a structured output request` で「付けていないこと」を固定 |
-| 2 | スキーマの前処理が要る（全objectに `additionalProperties: false`／`minimum`等はサポート外で、SDKは除去し `description` へ回す） | ドキュメントで確認 | `StructuredOutputSchema` を新設。生HTTPを叩く本Adapterは自分で整形する必要がある |
-| 3 | 複雑さの上限（strict tools 20／optional params 24／union-typed params 16）、超過時は400 "Schema is too complex for compilation" | **利用者提供**（当該節を再取得できず） | 分類のみ実装。400 `invalid_request_error` → **INVALID_REQUEST**（2.11でRetry対象外・Fallback対象外・CB非計上）。`SchemaCompilationErrorTest` |
-| 4 | **enumの大文字小文字は保証されない**（正常終了するため終了理由では区別できない） | **利用者提供** | 綴り差だけを適合と見なす（`EnumCaseNormalizer`＋`JsonSchemaValidator(enumCaseInsensitive)`）。**応答は書き換えない**——変わるのは判定だけ |
-| 5 | 初回リクエストに文法コンパイルの遅延、コンパイル済み文法は24hキャッシュ | ドキュメントで確認 | NFR-PRF-001の測定条件へ注記（下記） |
-| 6 | Streamingとは併用可 | ドキュメントで確認 | `structured output is also sent on the streaming path` |
-| 7 | Citations / Message Prefilling とは併用不可（400） | **利用者提供** | prefill（末尾assistantメッセージ）を**送信前に**INVALID_REQUESTで落とす。citationsは本Adapterに組み立て経路が無い |
+<https://platform.claude.com/docs/en/build-with-claude/structured-outputs>
+
+> P17の記録では、3・4・7を「利用者提供」と書いていた。本作業時のページ取得が
+> 当該節の手前で末尾切れになり、こちらで再確認できなかったことを出所の区別として
+> 書いてしまったもので、**誤り**である（P18で訂正）。取得できなかったのは読み手側の事情であって、
+> 出典の性質ではない。
+
+| # | 事項 | 実装 |
+|---|---|---|
+| 1 | 形は `output_config.format = {type: "json_schema", schema: ...}`。**ベータヘッダ不要** | 既存実装のまま。`no beta header is attached to a structured output request` で「付けていないこと」を固定 |
+| 2 | スキーマの前処理が要る（全objectに `additionalProperties: false`／`minimum`等はサポート外で、SDKは除去し `description` へ回す） | `StructuredOutputSchema` を新設。生HTTPを叩く本Adapterは自分で整形する必要がある |
+| 3 | 複雑さの上限（strict tools 20／optional params 24／union-typed params 16）、超過時は400 "Schema is too complex for compilation" | 分類のみ実装。400 `invalid_request_error` → **INVALID_REQUEST**（2.11でRetry対象外・Fallback対象外・CB非計上）。`SchemaCompilationErrorTest` |
+| 4 | **enumの大文字小文字は保証されない**（正常終了するため終了理由では区別できない） | 綴り差だけを適合と見なす（`EnumCaseNormalizer`＋`JsonSchemaValidator(enumCaseInsensitive)`）。**応答は書き換えない**——変わるのは判定だけ |
+| 5 | 初回リクエストに文法コンパイルの遅延、コンパイル済み文法は24hキャッシュ | NFR-PRF-001の測定条件へ注記（下記） |
+| 6 | Streamingとは併用可 | `structured output is also sent on the streaming path` |
+| 7 | Citations / Message Prefilling とは併用不可（400） | prefill（末尾assistantメッセージ）を**送信前に**INVALID_REQUESTで落とす。citationsは本Adapterに組み立て経路が無い |
 
 補足:
 
@@ -734,3 +743,80 @@ P17で追加・変更した検査に、意図的な違反を1件ずつ注入し�
 
 いずれも、**その検査が守っているはずの性質そのもの**を壊したときに落ちている
 （別の理由で偶然落ちているのではない）ことをメッセージで確認した。
+
+
+---
+
+## 11. P18: `capabilityConstraints()` の存廃（ADR-0042）
+
+P16・P17と2回持ち越した「消費者のいないSPIメソッド」を決着させた。**削除**（案B）。
+
+### 判定の根拠
+
+本番ソース（`modules` / `gateway` の `src/main`）に呼び出しは0件。実装していたのは2つのAdapterと
+2つのテストダブルだけで、Contract Testにも項目が無い。そのうえで、各フィールドには
+**同じ意味を持ち、実際に消費されているドメイン側の対応物**がある。
+
+| CapabilityConstraints | 実際に消費されている対応物 | 消費者 |
+|---|---|---|
+| `maxInputTokens` | `Model.contextWindow` | `ContextAssemblyService.computeBudget` |
+| `maxOutputTokens` | `Model.maxOutputTokens` | 同上／`AdapterRequest.modelMaxOutputTokens`（ADR-0040） |
+| `streamable` | `CapabilityDefinition.streamable`（2.4） | Capability Registry・探索API |
+| `supportsTools` | Capability `tool_calling` / `function_calling` の有無 | Routing候補抽出（2.5.2 step1） |
+| `supportedInputModalities` | `ModelCapability.supportedInputModalities` | `RoutingHardFilters.passesModalityFilter`（ADR-0039） |
+| `extra` | — | 自由文字列。KDoc自身が「機械的な判断には使わない」と明記 |
+
+決め手は**粒度**である。このメソッドは(Provider, Capability)単位だが、Routingも実行前検証も
+判断するのは(Model, Capability)単位で、同じProviderでもModelごとにcontext windowもmodality対応も
+違う。`adapter-anthropic`の実装がProvider共通の既定値を返していたのはその現れで、
+もしコアが読んだら**登録済みModelの実値と食い違う第二の真実**になる。
+ADR-0039がSPIだけで終わらせずドメイン側に同名フィールドを足したのも同じ理由だった——
+**必要だった1フィールドは既に正しい置き場へ移してある。**
+
+案A（配線する）を採らなかったのは、残る候補（4.3.2の「最大入力サイズ、並列tool数等」）が
+前者は`Model.contextWindow`の二重化、後者はそれを要求する要件も検証経路もハードフィルタ条件も
+存在しないためである。案C（保留の明示）を採らなかったのは、**形が誤っていると分かっている
+申告口を保存する**ことになるため。将来Adapterから申告させるなら置き場は`DiscoveredModel`
+（Modelごと、15.1 Step6が承認する単位）である。
+
+### SPIバージョン
+
+メソッド削除はコンパイル互換を壊すため**1.1.0 → 2.0.0（メジャー）**。実装しているAdapterが
+リポジトリ内の2つだけで外部配布が無い今が最も安い。`plugin.yaml`の`spi_version`は
+`>=2.0 <3.0`へ更新した。
+
+あわせて、`ApapEngineBuilder`のホスト側SPIバージョンが`SemVer(1, 0, 0)`直書きのままだった
+（`SpiSurface`が無かった頃の名残で、SPIが1.1.0へ上がってもホストは1.0.0を名乗っていた）のを
+`SpiSurface.version`へ single-source した。**放置すると、レンジを正しく書いたPluginほど弾かれる。**
+
+### 再発防止と、可視化された残り5件
+
+`SpiSurface.adapterMethodConsumers`（メソッド → 本番の消費者のクローズドセット）を置き、
+`ProviderAdapterSurfaceTest`が (1) 表と`ProviderAdapter`の宣言の一致、(2) 消費者ありと
+宣言した項目の実呼び出し、(3) 「消費者なし」と宣言した項目に本当に呼び出しが無く理由が
+書かれていること、を検証する。**テストからの呼び出しは消費者と数えない**——
+`capabilityConstraints`はフェイクだけが実装していた。
+
+この検査により、本番の消費者を持たないSPIメソッドが他に5つあることが可視化された。
+いずれも**消費者の置き場と形が定まっている**ため、削除ではなく理由付きで残す。
+
+| メソッド | 消費者が無い理由 | 想定される置き場 |
+|---|---|---|
+| `spiVersion` | ホストは`plugin.yaml`のレンジで互換性を判定し、Adapter自身の申告は突き合わせていない | `PluginManager`の互換性判定（ADR-0016の残課題） |
+| `translateTools` | コアは`AdapterRequest.tools`をSPI共通形式のまま渡し、変換はAdapter内部で完結 | 変換が必要なProviderが現れた時点 |
+| `discoverModels` | 検出結果を承認してModel登録する経路が未実装 | 15.1 Step6 |
+| `fetchUsage` / `fetchCost` | Provider側集計APIを取り込むユースケースが未実装（§4.2） | Audit/Cost集計 |
+
+### 不変条件9: 違反注入による確認
+
+| 注入 | 落ちた検査とメッセージ |
+|---|---|
+| `ProviderAdapter`へメソッドを1つ足す（表は更新しない） | `the consumer table covers exactly the methods ProviderAdapter declares` |
+| 消費者のないメソッドに架空の消費者を書く | `a method that claims a consumer is actually called from production code`「消費者を宣言しているのに本番の呼び出しが見つかりません」 |
+| 消費されているメソッドを「消費者なし」と宣言する | `a method declared as having no consumer really has none`「「消費者なし」と宣言されているのに本番から呼ばれています」 |
+| 「消費者なし」の理由を空にする | 同上「消費者が無いことを宣言するなら理由を書くこと」 |
+
+なお実装中、この検査自身が**偽陽性**を出した——`EndpointCatalog`が`discoverModels()`を
+「未提供API」として説明する**文字列リテラル**を持っており、素朴な検索がそれを呼び出しと誤認した。
+コメントと文字列リテラルを除去してから探すよう直している。検査を足したらまず自分の目で
+落ちること・落ちないことの両方を確かめる必要がある、という一例。

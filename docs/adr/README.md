@@ -45,6 +45,7 @@ Architecture Decision Record。`docs/design/*.md` は一次情報として編集
 | [ADR-0039](ADR-0039-modality-declaration-in-capability-constraints.md) | 対応modalityを申告する手段がSPIに無い | Accepted（P16実装） | 補足（P15 SPI検証、FR-RTE-002） |
 | [ADR-0040](ADR-0040-required-and-unsupported-generation-params.md) | Provider必須パラメタと未対応パラメタをSPIが表現できない | Accepted（P16実装） | 補足（P15 SPI検証、FR-CAP-001） |
 | [ADR-0041](ADR-0041-provider-adapter-is-never-initialized.md) | `ProviderAdapter.initialize()` が本番のどこからも呼ばれていない | Accepted（P17で実装。AdapterインスタンスはProviderごと、`AdapterRegistry`のキーは`providerId`） | 補足（P16検出／P17実装、FR-PRV-001〜006、FR-SEC-002、FR-SEC-005、NFR-SEC-004） |
+| [ADR-0042](ADR-0042-capability-constraints-has-no-consumer.md) | `capabilityConstraints()` に本番の消費者が現れない（申告口の粒度が(Provider, Capability)で、判断は(Model, Capability)） | Accepted（P18。SPIから削除し 2.0.0 へ。消費者の対応表を機械検査化） | 補足（P16/P17持ち越しの決着、FR-RTE-002、NFR-EXT-001） |
 
 ## 命名規則
 
