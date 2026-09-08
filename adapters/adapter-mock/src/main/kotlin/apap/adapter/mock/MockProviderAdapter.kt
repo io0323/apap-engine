@@ -109,8 +109,8 @@ class MockProviderAdapter(
                     )
                 } else {
                     AdapterResponse(
-                        output = listOf(TextContentPart(mockText(request))),
-                        finishReason = FinishReason.COMPLETED,
+                        output = listOf(TextContentPart(config.responseText ?: mockText(request))),
+                        finishReason = config.finishReason,
                         usage = config.usage,
                     )
                 }

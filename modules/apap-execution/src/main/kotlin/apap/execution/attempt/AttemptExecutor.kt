@@ -14,6 +14,7 @@ import apap.domain.model.vo.AdapterErrorCategory
 import apap.domain.model.vo.CbKey
 import apap.domain.model.vo.ContentPart
 import apap.domain.model.vo.ErrorCode
+import apap.domain.model.vo.FinishReason
 import apap.domain.model.vo.NormalizedError
 import apap.domain.port.Clock
 import apap.domain.port.DomainEventPublisher
@@ -212,7 +213,7 @@ class AttemptExecutor(
             return AttemptOutcome.Failed(candidateNotFoundError(), retryAfter = null)
         }
 
-        val resolved = adapterRegistry.resolve(provider.adapterPluginId)
+        val resolved = adapterRegistry.resolve(provider.providerId)
         val adapter = resolved.adapter
         val authContext = adapter.authenticate()
         val adapterRequest =
@@ -250,20 +251,36 @@ class AttemptExecutor(
      *
      * 検証対象は応答のテキスト部を連結したもの——Structured Outputは「JSONを返させる」機能であり、
      * Providerはテキストとして返す。テキストが無い応答（画像等）は検証対象にしない。
+     *
+     * ## 検証にかけない終了理由
+     *
+     * [FinishReason.LENGTH_LIMIT]（出力上限で切られた）と[FinishReason.CONTENT_FILTERED]
+     * （生成自体を拒否した）は、**スキーマに従わないことが分かっている**応答である。
+     * これを検証に通すと必ず不適合になり、直りようのない応答に対してADR-0011の是正リトライが走る
+     * ——切り詰められた応答を何度作り直しても切り詰められる。終了理由をそのまま
+     * 呼び出し元へ返し、上限超過は上限超過として、拒否は拒否として扱わせる。
      */
     private fun structuredOutputViolation(
         req: CanonicalRequest,
         response: AdapterResponse,
     ): AttemptOutcome.Failed? {
-        val schema = req.outputSchema ?: return null
+        // スキーマ未指定、または「従わないことが分かっている終了理由」なら検証しない。
+        val schema =
+            req.outputSchema?.takeIf { response.finishReason !in UNVALIDATABLE_FINISH_REASONS }
+                ?: return null
         val text =
             response.output
                 .filterIsInstance<ContentPart.Text>()
                 .joinToString(separator = "") { it.text }
         // 違反していれば結果を、適合または検証対象外ならnull。
         // 違反は2.11のMODEL_ERROR（リトライ可・CB非計上）として表現する。
+        // enumの綴り差（大文字小文字）は不適合としない（apap.provider.EnumCaseNormalizer参照）。
         val violation =
-            if (text.isBlank()) null else JsonSchemaValidator.validate(schema, text).takeIf { !it.valid }
+            if (text.isBlank()) {
+                null
+            } else {
+                JsonSchemaValidator.validate(schema, text, enumCaseInsensitive = true).takeIf { !it.valid }
+            }
         return violation?.let {
             AttemptOutcome.Failed(
                 ResponseMapper.normalizeError(
@@ -361,6 +378,12 @@ class AttemptExecutor(
         /** 2.19 `apap_overhead_duration_seconds` の phase ラベル（ADR-0034）。 */
         const val DISPATCH_PHASE = "dispatch"
         const val NANOS_PER_SECOND = 1_000_000_000.0
+
+        /**
+         * スキーマ適合の検証にかけない終了理由。**検証失敗ではなく、この終了理由のまま返す**。
+         * 上限で切られた出力・拒否された生成は、定義上スキーマに従わない。
+         */
+        val UNVALIDATABLE_FINISH_REASONS = setOf(FinishReason.LENGTH_LIMIT, FinishReason.CONTENT_FILTERED)
         val ATTR_PROVIDER: AttributeKey<String> = AttributeKey.stringKey("provider")
         val ATTR_MODEL: AttributeKey<String> = AttributeKey.stringKey("model")
         val ATTR_ATTEMPT: AttributeKey<Long> = AttributeKey.longKey("attempt")

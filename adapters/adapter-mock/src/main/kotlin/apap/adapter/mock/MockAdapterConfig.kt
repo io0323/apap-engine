@@ -3,6 +3,7 @@ package apap.adapter.mock
 import apap.adapter.spi.AdapterChunk
 import apap.adapter.spi.AdapterErrorCategory
 import apap.adapter.spi.CapabilityId
+import apap.adapter.spi.FinishReason
 import apap.adapter.spi.HealthResult
 import apap.adapter.spi.Modality
 import apap.adapter.spi.ProviderHealthStatus
@@ -63,6 +64,19 @@ data class MockAdapterConfig(
      * コア側のテストから確認できるようにするためのフック。
      */
     val requestSink: ((apap.adapter.spi.AdapterRequest) -> Unit)? = null,
+    /**
+     * `execute`が返す本文。未指定なら既定の定型文。
+     * `outputSchema`を指定した経路（FR-CAP-003）の検証で、適合／不適合な本文を作るために使う。
+     */
+    val responseText: String? = null,
+    /**
+     * `execute`が返す終了理由。未指定なら[FinishReason.COMPLETED]。
+     * 上限切れ（[FinishReason.LENGTH_LIMIT]）や拒否（[FinishReason.CONTENT_FILTERED]）の
+     * 応答がコア側でどう扱われるかを試すために要る。
+     *
+     * 新しいフィールドは**末尾**へ足すこと（位置引数で組み立てている呼出を壊さないため）。
+     */
+    val finishReason: FinishReason = FinishReason.COMPLETED,
 ) {
     init {
         require(!latency.isNegative) { "latency must not be negative: $latency" }
