@@ -10,6 +10,7 @@ import apap.context.QueryEmbedder
 import apap.context.TruncateOldestCompactionStrategy
 import apap.domain.model.execution.CanonicalResponse
 import apap.domain.model.vo.ContentPart
+import apap.domain.model.vo.ProviderId
 import apap.domain.model.vo.SemVer
 import apap.domain.port.Clock
 import apap.domain.port.DomainEventPublisher
@@ -35,6 +36,7 @@ import apap.provider.CapabilityDiscoveryQuery
 import apap.provider.CapabilityRegistry
 import apap.provider.ModelManager
 import apap.provider.PluginNotFoundException
+import apap.provider.ProviderAdapterProvisioner
 import apap.provider.ProviderHealthCheckTask
 import apap.provider.ProviderManager
 import apap.provider.ResolvedPlugin
@@ -288,6 +290,8 @@ class ApapEngineBuilder(
                 clock,
                 idGenerator,
                 resolvedAdapterRegistry,
+                // ADR-0041: ProviderごとのAdapterインスタンスを生成・初期化・破棄する。
+                provisionerOrNull,
             )
         val modelManager =
             ModelManager(
@@ -352,6 +356,7 @@ class ApapEngineBuilder(
             scheduledTasks = scheduledTasks,
             auditEngine = auditEngine,
             pluginManager = pluginManagerOrNull,
+            adapterProvisioner = provisionerOrNull,
         )
     }
 
@@ -367,6 +372,13 @@ class ApapEngineBuilder(
         return { _, _ -> QueryEmbedder { parts -> embed(parts) } }
     }
 
+    /**
+     * ADR-0041: Plugin経由の配線では[ProviderAdapterProvisioner]がAdapterの生成・初期化・破棄を持つ。
+     * ホストが自前の[AdapterRegistry]を渡した場合（テスト・埋込での差し替え）はnullになり、
+     * `ProviderManager`は与えられたレジストリをそのまま引く（初期化済みのAdapterを渡す前提）。
+     */
+    private var provisionerOrNull: ProviderAdapterProvisioner? = null
+
     private fun resolveAdapterRegistry(): AdapterRegistry {
         val explicit = adapterRegistry
         val directory = pluginDirectory
@@ -377,6 +389,11 @@ class ApapEngineBuilder(
                 "plugin signature verification cannot be skipped."
         }
         return if (explicit != null) {
+            // ホストが自前で[ProviderAdapterProvisioner]を渡した場合は、Plugin経由と同じく
+            // ライフサイクル（VALIDATINGで生成／DISABLED・DELETEDで破棄／close()で全破棄）を
+            // エンジン側が駆動する。渡された物がインスタンス寿命の管理者そのものだからである。
+            // それ以外のレジストリは「初期化済みのAdapterを返すだけ」と見なし、寿命はホストの責任。
+            (explicit as? ProviderAdapterProvisioner)?.let { provisionerOrNull = it }
             explicit
         } else if (directory != null && publicKey != null) {
             val manager =
@@ -389,14 +406,16 @@ class ApapEngineBuilder(
                 )
             manager.scan(directory)
             pluginManagerOrNull = manager
-            PluginManagerAdapterRegistry(manager)
+            ProviderAdapterProvisioner(PluginManagerAdapterFactory(manager), secretStore)
+                .also { provisionerOrNull = it }
         } else {
             EmptyAdapterRegistry
         }
     }
 
     private object EmptyAdapterRegistry : AdapterRegistry {
-        override fun resolve(pluginId: String): ResolvedPlugin = throw PluginNotFoundException(pluginId)
+        override fun resolve(providerId: ProviderId): ResolvedPlugin =
+            throw PluginNotFoundException("no adapter registry is configured (providerId=${providerId.value})")
     }
 
     companion object {

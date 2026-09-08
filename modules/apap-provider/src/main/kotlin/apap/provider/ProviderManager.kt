@@ -1,6 +1,7 @@
 package apap.provider
 
 import apap.adapter.spi.ProviderHealthStatus
+import apap.domain.event.CredentialRotated
 import apap.domain.event.CredentialValidationFailed
 import apap.domain.event.DomainEvent
 import apap.domain.event.EventMetadata
@@ -23,6 +24,7 @@ import apap.domain.port.Clock
 import apap.domain.port.DomainEventPublisher
 import apap.domain.port.IdGenerator
 import apap.domain.port.ProviderRepository
+import apap.domain.service.provider.CredentialRotationService
 import java.time.Duration
 
 /** 02_システム仕様.md 2.6.2 Provider登録情報。providerId/status/drainStartedAtはProviderManagerが決める。 */
@@ -65,6 +67,14 @@ class ProviderManager(
     private val clock: Clock,
     private val idGenerator: IdGenerator,
     private val adapterRegistry: AdapterRegistry,
+    /**
+     * ProviderごとのAdapterインスタンスの生成・破棄（ADR-0041）。
+     *
+     * nullを許すのは、既に初期化済みのAdapterを外から与えるホスト・テストのため
+     * （`ApapEngineBuilder.adapterRegistry(...)`で自前のレジストリを渡す経路）。
+     * Plugin経由の本番配線では必ず与えられる。
+     */
+    private val provisioner: ProviderAdapterProvisioner? = null,
 ) {
     fun register(command: RegisterProviderCommand): Provider {
         val provider =
@@ -106,6 +116,9 @@ class ProviderManager(
     fun beginValidation(providerId: ProviderId): Provider {
         val provider = requireProvider(providerId).transitionTo(ProviderStatus.VALIDATING)
         providerRepository.save(provider)
+        // ADR-0041: VALIDATINGで生成する。直後のcompleteValidationが
+        // validateCredential/healthCheckを呼ぶため、この時点で初期化済みである必要がある。
+        provisioner?.provision(provider)
         return provider
     }
 
@@ -125,7 +138,7 @@ class ProviderManager(
         return if (credentialRef == null) {
             failValidation(provider, "Provider has no ACTIVE or STANDBY CredentialRef to validate")
         } else {
-            validateWithAdapter(provider, adapterRegistry.resolve(provider.adapterPluginId), credentialRef)
+            validateWithAdapter(provider, adapterRegistry.resolve(provider.providerId), credentialRef)
         }
     }
 
@@ -216,6 +229,8 @@ class ProviderManager(
     ): Provider {
         val provider = requireProvider(providerId).transitionTo(ProviderStatus.ACTIVE)
         providerRepository.save(provider)
+        // SUSPENDED→ACTIVEの復帰経路ではVALIDATINGを通らないため、ここでも用意を保証する。
+        provisioner?.provision(provider)
         publish(providerId, ProviderEnabled(meta(providerId), providerId, reason))
         return provider
     }
@@ -256,6 +271,9 @@ class ProviderManager(
     ): Provider {
         val provider = requireProvider(providerId).transitionTo(ProviderStatus.DISABLED)
         providerRepository.save(provider)
+        // ADR-0041: 無効化したProviderのAdapterは畳む。放置するとHTTPクライアントの
+        // コネクションプールやスレッドが残り、埋込ホストのプロセスに居座る（不変条件6の趣旨）。
+        provisioner?.release(providerId)
         publish(providerId, ProviderDisabled(meta(providerId), providerId, reason))
         return provider
     }
@@ -264,9 +282,62 @@ class ProviderManager(
     fun delete(providerId: ProviderId): Provider {
         val provider = requireProvider(providerId).transitionTo(ProviderStatus.DELETED)
         providerRepository.save(provider)
+        provisioner?.release(providerId)
         publish(providerId, ProviderDeleted(meta(providerId), providerId))
         return provider
     }
+
+    /**
+     * 09_状態遷移図.md 9.7 Credential Rotation。STANDBYの新Credentialを検証結果に応じて切り替える。
+     *
+     * 判定自体は[CredentialRotationService]（純粋なドメインサービス）が行う。本メソッドは
+     * その結果をProviderへ反映し、**Adapterを作り直す**——新しいACTIVE Credentialで動くために
+     * プロセス再起動を要求しないため（ADR-0041）。設定の指紋にCredentialの状態を含めているので、
+     * [ProviderAdapterProvisioner.provision]が差し替えを検知する。
+     *
+     * @param verified 新Credentialの検証に合格したか（`validateCredential`の結果）
+     */
+    fun rotateCredential(
+        providerId: ProviderId,
+        newCredential: CredentialRef,
+        verified: Boolean,
+    ): Provider {
+        val provider = requireProvider(providerId)
+        val oldActive = provider.credentialRefs.firstOrNull { it.state == CredentialState.ACTIVE }
+        val result = CredentialRotationService.rotate(newCredential, oldActive, verified)
+
+        val refs =
+            provider.credentialRefs
+                .map { existing ->
+                    when {
+                        existing.sameRefAs(result.newCredential) -> result.newCredential
+                        result.oldCredential?.let { existing.sameRefAs(it) } == true -> result.oldCredential!!
+                        else -> existing
+                    }
+                }.let { updated ->
+                    if (updated.any { it.sameRefAs(result.newCredential) }) updated else updated + result.newCredential
+                }
+
+        val rotated = provider.copy(credentialRefs = refs)
+        providerRepository.save(rotated)
+        provisioner?.provision(rotated)
+        publish(
+            providerId,
+            CredentialRotated(
+                meta(providerId),
+                providerId,
+                oldVersion = oldActive?.version ?: 0,
+                newVersion = result.newCredential.version,
+                newSecretRef = result.newCredential.secretRef,
+            ),
+        )
+        return rotated
+    }
+
+    /** 同じCredentialを指すか。状態は見ない——ローテーション中は状態だけが変わるため。 */
+    private fun CredentialRef.sameRefAs(other: CredentialRef): Boolean =
+        secretRef == other.secretRef &&
+            version == other.version
 
     private fun requireProvider(providerId: ProviderId): Provider =
         checkNotNull(providerRepository.findById(providerId)) { "Provider not found: $providerId" }

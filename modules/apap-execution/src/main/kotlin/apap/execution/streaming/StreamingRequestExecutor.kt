@@ -155,7 +155,7 @@ class StreamingRequestExecutor(
         val model =
             modelRepository.findById(candidate.modelId)
                 ?: failCandidateNotFound(permit, ctx)
-        val resolved = adapterRegistry.resolve(provider.adapterPluginId)
+        val resolved = adapterRegistry.resolve(provider.providerId)
         val authContext = resolved.adapter.authenticate()
         val remaining = ctx.remaining(clock.now())
         val adapterRequest =

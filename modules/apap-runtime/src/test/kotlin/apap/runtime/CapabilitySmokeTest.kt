@@ -45,7 +45,6 @@ import apap.execution.ExecutionEngine
 import apap.observability.audit.AuditConfig
 import apap.observability.audit.AuditEngine
 import apap.provider.AdapterRegistry
-import apap.provider.PluginNotFoundException
 import apap.provider.ResolvedPlugin
 import apap.testkit.inmemory.InMemoryAliasRepository
 import apap.testkit.inmemory.InMemoryAuditRepository
@@ -178,9 +177,8 @@ class CapabilitySmokeTest {
         )
         val adapterRegistry =
             object : AdapterRegistry {
-                override fun resolve(pluginId: String): ResolvedPlugin {
-                    if (pluginId != "plugin-a") throw PluginNotFoundException(pluginId)
-                    return ResolvedPlugin(
+                override fun resolve(providerId: ProviderId): ResolvedPlugin =
+                    ResolvedPlugin(
                         adapter,
                         PluginManifest(
                             "plugin-a",
@@ -192,7 +190,6 @@ class CapabilitySmokeTest {
                             "sig",
                         ),
                     )
-                }
             }
 
         return ExecutionEngineComposer(

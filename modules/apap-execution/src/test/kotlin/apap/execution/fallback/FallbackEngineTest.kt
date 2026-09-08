@@ -130,7 +130,7 @@ class FallbackEngineTest {
         retryConfig: RetryConfig = RetryConfig(baseBackoffMs = 1),
         structuredOutputConfig: StructuredOutputConfig = StructuredOutputConfig(),
     ): FallbackEngine {
-        val registry = FakeAdapterRegistry(mapOf("plugin-a" to adapterA, "plugin-b" to adapterB))
+        val registry = FakeAdapterRegistry(mapOf("plugin-a" to adapterA, "plugin-b" to adapterB), providerRepository)
         val attemptExecutor =
             AttemptExecutor(
                 providerRepository,

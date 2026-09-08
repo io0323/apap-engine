@@ -27,7 +27,6 @@ import apap.domain.model.vo.RegionCodeTable
 import apap.domain.model.vo.SemVer
 import apap.domain.model.vo.TenantId
 import apap.provider.AdapterRegistry
-import apap.provider.PluginNotFoundException
 import apap.provider.RegisterModelCommand
 import apap.provider.RegisterProviderCommand
 import apap.provider.ResolvedPlugin
@@ -151,9 +150,8 @@ class ProductionWiringTest {
             },
         )
         return object : AdapterRegistry {
-            override fun resolve(pluginId: String): ResolvedPlugin {
-                if (pluginId != "plugin-a") throw PluginNotFoundException(pluginId)
-                return ResolvedPlugin(
+            override fun resolve(providerId: ProviderId): ResolvedPlugin =
+                ResolvedPlugin(
                     adapter,
                     PluginManifest(
                         pluginId = "plugin-a",
@@ -165,7 +163,6 @@ class ProductionWiringTest {
                         signature = "sig",
                     ),
                 )
-            }
         }
     }
 

@@ -24,6 +24,7 @@ import apap.domain.model.vo.RegionCodeTable
 import apap.domain.model.vo.RequestId
 import apap.domain.model.vo.SemVer
 import apap.domain.model.vo.TenantId
+import apap.domain.port.ProviderRepository
 import apap.domain.service.routing.Candidate
 import apap.provider.AdapterRegistry
 import apap.provider.PluginNotFoundException
@@ -119,13 +120,24 @@ fun testCanonicalRequest(
         traceId = "trace-${requestId.value}",
     )
 
-/** テスト専用の最小[AdapterRegistry]: pluginIdごとに固定Adapterへ紐づける。 */
+/**
+ * テスト専用の最小[AdapterRegistry]。
+ *
+ * ADR-0041でキーがproviderIdになったため、Providerの`adapterPluginId`を経由して引く。
+ * 実運用の[apap.provider.ProviderAdapterProvisioner]はProviderごとに別インスタンスを持つが、
+ * ここは「どのAdapterが呼ばれるか」だけを見るテスト用の簡略版。
+ */
 class FakeAdapterRegistry(
     private val adaptersByPluginId: Map<String, ProviderAdapter>,
+    private val providerRepository: ProviderRepository? = null,
 ) : AdapterRegistry {
     constructor(pluginId: String, adapter: ProviderAdapter) : this(mapOf(pluginId to adapter))
 
-    override fun resolve(pluginId: String): ResolvedPlugin {
+    override fun resolve(providerId: ProviderId): ResolvedPlugin {
+        val pluginId =
+            providerRepository?.findById(providerId)?.adapterPluginId
+                ?: adaptersByPluginId.keys.singleOrNull()
+                ?: error("FakeAdapterRegistry: providerRepositoryが必要です（Adapterが複数登録されています）")
         val adapter = adaptersByPluginId[pluginId] ?: throw PluginNotFoundException(pluginId)
         return ResolvedPlugin(adapter, testManifest(pluginId))
     }

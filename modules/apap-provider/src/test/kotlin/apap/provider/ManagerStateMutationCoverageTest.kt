@@ -32,6 +32,8 @@ class ManagerStateMutationCoverageTest {
                     "drain",
                     "completeDraining",
                     "delete",
+                    // 9.7 Credential Rotation（ADR-0041で本番経路へ配線）。
+                    "rotateCredential",
                 ),
             "ModelManager.kt" to
                 setOf(

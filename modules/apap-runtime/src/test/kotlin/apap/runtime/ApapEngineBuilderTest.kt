@@ -40,7 +40,6 @@ import apap.domain.service.routing.RoutingWeights
 import apap.domain.service.routing.ScoredCandidate
 import apap.execution.retry.RetryStrategy
 import apap.provider.AdapterRegistry
-import apap.provider.PluginNotFoundException
 import apap.provider.RegisterModelCommand
 import apap.provider.RegisterProviderCommand
 import apap.provider.ResolvedPlugin
@@ -96,11 +95,9 @@ class ApapEngineBuilderTest {
                 override fun resolve(ref: CredentialRef): SecretValue = SecretValue("secret".toCharArray())
             },
         )
+        val resolved = ResolvedPlugin(adapter, manifest(capabilityId))
         return object : AdapterRegistry {
-            override fun resolve(pluginId: String): ResolvedPlugin {
-                if (pluginId != "plugin-a") throw PluginNotFoundException(pluginId)
-                return ResolvedPlugin(adapter, manifest(capabilityId))
-            }
+            override fun resolve(providerId: ProviderId): ResolvedPlugin = resolved
         }
     }
 

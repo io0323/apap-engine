@@ -16,7 +16,6 @@ import apap.domain.model.vo.Region
 import apap.domain.model.vo.RegionCodeTable
 import apap.domain.model.vo.SemVer
 import apap.provider.AdapterRegistry
-import apap.provider.PluginNotFoundException
 import apap.provider.ResolvedPlugin
 import apap.runtime.ApapEngineBuilder
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -64,10 +63,7 @@ class AdapterMockSubstitutionTest {
                 signature = "sig",
             )
         return object : AdapterRegistry {
-            override fun resolve(pluginId: String): ResolvedPlugin {
-                if (pluginId != "plugin-a") throw PluginNotFoundException(pluginId)
-                return ResolvedPlugin(adapter, manifest)
-            }
+            override fun resolve(providerId: ProviderId): ResolvedPlugin = ResolvedPlugin(adapter, manifest)
         }
     }
     // docs:end adapter-mock-substitution

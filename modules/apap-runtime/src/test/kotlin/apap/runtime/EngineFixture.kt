@@ -71,7 +71,7 @@ object EngineFixture {
     ): Fixture {
         val engine =
             ApapEngineBuilder(repositories = repositories)
-                .adapterRegistry(registryOf(capabilityId, plugins))
+                .adapterRegistry(registryOf(capabilityId, plugins, repositories))
                 .apply { metricsRecorder?.let { metricsRecorder(it) } }
                 .apply(configure)
                 .build()
@@ -105,9 +105,15 @@ object EngineFixture {
     private fun registryOf(
         capabilityId: CapabilityId,
         plugins: Map<String, ProviderAdapter>,
+        repositoriesForRegistry: ApapRepositories?,
     ): AdapterRegistry =
         object : AdapterRegistry {
-            override fun resolve(pluginId: String): ResolvedPlugin {
+            override fun resolve(providerId: ProviderId): ResolvedPlugin {
+                // ADR-0041でキーがproviderIdになった。テストはpluginIdでAdapterを束ねているため、
+                // Provider経由で翻訳する（本番はProviderAdapterProvisionerがインスタンスを持つ）。
+                val pluginId =
+                    repositoriesForRegistry?.providerRepository?.findById(providerId)?.adapterPluginId
+                        ?: plugins.keys.first()
                 val adapter = plugins[pluginId] ?: throw PluginNotFoundException(pluginId)
                 return ResolvedPlugin(
                     adapter,
