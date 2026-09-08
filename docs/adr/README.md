@@ -44,7 +44,7 @@ Architecture Decision Record。`docs/design/*.md` は一次情報として編集
 | [ADR-0038](ADR-0038-adapter-credential-ref-resolution.md) | AdapterがどのCredentialRefを使うべきかをSPIが伝えていない | Accepted（P16実装） | 補足（P15 SPI検証、FR-SEC-002） |
 | [ADR-0039](ADR-0039-modality-declaration-in-capability-constraints.md) | 対応modalityを申告する手段がSPIに無い | Accepted（P16実装） | 補足（P15 SPI検証、FR-RTE-002） |
 | [ADR-0040](ADR-0040-required-and-unsupported-generation-params.md) | Provider必須パラメタと未対応パラメタをSPIが表現できない | Accepted（P16実装） | 補足（P15 SPI検証、FR-CAP-001） |
-| [ADR-0041](ADR-0041-provider-adapter-is-never-initialized.md) | `ProviderAdapter.initialize()` が本番のどこからも呼ばれていない | Proposed（実装は次フェーズ） | 補足（P16、FR-PRV-001〜006、FR-SEC-002） |
+| [ADR-0041](ADR-0041-provider-adapter-is-never-initialized.md) | `ProviderAdapter.initialize()` が本番のどこからも呼ばれていない | Accepted（P17で実装。AdapterインスタンスはProviderごと、`AdapterRegistry`のキーは`providerId`） | 補足（P16検出／P17実装、FR-PRV-001〜006、FR-SEC-002、FR-SEC-005、NFR-SEC-004） |
 
 ## 命名規則
 

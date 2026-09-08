@@ -1,6 +1,6 @@
 # ADR-0041: `ProviderAdapter.initialize()` が本番のどこからも呼ばれていない
 
-- **ステータス**: Proposed（P16で検出。**実装は次フェーズ**）
+- **ステータス**: Accepted（P16で検出、**P17で実装**）
 - **関連要件**: FR-PRV-001〜006, FR-SEC-001, FR-SEC-002, NFR-EXT-001
 - **関連する設計書**: 03_基本設計.md 3.3.2, 15_Provider追加手順.md 15.1 Step4-8
 - **検出**: P16 ADR-0038（credentialRefs追加）の実装中
@@ -49,11 +49,66 @@
 
 案Aが正しいが影響範囲が広い。案Bは小さいが「1 Plugin = 1 Provider」の制約を課す。
 
-## 影響（この決定を保留することの）
+## 決定（P17で確定）
 
-P16では**記録に留めた**。理由は、配線を足すこと自体は小さくても、上記の共有セマンティクスを
-決めずに入れると「誤った設定で動く」という、現状（動かない）より悪い状態を作りうるため。
+**案Aを採る。Plugin（ロード済みクラス・ClassLoader）は共有し、Adapterインスタンスは
+Providerごとに1つ持つ。**
 
-決めるまでは、実Providerを本番配線で動かすことはできない。
-`docs/adapter-spi-findings.md` の「実測が必須になる条件」（prompt-engine接続前 /
-実トラフィック前）に到達したら、本ADRの解決も同時に必要になる。
+案Bを採らない理由は、これが配線の穴であると同時に**セキュリティ要件の穴**だからである。
+`AdapterRegistry` が `pluginId` をキーにしている限り、1つのインスタンスが複数Providerで
+共有される。Providerは `endpoints` / `credentialRefs` / `rateLimits` / `regions` を
+**Providerごとに**持つため、共有インスタンスは自分がどのProviderとして動いているのかを
+決められない。この状態では **FR-SEC-005（Provider Isolation）と
+NFR-SEC-004（Adapterは自ProviderのCredentialのみアクセス可能）が原理的に成立しない**——
+実装の巧拙ではなく、構造として成立しない。案Bの「初期化の一意性チェック」は
+混線を検知して失敗させるだけで、分離そのものは与えない。
+
+### 具体
+
+| 決めたこと | 実装 |
+|---|---|
+| インスタンスの粒度 | Providerごとに1つ（Plugin・ClassLoaderは共有のまま） |
+| 生成の主体 | `PluginManager.newAdapter(pluginId)` が生成器を提供し、`ProviderAdapterProvisioner` がProviderごとに保持する |
+| 初期化の主体 | `ProviderManager` が状態遷移の中で `provision(provider)` を呼び、`initialize(config, secrets)` が実行される |
+| `AdapterRegistry` のキー | `pluginId` → **`providerId`**（`resolve(providerId)`） |
+| Credentialのスコープ | 各インスタンスへ渡す `SecretAccessor` は、そのProviderの `credentialRefs` に**スコープされる**。他Providerの参照を渡すと `CredentialAccessDeniedException` |
+
+### ライフサイクル
+
+| 契機 | 動作 |
+|---|---|
+| VALIDATING | 生成し `initialize(config, secrets)`。直後の `completeValidation` が `validateCredential` / `healthCheck` を呼ぶため、この時点で初期化済みである必要がある |
+| SUSPENDED→ACTIVE（復帰） | VALIDATINGを通らない経路のため `enable` でも用意を保証する |
+| 設定変更・Credentialローテーション（9.7） | 設定の指紋（endpoints / rateLimits / regions / credentialRefs（**状態を含む**））が変われば作り直す。**プロセス再起動を要求しない** |
+| DISABLED / DELETED | `shutdown()` して破棄（冪等） |
+
+### 有効化の過程でインスタンスは2回作られる
+
+REGISTERED→VALIDATING時点のCredentialはSTANDBYで、検証に合格して初めてACTIVEへ昇格する。
+Adapterは「ACTIVEのCredentialを使う」規約（`AdapterConfig.credentialRefs`のKDoc）なので、
+昇格は**Adapterへ届かなければ意味がない**。したがって`enable`での`provision`が指紋の変化を
+検知して作り直す——検証用（STANDBY）と稼働用（ACTIVE）で2つ作られ、前者は`shutdown()`される。
+
+有効化1回につき1回の追加生成であり、リクエスト毎ではない。これを避けようとして
+Credentialの状態を指紋から外すと、昇格もローテーションもAdapterに反映されなくなる
+（`docs/adapter-spi-findings.md` §10.3の注入実験がそれを示している）。
+
+### 検証
+
+`ProviderAdapterProvisionerTest` / `ProviderAdapterLifecycleTest` / `AdapterLifecycleWiringTest`:
+同一Pluginを参照する2つのProviderが別インスタンスを得ること、各インスタンスが自Providerの
+Credentialのみ解決でき他Providerの `credentialRef` では失敗すること、ACTIVEに達するまでに
+`initialize` が呼ばれていること、DISABLED / DELETED で `shutdown` が呼ばれること、
+ローテーション後に新しいCredentialで動くこと。`AdapterLifecycleWiringTest`は同じことを
+**本番の入口（`ApapEngineBuilder`）経由**で確認する（「型は揃っているのに誰も呼ばない」を
+単体テストでは検出できないため）。不変条件9の違反注入は
+`docs/adapter-spi-findings.md` §10.3 に記録した。
+
+### 残る制約
+
+`ProviderAdapterProvisioner` はインメモリのインスタンス表であり、**プロセスローカル**である。
+複数Podで同じProviderを扱う構成では、各Podが自分のインスタンスを持つ。ローテーション時の
+差し替えは各Podが自分の `provision` 呼出で行うため、Pod間の同期は
+（Providerの状態がRepository経由で共有されている限り）不要だが、**他Podがまだ旧Credentialで
+動いている時間帯は存在する**。9.7が旧Credentialを即REVOKEDにせず
+REVOKED_PENDING（既定24h猶予）を挟むのは、まさにこの時間帯のためである。

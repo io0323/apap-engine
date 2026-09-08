@@ -379,27 +379,36 @@ Credential非漏出は Contract Test に加えて `AnthropicAdapterReplayTest` �
 
 ---
 
-## 6. 15.4 Go-Liveチェックリストに対する現状評価（P16再評価）
+## 6. 15.4 Go-Liveチェックリストに対する現状評価（P17再評価）
 
-| # | 項目 | P15 | P16 | 根拠・残作業 |
-|---|---|---|---|---|
-| 1 | Contract Test全件パス（エラー分類・Stream中断・Credential非漏出含む） | △ | **○（機能面）** | **16/16パス・スキップ0**（CONTENT_FILTEREDを含む）。ADR-0037で申告方式にしたことで、再現できない項目を黙って飛ばせなくなった。ただし**実APIに対しては未実行**のため、実挙動での合格は未確認 |
-| 2 | Health Check応答が30秒周期で安定 | 未評価 | **未評価** | 実API＋常駐運用でしか測れない。`LiveProviderTest`に計測を用意済み（30秒予算の判定つき） |
-| 3 | 単価（PriceBook）登録済・コスト算出がAuditへ反映 | 未実施 | **未実施** | Adapterの範囲外。Model登録時の運用手順 |
-| 4 | Fallback Chainに組み込んだ場合の切替動作確認（強制障害試験） | △ | △ | エンジン側は検証済み。**この実Adapterを組み込んだ状態での試験は未実施** |
-| 5 | Rate Limit設定がProvider実制限以下 | 未実施 | **未実施** | 実アカウントの制限値が要る |
-| 6 | Canary 5%で24時間、エラー率・レイテンシがSLO内 | 未実施 | **未実施** | 実運用フェーズ。§0.2により、ここへ進む前に実測が必須 |
-| 7 | ロールバック手順（Alias weight 0%化）の演習済 | 未実施 | **未実施** | 機構はE2Eで確認済み、運用演習は未実施 |
+| # | 項目 | P15 | P16 | P17 | 根拠・残作業 |
+|---|---|---|---|---|---|
+| 1 | Contract Test全件パス（エラー分類・Stream中断・Credential非漏出含む） | △ | ○（機能面） | **○（機能面）** | **16/16パス・スキップ0**（CONTENT_FILTEREDを含む）。ADR-0037で申告方式にしたことで、再現できない項目を黙って飛ばせなくなった。ただし**実APIに対しては未実行**のため、実挙動での合格は未確認 |
+| 2 | Health Check応答が30秒周期で安定 | 未評価 | 未評価 | **未評価** | 実API＋常駐運用でしか測れない。`LiveProviderTest`に計測を用意済み（30秒予算の判定つき） |
+| 3 | 単価（PriceBook）登録済・コスト算出がAuditへ反映 | 未実施 | 未実施 | **未実施** | Adapterの範囲外。Model登録時の運用手順 |
+| 4 | Fallback Chainに組み込んだ場合の切替動作確認（強制障害試験） | △ | △ | △ | エンジン側は検証済み。**この実Adapterを組み込んだ状態での試験は未実施** |
+| 5 | Rate Limit設定がProvider実制限以下 | 未実施 | 未実施 | **未実施** | 実アカウントの制限値が要る |
+| 6 | Canary 5%で24時間、エラー率・レイテンシがSLO内 | 未実施 | 未実施 | **未実施** | 実運用フェーズ。§0.2により、ここへ進む前に実測が必須 |
+| 7 | ロールバック手順（Alias weight 0%化）の演習済 | 未実施 | 未実施 | **未実施** | 機構はE2Eで確認済み、運用演習は未実施 |
 
-**結論: Go-Liveは引き続き「不可」。** P16でSPIの機能的な欠落は解消したが、
-**ブロッカーの本体は変わっていない**——実APIに一度も接続していないこと。
-加えてP16で新たに判明した ADR-0041（`initialize()`が本番のどこからも呼ばれていない）により、
-**現状では実Providerを本番配線で動かすことすらできない**。Go-Liveの前提として、
-少なくとも次の3つが要る。
+**結論: Go-Liveは引き続き「不可」。ただしブロッカーの中身は1つ減った。**
 
-1. ADR-0041の解決（Adapterが初期化される経路）
-2. 実APIでの実測（§0.2の条件）
-3. 上表 2 / 5 / 6 / 7 の運用側の確認
+P16時点の前提3つのうち、**1（ADR-0041の解決）はP17で完了した**——実Providerを本番配線で
+初期化して動かせる状態になり、同時にFR-SEC-005／NFR-SEC-004が構造として成立するようになった。
+残るブロッカーは変わらず**実APIに一度も接続していないこと**であり、これは実測を見送るという
+判断（§0.1）の帰結であって、実装で消せるものではない。
+
+1. ~~ADR-0041の解決（Adapterが初期化される経路）~~ → **P17で完了**
+2. 実APIでの実測（§0.2の条件）——**未実施。最大のブロッカー**
+3. 上表 2 / 5 / 6 / 7 の運用側の確認——**未実施**
+
+P17で足した機構のうち、**実APIでしか確かめられないもの**を明示しておく（§0.2の実測時に必ず見ること）。
+
+- スキーマ前処理（§10.2）が実APIに受け入れられるか。整形漏れは400として現れるため、
+  1本目のリクエストで分かる。ここで弾かれた場合の切替先が `structured_output.mode = "prompt"`
+- enumの綴り差が実際に起きるか、起きたとき本当に正常終了するか
+- 文法コンパイルの初回遅延の実測値（NFR-PRF-001の測定条件、§10.2）
+- Credentialローテーション後、再起動なしで新しい鍵が実APIに受理されること
 
 ## 7. 次フェーズへの申し送り（ADR起票一覧）
 
@@ -410,7 +419,7 @@ Credential非漏出は Contract Test に加えて `AnthropicAdapterReplayTest` �
 | ADR-0039 | modality対応可否の申告（Routing候補選択に使えるように） | FR-RTE-002 | **実装済**（SPI・ドメイン・Routingの3層） |
 | ADR-0040 | 必須パラメタ・未対応パラメタの扱い（`max_tokens` / `seed`） | FR-CAP-001、FR-EXE-002 | **実装済**（`outputSchema`の実使用も含む） |
 | ADR-0028 | SSEの`message_end`が`finish_reason`を省略する | FR-CAP-004、13.3 | **Superseded**（P16で送出するようにした） |
-| **ADR-0041** | `ProviderAdapter.initialize()` が本番のどこからも呼ばれていない | FR-PRV-001〜006、FR-SEC-002 | **未着手**（P16で新規検出） |
+| **ADR-0041** | `ProviderAdapter.initialize()` が本番のどこからも呼ばれていない | FR-PRV-001〜006、FR-SEC-002、**FR-SEC-005、NFR-SEC-004** | **実装済**（P17。AdapterインスタンスはProviderごと、`AdapterRegistry`のキーは`providerId`。§10.1） |
 
 **実装は次フェーズ。** 本フェーズでは一覧化に留め、SPIには手を入れていない。
 1つのProviderの都合でSPIを変えると、2つ目のProviderで必ず歪みが出るため、
@@ -602,3 +611,126 @@ Adapterが実装し、テストのフェイクが実装しているだけで、�
 
 最後の1件は、**文書の記述そのものを機械検証の対象にした**もの。作業0-2の
 「時間が経つと記憶に置き換わる」への対策が、文書を書いただけで終わらないようにしている。
+
+---
+
+## 10. P17: ADR-0041の解消と、構造化出力の確定
+
+### 10.1 ADR-0041: Adapterが初期化される経路（配線の穴＝分離の穴）
+
+`ProviderAdapter.initialize(config, secrets)` は本番のどこからも呼ばれていなかった（§7）。
+P17でこれを解消したが、**単なる呼び忘れではなかった**。
+
+`AdapterRegistry` が `pluginId` をキーにしていたため、1つのPluginを複数のProviderが
+参照すると**同一インスタンスが共有**される。Providerは `endpoints` / `credentialRefs` /
+`rateLimits` / `regions` を**Providerごとに**持つので、共有インスタンスは自分がどの
+Providerとして動いているのかを決められない。すなわち
+**FR-SEC-005（Provider Isolation）と NFR-SEC-004（Adapterは自ProviderのCredentialのみ
+アクセス可能）が原理的に成立しない**状態だった。初期化の呼び出しだけを足しても、
+2つ目のProviderが同じPluginを使った瞬間に設定が混線する。
+
+決定と実装（ADR-0041がProposed→**Accepted**）:
+
+| 決めたこと | 実装 |
+|---|---|
+| インスタンスの粒度 | **Providerごとに1つ**。Plugin（ロード済みクラス・ClassLoader）は共有のまま |
+| 生成 | `PluginManager.newAdapter(pluginId)`（`ServiceLoader`で毎回新しい実体）＋ `ProviderAdapterProvisioner` が保持 |
+| 初期化 | `ProviderManager` の状態遷移の中で `provision(provider)` → `initialize(config, secrets)` |
+| `AdapterRegistry` のキー | `pluginId` → **`providerId`** |
+| Credentialのスコープ | 渡す `SecretAccessor` はそのProviderの `credentialRefs` に**スコープ**。他Providerの参照は `CredentialAccessDeniedException` |
+
+ライフサイクル: **VALIDATING**で生成（直後の `completeValidation` が `validateCredential` /
+`healthCheck` を呼ぶため、この時点で初期化済みである必要がある）。SUSPENDED→ACTIVEの
+復帰経路でも `enable` が用意を保証する。設定変更とCredentialローテーション（9.7）では
+**設定の指紋**（endpoints / rateLimits / regions / credentialRefs、**状態を含む**）の変化で
+作り直す——**ローテーションに再起動を要求しない**。**DISABLED / DELETED** で `shutdown()`。
+
+`ProviderManager.rotateCredential(providerId, newCredential, verified)` を本番経路として
+追加した（判定自体は既存の純粋ドメインサービス `CredentialRotationService`）。
+これまで9.7の状態機械はドメイン層にあるだけで、**呼び出す本番コードが無かった**。
+
+有効化の過程でインスタンスは**2回**作られる。VALIDATING時点のCredentialはSTANDBYで、
+検証合格で初めてACTIVEへ昇格するため、`enable`での`provision`が指紋の変化を検知して差し替える
+（検証用は`shutdown()`される）。有効化1回につき1回であり、リクエスト毎ではない。
+これを嫌ってCredentialの状態を指紋から外すと、昇格もローテーションもAdapterに反映されなくなる。
+
+`close()`はProvisionerが持つ全インスタンスを`shutdown()`してからPluginをunloadする
+（逆順にすると、ClassLoaderを閉じた後にAdapterのコードを呼ぶことになる）。
+Adapterは実HTTPクライアントを持ちうるため、畳まないと宿主のプロセスにスレッドが残る。
+
+残る制約: インスタンス表はプロセスローカルである。複数Podでは各Podが自分のインスタンスを持ち、
+**他Podがまだ旧Credentialで動いている時間帯が存在する**。9.7が旧Credentialを即REVOKEDに
+せずREVOKED_PENDING（既定24h猶予）を挟むのは、この時間帯のためである。
+
+### 10.2 構造化出力の確定
+
+出典: <https://platform.claude.com/docs/en/build-with-claude/structured-outputs>
+（`StructuredOutputSchema.DOC_SOURCE` にも記録）。以下のうち、**この文書で直接確認できたもの**と
+**利用者から一次情報として指定されたもの**を区別して記す（前者は上記URLの記述、後者は
+ドキュメントの当該節が本作業時点の取得で末尾切れになっていたため未再確認）。
+
+| # | 事項 | 出所 | 実装 |
+|---|---|---|---|
+| 1 | 形は `output_config.format = {type: "json_schema", schema: ...}`。**ベータヘッダ不要** | ドキュメントで確認 | 既存実装のまま。`no beta header is attached to a structured output request` で「付けていないこと」を固定 |
+| 2 | スキーマの前処理が要る（全objectに `additionalProperties: false`／`minimum`等はサポート外で、SDKは除去し `description` へ回す） | ドキュメントで確認 | `StructuredOutputSchema` を新設。生HTTPを叩く本Adapterは自分で整形する必要がある |
+| 3 | 複雑さの上限（strict tools 20／optional params 24／union-typed params 16）、超過時は400 "Schema is too complex for compilation" | **利用者提供**（当該節を再取得できず） | 分類のみ実装。400 `invalid_request_error` → **INVALID_REQUEST**（2.11でRetry対象外・Fallback対象外・CB非計上）。`SchemaCompilationErrorTest` |
+| 4 | **enumの大文字小文字は保証されない**（正常終了するため終了理由では区別できない） | **利用者提供** | 綴り差だけを適合と見なす（`EnumCaseNormalizer`＋`JsonSchemaValidator(enumCaseInsensitive)`）。**応答は書き換えない**——変わるのは判定だけ |
+| 5 | 初回リクエストに文法コンパイルの遅延、コンパイル済み文法は24hキャッシュ | ドキュメントで確認 | NFR-PRF-001の測定条件へ注記（下記） |
+| 6 | Streamingとは併用可 | ドキュメントで確認 | `structured output is also sent on the streaming path` |
+| 7 | Citations / Message Prefilling とは併用不可（400） | **利用者提供** | prefill（末尾assistantメッセージ）を**送信前に**INVALID_REQUESTで落とす。citationsは本Adapterに組み立て経路が無い |
+
+補足:
+
+- **前処理したスキーマは送信にしか使わない。応答の検証は元のスキーマに対して行う**
+  （`AttemptExecutor` がリクエストの `outputSchema` をそのまま使う）。整形後で検証すると、
+  利用側が課した `minimum` 等が黙って消える。
+- **`stop_reason: "refusal"`**（200で課金され、スキーマに従わない場合がある）は
+  ADR-0037のCONTENT_FILTERED経路と整合している。`ResponseMapper.finishReasonOf` が
+  `refusal` → `CONTENT_FILTERED` へ写し、`AttemptExecutor` は**この終了理由の応答を
+  スキーマ検証にかけない**。
+- **`stop_reason: "max_tokens"`** は出力が途中で切れるため、検証すれば必ず落ちる。
+  検証失敗（＝ADR-0011の是正リトライ）ではなく **LENGTH_LIMIT のまま返す**。
+  切り詰められた応答を作り直しても切り詰められるので、是正予算を空回りで消費させない。
+- **退避経路 `structured_output.mode = "prompt"` は維持**した。実APIでネイティブ機構が
+  弾かれた場合（未対応Model・上記の併用不可など）の切替先として要る。prefill併用の
+  エラーメッセージにも、この切替先を明示している。
+
+#### NFR-PRF-001（付加レイテンシ）の測定条件への注記
+
+**同じスキーマの初回リクエストには文法コンパイルの遅延が乗る**（キャッシュは最終使用から24h、
+スキーマまたはtool集合の変更で無効化。`name`/`description` だけの変更では無効化されない）。
+この遅延はProvider側の処理時間であり、NFR-PRF-001の計測区間（Gateway受信〜Adapter送信）には
+入らない——`dispatch` phaseはAdapter送信直前で終わるため。ただし**利用側から見える
+エンドツーエンドの遅延**には乗るため、実測時は次を測定条件として明記すること。
+
+- 初回（コールドな文法）と2回目以降（ウォーム）を分けて記録する
+- ウォームアップとして同一スキーマで1回投げてから計測を開始する
+- 24h以上の間隔があいた計測は、再びコールドとして扱う
+
+### 10.3 不変条件9: 違反注入による確認
+
+P17で追加・変更した検査に、意図的な違反を1件ずつ注入して**実際に落ちること**を確認した
+（1注入＝1回のテスト実行。確認後はいずれも復旧済み）。
+
+**ADR-0041（作業1）**
+
+| 注入 | 落ちた検査とメッセージ |
+|---|---|
+| インスタンスの共有をpluginId単位へ戻す（ADR-0041以前の挙動） | `ProviderAdapterProvisionerTest > two providers sharing one plugin get separate adapter instances`「同じPluginを参照する2つのProviderが1つのインスタンスを共有しています（FR-SEC-005が成立しません）」。連鎖して `each adapter is initialized with only its own provider's configuration`（Provider Aの設定がBで上書き）、`an adapter can resolve only its own provider's credentials`（**自分のCredentialが引けなくなる**＝スコープが別Providerのものになっている）も失敗 |
+| Credentialスコープの判定を外す（すべて解決可にする） | `ProviderAdapterProvisionerTest > an adapter can resolve only its own provider's credentials`「Expected apap.provider.CredentialAccessDeniedException to be thrown, but nothing was thrown.」 |
+| VALIDATINGでの生成（`provisioner?.provision`）を止める | `ProviderAdapterLifecycleTest > the adapter is initialized before the provider ever reaches ACTIVE`「List is empty.」（生成されない）。`after rotation ...` は `AdapterNotProvisionedException: No initialized adapter for provider ...` |
+| DISABLED / DELETEDでの `shutdown`（`provisioner?.release`）を止める | `ProviderAdapterLifecycleTest > the adapter is shut down when the provider becomes DISABLED`「DISABLEDでshutdownされていません expected: <1> but was: <0>」 |
+| 設定の指紋からCredentialの**状態**を落とす | `ProviderAdapterLifecycleTest > the adapter is initialized before the provider ever reaches ACTIVE`「検証でACTIVEへ昇格したCredentialがAdapterへ届いていません expected: <[ACTIVE]> but was: <[STANDBY]>」——状態を見ないと、昇格もローテーションもAdapterに反映されない |
+
+**構造化出力（作業2）**
+
+| 注入 | 落ちた検査とメッセージ |
+|---|---|
+| 送信前のスキーマ前処理を外す（生のスキーマを載せる） | `StructuredOutputTest > the schema is preprocessed before it is put on the wire`「additionalProperties:falseが要ります expected: <false> but was: <true>」 |
+| 前処理から `additionalProperties: false` の付与を外す | `StructuredOutputSchemaTest` の3項目（トップレベル・入れ子・`$defs`配下・`additionalProperties:true`の置換） |
+| prefill併用ガードを外す | `StructuredOutputTest > prefilling combined with native structured output fails locally with a usable message`「Expected apap.adapter.spi.AdapterException to be thrown, but nothing was thrown.」（＝400になると分かっているリクエストをProviderへ送る） |
+| 上限切れ・拒否の応答も検証にかける | `StructuredOutputValidationTest > a truncated response is reported as a length limit, not as a schema violation`「上限切れをスキーマ違反として扱っています（是正リトライが空回りします）: Failure(error=NormalizedError(code=OUTPUT_SCHEMA_VIOLATION ...」。拒否側も同様 |
+| enum綴り差の許容を切る | `StructuredOutputValidationTest > an enum value that differs only in case is accepted`「enumの綴り差だけで不適合としています（是正リトライを誘発します）」 |
+
+いずれも、**その検査が守っているはずの性質そのもの**を壊したときに落ちている
+（別の理由で偶然落ちているのではない）ことをメッセージで確認した。
