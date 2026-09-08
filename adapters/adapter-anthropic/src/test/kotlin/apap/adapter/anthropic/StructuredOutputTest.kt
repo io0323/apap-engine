@@ -2,7 +2,9 @@ package apap.adapter.anthropic
 
 import apap.adapter.spi.FinishReason
 import apap.adapter.spi.GenerationParams
+import apap.adapter.spi.InputMessage
 import apap.adapter.spi.TextContentPart
+import apap.adapter.spi.TurnRole
 import apap.domain.model.vo.AdapterErrorCategory
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.runBlocking
@@ -156,6 +158,124 @@ class StructuredOutputTest {
             mapper.readTree(transport.calls.single().body).path("max_tokens").asInt(),
             "Modelの上限ではなくAdapterの既定値が使われています",
         )
+    }
+
+    /**
+     * 構造化出力は正式機能であり、**ベータヘッダを要さない**（出典:
+     * [StructuredOutputSchema.DOC_SOURCE]）。付けたままにすると、ヘッダが廃止された時点で
+     * 400になる時限爆弾になるため、送っていないことを検査で固定する。
+     */
+    @Test
+    fun `no beta header is attached to a structured output request`() {
+        val transport = ScenarioTransport()
+        val adapter = initializedAdapter(transport)
+        runBlocking {
+            adapter.execute(requestFor(AnthropicAdapter.CAPABILITY_CHAT).copy(outputSchema = schema))
+        }
+
+        val headerNames =
+            transport.calls
+                .single()
+                .headers.keys
+                .map { it.lowercase() }
+        assertTrue(
+            headerNames.none { it.contains("beta") },
+            "不要なベータヘッダを送っています: $headerNames",
+        )
+    }
+
+    /** スキーマは実APIが受け付ける形へ整えてから載せる（[StructuredOutputSchema]）。 */
+    @Test
+    fun `the schema is preprocessed before it is put on the wire`() {
+        val transport = ScenarioTransport()
+        val adapter = initializedAdapter(transport)
+        runBlocking {
+            adapter.execute(
+                requestFor(AnthropicAdapter.CAPABILITY_CHAT).copy(
+                    outputSchema =
+                        """
+                        {"type":"object","required":["age"],
+                         "properties":{"age":{"type":"integer","minimum":0,"maximum":130}}}
+                        """.trimIndent(),
+                ),
+            )
+        }
+
+        val sent = mapper.readTree(transport.calls.single().body).at("/output_config/format/schema")
+        assertEquals(false, sent.path("additionalProperties").asBoolean(true), "additionalProperties:falseが要ります")
+        assertTrue(sent.at("/properties/age/minimum").isMissingNode, "サポート外の制約が残っています: $sent")
+        assertTrue(
+            sent.at("/properties/age/description").asText().contains("Must be at least 0."),
+            "外した制約が指示として残っていません: $sent",
+        )
+    }
+
+    /** Streamingとは併用できる。片方だけ動く実装になっていないことを見る。 */
+    @Test
+    fun `structured output is also sent on the streaming path`() {
+        val transport = ScenarioTransport()
+        val adapter = initializedAdapter(transport)
+        runBlocking {
+            adapter.executeStream(requestFor(AnthropicAdapter.CAPABILITY_CHAT).copy(outputSchema = schema))
+        }
+
+        val body = mapper.readTree(transport.calls.single().body)
+        assertTrue(body.path("stream").asBoolean(false))
+        assertEquals("json_schema", body.at("/output_config/format/type").asText())
+    }
+
+    /**
+     * Message Prefilling（末尾のassistantメッセージ）は`output_config.format`と併用できず、
+     * Providerでは400になる。SPIに「prefill」という概念が無いぶん利用側からは気付けないので、
+     * 送る前に理由の分かる失敗にする。
+     */
+    @Test
+    fun `prefilling combined with native structured output fails locally with a usable message`() {
+        val transport = ScenarioTransport()
+        val adapter = initializedAdapter(transport)
+        val thrown =
+            assertThrows(apap.adapter.spi.AdapterException::class.java) {
+                runBlocking {
+                    adapter.execute(
+                        requestFor(AnthropicAdapter.CAPABILITY_CHAT).copy(
+                            outputSchema = schema,
+                            messages =
+                                listOf(
+                                    userMessage("hello"),
+                                    InputMessage(TurnRole.ASSISTANT, listOf(TextContentPart("{"))),
+                                ),
+                        ),
+                    )
+                }
+            }
+
+        // 再試行しても直らない組み合わせなので INVALID_REQUEST（2.11でRetry対象外）。
+        assertEquals(AdapterErrorCategory.INVALID_REQUEST, thrown.category)
+        assertTrue(
+            thrown.message.orEmpty().contains(StructuredOutputMode.OPTION_KEY),
+            "退避先（promptモード）が示されていません: ${thrown.message}",
+        )
+        assertTrue(transport.calls.isEmpty(), "400になると分かっているのにProviderを呼んでいます")
+    }
+
+    /** 併用不可なのはNATIVEのときだけ。退避経路（promptモード）では通ること。 */
+    @Test
+    fun `the prompt fallback still accepts a prefilled conversation`() {
+        val transport = ScenarioTransport()
+        val adapter = adapterWithOptions(transport, mapOf(StructuredOutputMode.OPTION_KEY to "prompt"))
+        runBlocking {
+            adapter.execute(
+                requestFor(AnthropicAdapter.CAPABILITY_CHAT).copy(
+                    outputSchema = schema,
+                    messages =
+                        listOf(
+                            userMessage("hello"),
+                            InputMessage(TurnRole.ASSISTANT, listOf(TextContentPart("{"))),
+                        ),
+                ),
+            )
+        }
+        assertEquals(1, transport.calls.size)
     }
 
     @Test

@@ -274,7 +274,15 @@ class AnthropicAdapter(
         } catch (e: AdapterSchemaException) {
             throw AdapterException(
                 AdapterErrorCategory.INVALID_REQUEST,
-                "tool input schema is not valid JSON",
+                "the requested schema is not valid JSON",
+                cause = e,
+            )
+        } catch (e: AdapterStructuredOutputConflictException) {
+            // 併用不可の組み合わせ。再試行しても直らないのでINVALID_REQUEST（2.11でRetry対象外）。
+            throw AdapterException(
+                AdapterErrorCategory.INVALID_REQUEST,
+                "this provider cannot combine structured output with ${e.feature}; " +
+                    "set the ${StructuredOutputMode.OPTION_KEY} option to fall back to prompt-based schemas",
                 cause = e,
             )
         }

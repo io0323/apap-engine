@@ -72,6 +72,7 @@ object RequestBodyBuilder {
         if (request.params.seed != null) throw AdapterUnsupportedParamException("params.seed")
 
         request.tools?.takeIf { it.isNotEmpty() }?.let { body.set<ArrayNode>("tools", toolsArray(it)) }
+        rejectIncompatibleCombinations(request, structuredOutputMode)
         applyStructuredOutput(body, request.outputSchema, structuredOutputMode)
         return mapper.writeValueAsString(body)
     }
@@ -94,9 +95,34 @@ object RequestBodyBuilder {
         val outputConfig = mapper.createObjectNode()
         val format = mapper.createObjectNode()
         format.put("type", "json_schema")
-        format.set<ObjectNode>("schema", parseSchema(schema))
+        // 実APIが受け付ける部分集合へ整えてから載せる。整形の内容と、外した制約が
+        // どこで効くのかは[StructuredOutputSchema]のKDocを参照。
+        format.set<ObjectNode>("schema", StructuredOutputSchema.prepare(schema))
         outputConfig.set<ObjectNode>("format", format)
         body.set<ObjectNode>("output_config", outputConfig)
+    }
+
+    /**
+     * `output_config.format`と**併用できない**組み合わせを、送信前に落とす。
+     *
+     * 実APIは構造化出力とMessage Prefilling（末尾のassistantメッセージで応答の書き出しを固定する
+     * 手法）の併用を400で拒否する。SPIには「prefill」という概念が無く、末尾がassistantの
+     * 会話履歴がそのままprefillとして送られるため、**利用側は併用していることに気付けない**。
+     * Provider側の400をそのまま返すと原因が読み取れないので、ここで理由の分かる失敗にする。
+     * 退避先は`structured_output.mode = "prompt"`（[StructuredOutputMode]）。
+     *
+     * Citationsも同じく併用不可だが、本Adapterはcitations blockを組み立てないため
+     * 経路が存在しない（findings §9.8）。
+     */
+    private fun rejectIncompatibleCombinations(
+        request: AdapterRequest,
+        mode: StructuredOutputMode,
+    ) {
+        if (request.outputSchema == null || mode != StructuredOutputMode.NATIVE) return
+        val lastConversational = request.messages.lastOrNull { it.role != TurnRole.SYSTEM } ?: return
+        if (lastConversational.role == TurnRole.ASSISTANT && request.toolResults.isEmpty()) {
+            throw AdapterStructuredOutputConflictException("message prefilling (a trailing assistant message)")
+        }
     }
 
     /** tools を Provider 形式の配列へ。`translateTools` からも使う。 */
@@ -251,7 +277,7 @@ object RequestBodyBuilder {
             .getOrElse {
                 // スキーマが壊れているまま送ると、Provider側で分かりにくい400になる。
                 // 手前で落として INVALID_REQUEST として扱えるようにする。
-                throw AdapterSchemaException(it.message ?: "invalid tool input schema")
+                throw AdapterSchemaException(it.message ?: "invalid schema")
             }
 
     private const val CONTINUATION_PLACEHOLDER = "(continued)"
@@ -267,7 +293,12 @@ class AdapterUnsupportedParamException(
     val paramName: String,
 ) : RuntimeException("this provider has no equivalent for $paramName; it would be silently ignored")
 
-/** tool の input_schema がJSONとして壊れている。 */
+/** 渡されたJSON Schema（toolの`input_schema`または`outputSchema`）がJSONとして壊れている。 */
 class AdapterSchemaException(
     detail: String,
-) : RuntimeException("tool input schema is not valid JSON: $detail")
+) : RuntimeException("schema is not valid JSON: $detail")
+
+/** 構造化出力と併用できない機能が同じリクエストに含まれている（Provider側では400になる）。 */
+class AdapterStructuredOutputConflictException(
+    val feature: String,
+) : RuntimeException("this provider cannot combine native structured output with $feature")
