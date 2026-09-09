@@ -802,7 +802,7 @@ ADR-0039がSPIだけで終わらせずドメイン側に同名フィールドを
 
 | メソッド | 消費者が無い理由 | 想定される置き場 |
 |---|---|---|
-| `spiVersion` | ホストは`plugin.yaml`のレンジで互換性を判定し、Adapter自身の申告は突き合わせていない | `PluginManager`の互換性判定（ADR-0016の残課題） |
+| ~~`spiVersion`~~ | ~~ホストは`plugin.yaml`のレンジで互換性を判定し、Adapter自身の申告は突き合わせていない~~ | **ADR-0043で配線済み**（§12） |
 | `translateTools` | コアは`AdapterRequest.tools`をSPI共通形式のまま渡し、変換はAdapter内部で完結 | 変換が必要なProviderが現れた時点 |
 | `discoverModels` | 検出結果を承認してModel登録する経路が未実装 | 15.1 Step6 |
 | `fetchUsage` / `fetchCost` | Provider側集計APIを取り込むユースケースが未実装（§4.2） | Audit/Cost集計 |
@@ -820,3 +820,52 @@ ADR-0039がSPIだけで終わらせずドメイン側に同名フィールドを
 「未提供API」として説明する**文字列リテラル**を持っており、素朴な検索がそれを呼び出しと誤認した。
 コメントと文字列リテラルを除去してから探すよう直している。検査を足したらまず自分の目で
 落ちること・落ちないことの両方を確かめる必要がある、という一例。
+
+
+---
+
+## 12. P18: `spiVersion()` に消費者を作る（ADR-0043）
+
+§11の表で可視化した5件のうち1件を閉じた。**残る4件（`translateTools` / `discoverModels` /
+`fetchUsage` / `fetchCost`）は記録のまま保留**とする。
+
+### 何が問題だったか
+
+`PluginManager` は `plugin.yaml` の `spi_version` レンジだけを見てロード可否を決めていた。
+
+- `plugin.yaml` の `spi_version` は**人が書くメタデータ**
+- `spiVersion()` は**コード自身の申告**
+
+両者は独立に間違いうる。SPI 1.1でビルドしたjarでも、マニフェストに `>=2.0 <3.0` と
+書いてあるだけでロードされ、最初の呼び出しで `NoSuchMethodError` になる。
+Adapterがコアと独立にビルド・配布される（NFR-EXT-001）以上、
+**マニフェストは申告であって証拠ではない**。
+
+### 追加した検証
+
+`ServiceLoader` でインスタンスを得た直後（`spiVersion()`はインスタンスメソッドのため、
+ここが最初の機会）に2点を突き合わせ、不整合はQUARANTINED＋`PluginQuarantined`とする。
+
+1. `plugin.yaml` のレンジに `adapter.spiVersion()` が収まること
+2. `adapter.spiVersion()` がホストの `SpiSurface.version` と互換であること
+
+2の互換は**一方向**である。「メジャー一致」だけでは足りない——ホストより新しいマイナーで
+ビルドされたAdapterは、ホストに存在しないSPIメンバを参照しうる。条件は
+**メジャー一致 かつ 申告 ≤ ホスト**（逆はSPIの後方互換により安全）。
+`spiVersion()` の呼び出し自体が例外・`Error` を投げた場合も隔離する——Plugin側のコードを
+初めて呼ぶ地点であり、取りこぼすと検証していないPluginをロード済みとして扱うことになる。
+
+`PluginRegistration.spiVersion` には、ホストの版ではなく**検証済みのPlugin自身の申告値**を
+記録するようにした（ホストの版はどのPluginでも同じで情報を持たない）。
+
+### 不変条件9: 違反注入による確認
+
+| 注入 | 落ちた検査 |
+|---|---|
+| SPIバージョン検証をまるごと外す | `a plugin whose manifest range disagrees with its code is quarantined` ほか |
+| マニフェストとコードの突き合わせを外す | 同上（レンジと申告の食い違いが素通りする） |
+| ホスト互換を「メジャー一致だけ」に緩める | `a plugin built against a newer SPI than the host is quarantined` |
+| 消費者の対応表を「消費者なし」へ戻す | `ProviderAdapterSurfaceTest > a method declared as having no consumer really has none` |
+
+最後の1件は、ADR-0042で入れた対応表が**逆方向にも嘘をつけない**ことの確認である
+（配線したのに表が古いまま、を検出する）。
