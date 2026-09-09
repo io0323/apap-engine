@@ -167,6 +167,9 @@ class PluginManager(
         return load(manifest, pluginDir.resolve(JAR_FILE_NAME))
     }
 
+    // ReturnCount: 検証に落ちた時点でquarantineして返す形（10_アクティビティ図.mdのscan→verify→
+    // quarantineの連なり）。ネストしたifへ畳むと、どの検証で隔離されたのかが読めなくなる。
+    @Suppress("ReturnCount")
     private fun load(
         manifest: PluginManifest,
         jarPath: Path,
@@ -187,11 +190,25 @@ class PluginManager(
                     return quarantine(manifest.pluginId, manifest, "entry point not found: ${manifest.entryPoint}")
                 }
 
+        // マニフェスト（人が書くメタデータ）とコード自身の申告が食い違っていないかを、
+        // ここで初めて突き合わせられる（`spiVersion()`はインスタンスメソッドのため）。
+        val declaredSpiVersion =
+            spiVersionOf(adapter)
+                ?: run {
+                    classLoader.close()
+                    return quarantine(manifest.pluginId, manifest, "spiVersion() threw while being queried")
+                }
+        spiVersionRejection(manifest, declaredSpiVersion)?.let { reason ->
+            classLoader.close()
+            return quarantine(manifest.pluginId, manifest, reason)
+        }
+
         val registration =
             PluginRegistration(
                 pluginId = manifest.pluginId,
                 version = manifest.version,
-                spiVersion = currentSpiVersion,
+                // ホストの版ではなく**そのPluginの版**を記録する（検証済みの申告値）。
+                spiVersion = declaredSpiVersion,
                 signature = manifest.signature,
                 signatureVerified = true,
             ).load()
@@ -202,6 +219,47 @@ class PluginManager(
         )
         return registration
     }
+
+    /**
+     * Adapterのコード自身が申告するSPIバージョン。取得に失敗したらnull（隔離対象）。
+     *
+     * TooGenericExceptionCaught: Plugin側のコードを初めて呼ぶ地点であり、何を投げてくるかは
+     * こちらの管理外である（`NoSuchMethodError`のようなErrorも含む）。ここで取りこぼすと、
+     * **検証していないPluginをロード済みとして扱う**ことになる。
+     */
+    @Suppress("TooGenericExceptionCaught", "SwallowedException")
+    private fun spiVersionOf(adapter: ProviderAdapter): SemVer? =
+        try {
+            adapter.spiVersion()
+        } catch (e: Throwable) {
+            logger.warn("adapter.spiVersion() failed: {}", e.message, e)
+            null
+        }
+
+    /**
+     * SPIバージョンの突き合わせ。不整合なら理由を、問題なければnullを返す。
+     *
+     * `plugin.yaml`の`spi_version`は**人が書くメタデータ**、`spiVersion()`は**コード自身の申告**で、
+     * 両者は独立に間違いうる。マニフェストのレンジだけを見ていた頃は、SPI 1.1でビルドしたjarに
+     * `>=2.0 <3.0`と書いてあるだけでロードされ、**実行時に`NoSuchMethodError`で落ちていた**。
+     * Adapterがコアと独立にビルド・配布される前提（NFR-EXT-001）を守るための機構である。
+     *
+     * ホストとの互換は**一方向**である。メジャー一致（[SemVer.isCompatibleWith]）だけでは足りない
+     * ——ホストより新しいマイナーでビルドされたAdapterは、ホストに存在しないSPIメンバを参照しうる。
+     * 逆（古いマイナー）はSPIの後方互換により安全（ADR-0016）。
+     */
+    private fun spiVersionRejection(
+        manifest: PluginManifest,
+        declared: SemVer,
+    ): String? =
+        when {
+            !manifest.spiVersionRange.contains(declared) ->
+                "spi_version mismatch between manifest and code: plugin.yaml declares " +
+                    "${manifest.spiVersionRange} but the adapter reports $declared"
+            !declared.isCompatibleWith(currentSpiVersion) || declared > currentSpiVersion ->
+                "incompatible spi_version: the adapter is built against $declared, host is $currentSpiVersion"
+            else -> null
+        }
 
     private fun quarantine(
         pluginId: String,

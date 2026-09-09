@@ -79,9 +79,7 @@ object SpiSurface {
         mapOf(
             "initialize" to "apap.provider.ProviderAdapterProvisioner",
             "shutdown" to "apap.provider.ProviderAdapterProvisioner",
-            "spiVersion" to
-                "$NO_CONSUMER_PREFIX ホストは`plugin.yaml`の`spi_version`レンジ（PluginManager）で" +
-                "互換性を判定しており、Adapter自身の申告は突き合わせていない（ADR-0016の残課題）",
+            "spiVersion" to "apap.plugin.PluginManager (ロード時のマニフェスト/コード突き合わせ)",
             "supportedCapabilities" to "apap.provider.ProviderManager (15.1 Step5の突合)",
             "authenticate" to "apap.execution.attempt.AttemptExecutor / StreamingRequestExecutor",
             "validateCredential" to "apap.provider.ProviderManager",
